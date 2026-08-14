@@ -65,11 +65,15 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
       if (deps.stopping()) return { kind: "stopped" };
       state.step = "cleanup";
       await persist();
-      const cl = await executor.run("cleanup", taskFile, plan, {
-        signal: deps.signal(),
+      const cl = await executor.run("cleanup", {
+        task: taskFile,
+        learnings: plan.learnings,
+        specId: plan.spec_id,
+        attempt: state.retry_count + 1,
         upstreamProvides: upstreamProvides(taskFile, selected, plan.done),
         routedSuggestions: io.runtime.routedSuggestions,
-        blockOnPreHookFailure: state.retry_count === 0,
+        firstAttempt: state.retry_count === 0,
+        signal: deps.signal(),
       });
       if (deps.stopping() === "now") return { kind: "stopped" };
       if (!cl.preHooksOk || spawnFailed(cl.outcome)) notify(`cleanup failed for ${id}, continuing`, "warning");
@@ -107,11 +111,15 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
       state.step = "sync";
       await persist();
       await checkGraphForSync(deps, plan);
-      const sy = await executor.run("sync", taskFile, plan, {
-        signal: deps.signal(),
+      const sy = await executor.run("sync", {
+        task: taskFile,
+        learnings: plan.learnings,
+        specId: plan.spec_id,
+        attempt: state.retry_count + 1,
         upstreamProvides: upstreamProvides(taskFile, selected, plan.done),
         routedSuggestions: io.runtime.routedSuggestions,
-        blockOnPreHookFailure: state.retry_count === 0,
+        firstAttempt: state.retry_count === 0,
+        signal: deps.signal(),
       });
       io.runtime.runState.syncRan = true;
       if (deps.stopping() === "now") return { kind: "stopped" };

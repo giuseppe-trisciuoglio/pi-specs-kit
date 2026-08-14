@@ -8,7 +8,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { PHASE_ROLE, type PhaseName, type RoleName, type SpecsKitConfig } from "../config/specs-kit-config.ts";
-import type { FixPlan } from "../fixplan/fix-plan.ts";
 import type { TaskFile } from "../tasks/task-parser.ts";
 import type { PiStreamEvent } from "../agent/json-stream.ts";
 import { assistantText, formatStreamEvent } from "../agent/stream-format.ts";
@@ -21,7 +20,12 @@ import type { LoopBudget } from "./budget.ts";
 import type { HookResult } from "./hooks.ts";
 import { runPhaseHooks } from "./hooks.ts";
 import { loadProjectLearnings, parseLearnings } from "./learner.ts";
-import type { RoutedSuggestion } from "./review-report.ts";
+import type {
+  CleanupPhaseInput,
+  ImplementationPhaseInput,
+  ReviewPhaseInput,
+  SyncPhaseInput,
+} from "./phase-inputs.ts";
 
 export interface PhaseExecutorDeps {
   config: SpecsKitConfig;
@@ -235,35 +239,31 @@ export class PhaseExecutor {
 
   /**
    * Run one of the four executable phases: pre hooks, prompt build, spawn,
-   * post hooks. A failed pre hook blocks the phase (the engine counts the
+   * post hooks. Each phase declares its own ingress type and the overloads
+   * tie the phase name to it, so the body can only read what the calling
+   * node handed over at the boundary: the fix plan cannot reach the prompt
+   * through here. A failed pre hook blocks the phase (the engine counts the
    * attempt); a failed post hook is only a warning.
    */
+  async run(phase: "implementation", input: ImplementationPhaseInput): Promise<PhaseStepResult>;
+  async run(phase: "review", input: ReviewPhaseInput): Promise<PhaseStepResult>;
+  async run(phase: "cleanup", input: CleanupPhaseInput): Promise<PhaseStepResult>;
+  async run(phase: "sync", input: SyncPhaseInput): Promise<PhaseStepResult>;
   async run(
     phase: PhaseName,
-    task: TaskFile,
-    plan: FixPlan,
-    opts: {
-      reviewFeedback?: string | null;
-      reviewFormatError?: string | null;
-      signal?: AbortSignal;
-      /** Public API contracts from completed dependency tasks. */
-      upstreamProvides?: string[];
-      /** Fixes reviewers routed to this task from earlier completed tasks. */
-      routedSuggestions?: RoutedSuggestion[];
-      /**
-       * When false, a failing pre-hook does not block the phase: its output
-       * is included in the prompt so the agent can see what is wrong and try
-       * to fix it. Defaults to true (pre-hook failures block the phase).
-       */
-      blockOnPreHookFailure?: boolean;
-    } = {},
+    input: ImplementationPhaseInput | ReviewPhaseInput | CleanupPhaseInput | SyncPhaseInput,
   ): Promise<PhaseStepResult> {
     const { config } = this.#deps;
     const role = PHASE_ROLE[phase];
-    const blockOnFailure = opts.blockOnPreHookFailure !== false;
+    const task = input.task;
+    // The node declares how the world is, not what to do: the blocking
+    // policy lives here. Inputs that cannot declare an attempt kind (review
+    // re-spawns, the end-of-range sync) block on a failing pre-hook, exactly
+    // as they did when the flag defaulted on the wide signature.
+    const blockOnFailure = "firstAttempt" in input ? input.firstAttempt : true;
     // The handle spans hooks and subprocess alike: the phase duration in the
     // ledger is the whole step, not just the agent session.
-    const meterHandle = this.#beginMeter(plan.spec_id, task.frontmatter.id, phase, plan.state.retry_count + 1, role);
+    const meterHandle = this.#beginMeter(input.specId, task.frontmatter.id, phase, input.attempt, role);
     try {
       const preResults = await this.#deps.runHooks(config.hooks, phase, "pre", config.projectRoot, {
         onStdoutLine: (line) => this.#deps.onLogLine(`[pre-${phase}] ${line}`),
@@ -288,13 +288,16 @@ export class PhaseExecutor {
         specDir: this.#deps.specDir,
         phase,
         task,
-        learnings: plan.learnings,
+        learnings: input.learnings,
         skill,
         preHookResults: preResults,
-        reviewFeedback: opts.reviewFeedback ?? null,
-        reviewFormatError: opts.reviewFormatError ?? null,
-        upstreamProvides: opts.upstreamProvides,
-        routedSuggestions: opts.routedSuggestions,
+        // Channels a phase cannot declare keep the value the wide signature
+        // defaulted them to: no feedback, no format error, no contracts, no
+        // routed fixes.
+        reviewFeedback: "reviewFeedback" in input ? input.reviewFeedback : null,
+        reviewFormatError: "reviewFormatError" in input ? input.reviewFormatError : null,
+        upstreamProvides: "upstreamProvides" in input ? input.upstreamProvides : undefined,
+        routedSuggestions: "routedSuggestions" in input ? input.routedSuggestions : undefined,
         projectLearnings,
       });
       const { outcome } = await this.#spawn(
@@ -303,7 +306,7 @@ export class PhaseExecutor {
         role,
         prompt,
         systemPromptOverride,
-        opts.signal,
+        input.signal,
         false,
         meterHandle,
       );

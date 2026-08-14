@@ -68,17 +68,22 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
       if (deps.stopping()) return { kind: "stopped" };
       state.step = "implementation";
       await persist();
-      const impl = await executor.run("implementation", taskFile, plan, {
+      const impl = await executor.run("implementation", {
+        task: taskFile,
+        learnings: plan.learnings,
+        specId: plan.spec_id,
+        attempt: state.retry_count + 1,
         reviewFeedback: io.runtime.feedback,
-        signal: deps.signal(),
         upstreamProvides: upstreamProvides(taskFile, selected, plan.done),
         routedSuggestions: io.runtime.routedSuggestions,
-        // On the first attempt pre-hook failures block the phase: the
-        // workspace is expected to be in a clean state. On retries the
-        // agent already ran once and may have left broken tests or a
-        // half-built tree behind; pre-hook output is fed to it as
-        // context so it can see what to fix.
-        blockOnPreHookFailure: state.retry_count === 0,
+        // The node declares how the world is, not what to do; the executor
+        // owns the blocking policy. On the first attempt the workspace is
+        // expected to be in a clean state, so a failing pre-hook blocks the
+        // phase. On retries the agent already ran once and may have left
+        // broken tests or a half-built tree behind, so the pre-hook output
+        // is fed to it as context instead.
+        firstAttempt: state.retry_count === 0,
+        signal: deps.signal(),
       });
       // An abort without a stop request (phase interrupt) falls through
       // to the failure path and costs one attempt.

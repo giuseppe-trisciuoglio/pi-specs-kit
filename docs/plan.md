@@ -88,6 +88,7 @@ pi-specs-kit/
 │   │   ├── review-runner.ts       # sub-loop review con retry del report
 │   │   ├── review-report.ts       # path, parsing e feedback del report review
 │   │   ├── loop-status.ts         # snapshot di stato per widget e comandi
+│   │   ├── phase-inputs.ts        # tipi di ingresso dichiarati per Fase (soli tipi, contratto nodo → esecutore)
 │   │   ├── phases.ts              # implementation/review/cleanup/sync/learner
 │   │   ├── hooks.ts               # esecuzione hook pre/post (shell, timeout)
 │   │   ├── learner.ts             # estrazione learnings a fine task
@@ -109,6 +110,7 @@ pi-specs-kit/
 │   ├── refresh.test.ts
 │   ├── config.test.ts
 │   ├── prompt-builder.test.ts
+│   ├── phase-prompts.test.ts      # prompt d'oro: equivalenza stringa esecutore ↔ builder
 │   ├── state-machine.test.ts
 │   └── hooks.test.ts
 └── e2e/

@@ -48,7 +48,15 @@ export function declareFinalSyncNode(deps: TaskNodeDeps, plan: FixPlan, runState
       plan.state.step = "sync";
       await deps.persist(plan);
       await checkGraphForSync(deps, plan);
-      const sy = await deps.executor.run("sync", task, plan, { signal: deps.signal() });
+      // The end-of-range sync spawns alone: no upstream contracts, no routed
+      // fixes and no attempt kind to declare, so a failing pre-hook blocks.
+      const sy = await deps.executor.run("sync", {
+        task,
+        learnings: plan.learnings,
+        specId: plan.spec_id,
+        attempt: plan.state.retry_count + 1,
+        signal: deps.signal(),
+      });
       if (!sy.preHooksOk || spawnFailed(sy.outcome)) deps.notify("final sync failed, continuing", "warning");
 
       // Compact project-level learnings at the end of the range.

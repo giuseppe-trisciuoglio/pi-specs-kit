@@ -42,8 +42,8 @@ const crashedResult: PhaseStepResult = { ...okResult, outcome: { ...okResult.out
 interface Harness {
   deps: ReviewStepDeps;
   plan: FixPlan;
-  /** Options each review spawn was given, in order. */
-  prompts: { reviewFormatError?: string | null }[];
+  /** Declared input of every review spawn, in order. */
+  prompts: { reviewFormatError: string | null }[];
   /** Spawns performed so far, across every review step call. */
   spawns: () => number;
 }
@@ -56,15 +56,10 @@ async function harness(script: (spawn: number) => PhaseStepResult): Promise<Harn
   const plan = emptyFixPlan("001-spec", "docs/specs/001-spec");
 
   let spawns = 0;
-  const prompts: { reviewFormatError?: string | null }[] = [];
+  const prompts: { reviewFormatError: string | null }[] = [];
   const executor = {
-    run: async (
-      _phase: string,
-      _task: TaskFile,
-      _plan: FixPlan,
-      opts: { reviewFormatError?: string | null } = {},
-    ): Promise<PhaseStepResult> => {
-      prompts.push(opts);
+    run: async (_phase: string, input: { reviewFormatError: string | null }): Promise<PhaseStepResult> => {
+      prompts.push(input);
       return script(++spawns);
     },
   } as unknown as PhaseExecutor;

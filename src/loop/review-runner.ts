@@ -91,8 +91,14 @@ export async function runReviewStep(
     await archivePriorReview(specDir, id, state.retry_count);
     await rm(reviewFilePath(specDir, id), { force: true });
     if (deps.stopping()) return { kind: "stopped" };
-    const rev = await executor.run("review", taskFile, plan, {
+    // The plan still flows in for the state counters (persist writes the
+    // whole document), but the prompt channel is the declared input only.
+    const rev = await executor.run("review", {
+      task: taskFile,
+      learnings: plan.learnings,
       reviewFormatError: formatError,
+      specId: plan.spec_id,
+      attempt: state.retry_count + 1,
       signal: deps.signal(),
     });
     if (deps.stopping() === "now") return { kind: "stopped" };

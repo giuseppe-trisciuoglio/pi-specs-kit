@@ -11,7 +11,11 @@ canonici in `CONTEXT.md`.
 
 > Stato: grill di Fase 0 completata (D0–D8 risolte); Fase 0 implementata
 > (vedi `docs/plan-graph-phase0.md`: la tabella e eseguita dall'interprete e la sync finale
-> e un nodo run-level dichiarato).
+> e un nodo run-level dichiarato). Fase 1 implementata (vedi
+> `docs/plan-graph-phase1.md` e ADR `docs/adr/0012`): il fix plan non attraversa
+> piu il confine nodo → esecutore, l'ingresso di ogni Fase e un literal piatto
+> tipizzato e i prompt sono rimasti byte per byte identici (oracolo:
+> `test/phase-prompts.test.ts`).
 
 ---
 
@@ -117,6 +121,13 @@ disponibile) senza nuove dipendenze, rispettando il vincolo «dipendenze runtime
 solo `yaml` + `typebox`».
 
 ### Fase 1 — Contratti I/O per nodo (il context firewall reso rigoroso)
+
+> **Implementata.** La forma reale e descritta da `docs/plan-graph-phase1.md` e
+> registrata in ADR `docs/adr/0012`: contratto sull'**ingresso** di ogni Fase
+> (tipi in `src/loop/phase-inputs.ts`, overload di `PhaseExecutor.run`), non
+> sull'output — l'output reale resta `{ preHooksOk, hookResults, outcome }`;
+> `modifiedFiles` non e mai esistito. I project learnings restano una lettura
+> dell'esecutore, non del nodo.
 
 Definire uno **schema I/O per nodo**: il nodo `implementation` legge
 `{ task, memory, reviewFeedback, upstreamContracts, routedSuggestions,
