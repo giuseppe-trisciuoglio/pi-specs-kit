@@ -141,7 +141,13 @@ comportamento invariato, la suite come oracolo.
 
 ## A5 — L'avviso di chiusura sui task falliti scatta solo se il fallimento è l'ultimo
 
-**Sintomo.** Un run configurato per proseguire dopo un fallimento chiude il range senza alcun avviso,
+**Stato: corretto.** I fallimenti vengono ora raccolti mano a mano che accadono, mentre il messaggio
+del task è ancora leggibile, invece di essere dedotti a fine range da uno stato che nel frattempo è
+stato azzerato. L'avviso di chiusura riporta quanti task sono falliti e l'ultimo di essi. Pinnato da
+`test/state-machine.test.ts`, il caso del fallimento in mezzo al range, verificato fallire senza la
+correzione.
+
+**Sintomo (storico).** Un run configurato per proseguire dopo un fallimento chiude il range senza alcun avviso,
 se dopo il task fallito ne gira almeno un altro con successo. L'avviso di chiusura che segnala i
 fallimenti compare solo quando il task fallito è l'ultimo del range.
 

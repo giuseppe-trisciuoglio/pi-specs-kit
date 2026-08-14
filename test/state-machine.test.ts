@@ -502,6 +502,32 @@ test("a range completed after a failing last task does not persist its error", a
   );
 });
 
+test("a failure in the middle of the range is still reported at the end", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(
+    root,
+    specDir,
+    (call) => (call.task === "TASK-001" && call.phase === "implementation" ? { fail: true } : {}),
+    (config) => {
+      config.mode = "fast";
+      config.run.maxAttempts = 1;
+      config.run.continueOnFailure = true;
+    },
+  );
+
+  // The tasks that follow reset the error in the state, so the closing notice
+  // has to count failures as they happen rather than read what is left there.
+  assert.equal(run.result.reason, "completed");
+  assert.deepEqual(run.plan.done, ["TASK-002", "TASK-003"]);
+  assert.equal(run.plan.state.error, null);
+  assert.ok(
+    run.notifications.some(
+      (n) => n.type === "warning" && n.message.includes("range completed with failures (1 task)"),
+    ),
+    "a failure the run walked past is still surfaced at the end",
+  );
+});
+
 test("rejected review feeds back into the next implementation prompt", async () => {
   const { root, specDir } = await createSpec();
   const run = await runLoop(
