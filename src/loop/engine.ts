@@ -1,31 +1,24 @@
 /**
  * Loop engine: run-level orchestration of a spec. Loads the tasks, applies the
- * range, reconciles and persists the fix plan, resolves the resume anchor and
- * walks the selection, handing each task to the per-task state machine. Every
- * state mutation is persisted before moving on, so a kill at any point leaves
- * a resumable snapshot; deps are injectable for tests.
+ * range, reconciles and persists the fix plan, assembles the run and walks the
+ * selection, handing each task to the per-task state machine. Every state
+ * mutation is persisted before moving on, so a kill at any point leaves a
+ * resumable snapshot; deps are injectable for tests.
  */
 
 import path from "node:path";
 import type { PhaseName, SpecsKitConfig } from "../config/specs-kit-config.ts";
-import { saveFixPlan, type FixPlan, type LoopStep } from "../fixplan/fix-plan.ts";
-import type { TaskFile } from "../tasks/task-parser.ts";
+import { saveFixPlan, type FixPlan } from "../fixplan/fix-plan.ts";
 import { runAgentPhase, type PhaseRunOutcome, type PhaseSpawnOptions } from "../agent/spawner.ts";
 import type { PiStreamEvent } from "../agent/json-stream.ts";
-import { toLogLines } from "../agent/stream-format.ts";
-import { ledgerPath } from "../measure/ledger.ts";
-import { PhaseMeter } from "../measure/phase-meter.ts";
-import { walPath } from "../measure/wal.ts";
+import type { PhaseMeter } from "../measure/phase-meter.ts";
 import { runPhaseHooks } from "./hooks.ts";
-import { BudgetExceededError, LoopBudget } from "./budget.ts";
+import { BudgetExceededError } from "./budget.ts";
 import { commitCheckpoint } from "./checkpoint.ts";
 import { LoopStatusTracker, type LoopStatus } from "./loop-status.ts";
-import { PhaseExecutor } from "./phases.ts";
 import { prepareRun } from "./run-setup.ts";
-import { STEP_ORDER } from "./step-order.ts";
-import { consumeRunNode, declareFinalSyncNode, type RunNode } from "./graph/run-graph.ts";
-import type { TaskNodeDeps } from "./graph/types.ts";
-import { TaskRunner, type RunState } from "./task-runner.ts";
+import { assembleRun } from "./run-assembly.ts";
+import { walkSelection } from "./run-walk.ts";
 
 export interface LoopStartOptions {
   specDir: string;
@@ -184,79 +177,47 @@ export class LoopEngine {
     await this.#persist(specDir, plan);
     for (const notice of notices) this.#notify(notice.message, notice.type);
 
-    // Resume anchor: the persisted per-task step, counters preserved.
-    let pendingStart: { task: TaskFile; step: LoopStep } | null = null;
-    let index = 0;
-    const isPerTaskStep = STEP_ORDER.includes(plan.state.step);
-    if (resume && plan.state.current_task && isPerTaskStep) {
-      const found = selected.findIndex((t) => t.frontmatter.id === plan.state.current_task && !plan.done.includes(t.frontmatter.id));
-      if (found !== -1) {
-        pendingStart = { task: selected[found], step: plan.state.step };
-        index = found;
-        this.#notify(`resuming from ${plan.state.current_task} · phase ${plan.state.step}`, "info");
-      }
-    }
-
-    const budget = new LoopBudget({
-      maxSpawnsPerTask: config.run.maxSpawnsPerTask,
-      maxSpawnsPerRun: config.run.maxSpawnsPerRun,
-      maxRunDurationMs: config.run.maxRunDurationMs,
-    });
-
-    const meter =
-      this.#deps.meter ??
-      new PhaseMeter({
-        ledgerFile: ledgerPath(config.projectRoot, config.specsDir),
-        walFile: walPath(),
-        projectRoot: config.projectRoot,
-        onNotify: (message, type) => this.#notify(message, type),
-      });
-
-    const executor = new PhaseExecutor({
+    const run = assembleRun({
       config,
       specDir,
-      budget,
+      plan,
+      selected,
+      resume,
+      phase: opts.phase,
       spawnPhase: this.#deps.spawnPhase,
       runHooks: this.#deps.runHooks,
-      meter,
-      onNotify: (m, t) => this.#notify(m, t),
-      onStream: (event, formatted) => {
-        // A completed message arrives as one formatted block; the log channel
-        // is laid out one row per line, so it is split before forwarding.
-        if (formatted) {
-          for (const line of toLogLines(formatted)) {
-            this.#status.lastStreamLine = line;
-            this.#events.onLogLine?.(line);
-          }
-        }
-        this.#events.onStream?.(event);
-      },
-      onLogPath: (p) => {
-        this.#status.logPath = p;
-      },
-      onPhaseStart: () => this.#events.onPhaseStart?.(),
-      onLogLine: (line) => this.#events.onLogLine?.(line),
-    });
-
-    const runnerDeps: TaskNodeDeps = {
-      config,
-      specDir,
-      executor,
-      budget,
-      persist: (p) => this.#persist(specDir, p),
+      commitCheckpoint: this.#deps.commitCheckpoint,
+      meter: this.#deps.meter,
+      now: this.#deps.now,
       notify: (m, t) => this.#notify(m, t),
+      persist: (p) => this.#persist(specDir, p),
       stopping: () => this.#stopping,
       signal: () => this.#signal,
-      commitCheckpoint: this.#deps.commitCheckpoint,
-      now: this.#deps.now,
-    };
-    const runner = new TaskRunner(runnerDeps);
+      onLogLine: (line) => this.#events.onLogLine?.(line),
+      onStream: (event) => this.#events.onStream?.(event),
+      onPhaseStart: () => this.#events.onPhaseStart?.(),
+      setLastStreamLine: (line) => {
+        this.#status.lastStreamLine = line;
+      },
+      setLogPath: (p) => {
+        this.#status.logPath = p;
+      },
+    });
 
-    const firstPhase: LoopStep | null = opts.phase ?? null;
-    const runState: RunState = { syncRan: false, lastCompleted: null };
-    const finalSync = declareFinalSyncNode(runnerDeps, plan, runState);
     try {
-      return await this.#walk(plan, selected, runner, specDir, runState, { pendingStart, index, firstPhase }, finalSync);
+      return await walkSelection(
+        plan,
+        selected,
+        run.runner,
+        run.runState,
+        { pendingStart: run.pendingStart, index: run.index, firstPhase: run.firstPhase },
+        run.finalSync,
+        {
+          stopping: () => this.#stopping,
+          notify: (m, t) => this.#notify(m, t),
+          persist: (p) => this.#persist(specDir, p),
+        },
+      );
     } catch (err) {
       if (!(err instanceof BudgetExceededError)) throw err;
       // A ceiling is not a task failure: continue-on-failure would carry the
@@ -270,83 +231,4 @@ export class LoopEngine {
       return { reason: "halted", error: err.message };
     }
   }
-
-  /**
-   * Walk the selection: pick the next task not already done, hand it to the
-   * per-task state machine and close the range when the selection runs out.
-   * The resume anchor, when present, is consumed by the first iteration.
-   */
-  async #walk(
-    plan: FixPlan,
-    selected: TaskFile[],
-    runner: TaskRunner,
-    specDir: string,
-    runState: RunState,
-    start: { pendingStart: { task: TaskFile; step: LoopStep } | null; index: number; firstPhase: LoopStep | null },
-    finalSync: RunNode,
-  ): Promise<{ reason: LoopEndReason; error?: string }> {
-    let { pendingStart, index, firstPhase } = start;
-    for (;;) {
-      if (this.#stopping) return { reason: "stopped" };
-      let taskFile: TaskFile;
-      let startStep: LoopStep | null = null;
-      let resumed = false;
-      if (pendingStart) {
-        taskFile = pendingStart.task;
-        startStep = pendingStart.step;
-        resumed = true;
-        pendingStart = null;
-        index++;
-        // The explicit start phase belongs to the first task of the run, and
-        // the resumed task uses its persisted anchor instead: consume it here
-        // or it would leak into the next task and skip its implementation.
-        if (firstPhase && firstPhase !== startStep) {
-          this.#notify(`start phase ${firstPhase} ignored: ${taskFile.frontmatter.id} resumes at ${startStep}`, "info");
-        }
-        firstPhase = null;
-      } else {
-        while (index < selected.length && plan.done.includes(selected[index].frontmatter.id)) index++;
-        if (index >= selected.length) {
-          await consumeRunNode(finalSync, {
-            syncRan: runState.syncRan,
-            hasLastCompleted: runState.lastCompleted !== null,
-            stopping: this.#stopping !== null,
-          });
-          // A task that failed while continuing left its message behind: keep
-          // it for the operator as a notice, but do not persist it next to a
-          // completed step or every later reader would see a halt that the run
-          // never ended on.
-          const lastFailure = plan.state.error;
-          plan.state.step = "done";
-          plan.state.current_task = null;
-          plan.state.current_task_file = null;
-          plan.state.current_task_lang = null;
-          plan.state.error = null;
-          await this.#persist(specDir, plan);
-          if (lastFailure) this.#notify(`range completed with failures, last: ${lastFailure}`, "warning");
-          const p = plan.range_progress;
-          this.#notify(`range completed: ${p.done_in_range}/${p.total_in_range} tasks (${p.percent}%)`, "info");
-          // A sync that ran without the codebase graph left the run partial:
-          // say so once at the end so the operator knows graph-backed
-          // validation was skipped and the docs sync may be incomplete.
-          if (plan.state.graphPartialSync) {
-            this.#notify(
-              "range completed with a partial sync: the codebase graph was absent, so graph-backed dependency validation was skipped",
-              "warning",
-            );
-          }
-          return { reason: "completed" };
-        }
-        taskFile = selected[index];
-        index++;
-        startStep = firstPhase;
-        firstPhase = null;
-      }
-
-      const outcome = await runner.run(plan, taskFile, selected, startStep, resumed, runState);
-      if (outcome === "stopped") return { reason: "stopped" };
-      if (outcome === "halted") return { reason: "halted", error: plan.state.error ?? undefined };
-    }
-  }
-
 }

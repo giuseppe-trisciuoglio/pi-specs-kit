@@ -7,11 +7,9 @@
  */
 
 import path from "node:path";
-import type { LoopStep } from "../../fixplan/fix-plan.ts";
 import { spawnFailed } from "../phases.ts";
 import { runReviewStep } from "../review-runner.ts";
 import { collectRoutedSuggestions } from "../routed-suggestions.ts";
-import { stepIndex } from "../step-order.ts";
 import { upstreamProvides } from "./task-nodes-tail.ts";
 import type { NodeAction, TaskNodeEnv } from "./types.ts";
 
@@ -50,12 +48,10 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         notify(`task ${id}: ${taskFile.frontmatter.title}`, "info");
       }
 
-      // A resume landing past the sync marks it as already run: the
-      // end-of-range guarantee keys on this flag, so the run does not
-      // schedule a second sync for work that was synced before the stop.
-      const startPostReview = startStep !== null && stepIndex(startStep) >= stepIndex("cleanup");
-      const postFrom = startPostReview ? (startStep as LoopStep) : "cleanup";
-      if (stepIndex(postFrom) > stepIndex("sync")) io.runtime.runState.syncRan = true;
+      // The end-of-range sync keys on whether a sync actually ran in this
+      // run, not on where the task resumed: a resume past the sync phase must
+      // not claim a sync that never happened, or the run could close without
+      // ever syncing once.
 
       // Fixes earlier reviews routed to this task: collected once, since the
       // completed-task set does not change while this task runs (it grows only

@@ -11,7 +11,7 @@ import { reviewFilePath } from "../src/loop/review-report.ts";
 
 // Characterization tests for the resume paths of the per-task loop: they pin
 // the behavior of the current control flow (entry guards at every starting
-// step, the sync bookkeeping on a resume past the sync, and the asymmetric
+// step, the end-of-range sync after a resume past the sync, and the asymmetric
 // stop checks) so that moving the code around cannot silently change it.
 
 const tmpDirs: string[] = [];
@@ -105,6 +105,13 @@ function reviewContent(status: "PASSED" | "FAILED"): string {
 function okOutcome(exitCode: number | null, aborted = false): PhaseRunOutcome {
   return { exitCode, timedOut: false, aborted, stopReason: "stop", errorMessage: null, elapsedMs: 1, stderr: "" };
 }
+
+/**
+ * Scripted behavior that emits no learnings, so runs driven by it keep their
+ * spawn log to the phases under test: the learner returns an empty list and
+ * nothing is persisted to the project-level learnings file.
+ */
+const noLearnings: Behavior = (call) => (call.phase === "learner" ? { text: "" } : {});
 
 interface RunResult {
   result: { reason: LoopEndReason; error?: string };
@@ -339,26 +346,46 @@ test("entry at sync in fast mode on a non-last task skips the sync phase and kee
   assert.deepEqual(run.plan.done, ["TASK-001"]);
 });
 
-test("resume past the sync marks it as already run without executing it", async () => {
+test("resume past the sync still runs the end-of-range sync", async () => {
   const { root, specDir } = await createSpec();
   const configure = (config: SpecsKitConfig): void => {
     config.mode = "fast";
     config.run.noCommit = false;
   };
-  await runLoop(root, specDir, () => {}, configure);
+  await runLoop(root, specDir, noLearnings, configure);
   // The previous run stopped right after the sync of the last task of the
   // range: only update_done and the checkpoint were left.
   await pinResumePoint(specDir, "TASK-002", "update_done", ["TASK-001"]);
 
-  const resumed = await runLoop(root, specDir, () => {}, configure, { resume: true, toTask: "TASK-002" });
+  const resumed = await runLoop(root, specDir, noLearnings, configure, { resume: true, toTask: "TASK-002" });
 
   assert.equal(resumed.result.reason, "completed");
-  // Not a single phase spawns: update_done is bookkeeping, and the
-  // resume-past-sync bookkeeping marks the sync as done, which also
-  // suppresses the end-of-range sync. The run completes with no sync at all.
-  assert.deepEqual(resumed.calls, []);
+  // No per-task phase re-runs: update_done and the checkpoint are bookkeeping.
+  // The only spawn is the end-of-range sync on the resumed task, because no
+  // sync actually ran in this run even though the resume landed past the sync.
+  assert.deepEqual(sequence(resumed.calls), ["TASK-002:sync"]);
   assert.deepEqual(resumed.checkpoints, ["checkpoint: TASK-002 attempt 1"]);
   assert.deepEqual(resumed.plan.done, ["TASK-001", "TASK-002"]);
+  assert.equal(resumed.plan.state.step, "done");
+});
+
+test("a fast-mode resume past the sync closes the range with the end-of-range sync", async () => {
+  const { root, specDir } = await createSpec();
+  const configure = (config: SpecsKitConfig): void => {
+    config.mode = "fast";
+    config.run.noCommit = false;
+  };
+  await runLoop(root, specDir, noLearnings, configure);
+  // The previous run stopped after the sync of the last task of the range,
+  // so the resume re-enters that last task at update_done.
+  await pinResumePoint(specDir, "TASK-003", "update_done", ["TASK-001", "TASK-002"]);
+
+  const resumed = await runLoop(root, specDir, noLearnings, configure, { resume: true, toTask: "TASK-003" });
+
+  assert.equal(resumed.result.reason, "completed");
+  assert.deepEqual(sequence(resumed.calls), ["TASK-003:sync"]);
+  assert.deepEqual(resumed.checkpoints, ["checkpoint: TASK-003 attempt 1"]);
+  assert.deepEqual(resumed.plan.done, ["TASK-001", "TASK-002", "TASK-003"]);
   assert.equal(resumed.plan.state.step, "done");
 });
 

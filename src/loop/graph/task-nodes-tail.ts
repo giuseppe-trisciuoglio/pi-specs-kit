@@ -127,6 +127,13 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
       return { kind: "ok" };
     },
 
+    // Unlike the phase nodes above, this one intentionally has no entry stop
+    // check. By the time the walk reaches it the task's work has already been
+    // completed in full, so refusing to record the completion would not spare
+    // any work: a resume would simply redo the whole task and throw away the
+    // sessions already spent. Completion is therefore deliberately
+    // non-interruptible — a stop requested during the previous phase takes
+    // effect only at the next task boundary, never here.
     update_done: async (io) => {
       state.step = "update_done";
       if (!plan.done.includes(id)) plan.done.push(id);

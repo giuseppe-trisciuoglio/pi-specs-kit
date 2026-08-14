@@ -1,31 +1,27 @@
 /**
- * Phase execution helpers shared by the loop engine: skill resolution,
- * prompt assembly, system prompt overrides, subprocess spawning with log
- * capture and learner output capture. The engine owns the state machine;
- * everything that talks to the agent subprocess lives here.
+ * Phase execution helpers shared by the loop engine: the executor binds the
+ * prompt context builder and the spawn/hook runner together into the four
+ * executable phases plus the learner subroutines. The engine owns the state
+ * machine; the executor only decides how a declared ingress becomes a prompt
+ * and a subprocess.
  */
 
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { PHASE_ROLE, type PhaseName, type RoleName, type SpecsKitConfig } from "../config/specs-kit-config.ts";
+import { PHASE_ROLE, type PhaseName, type SpecsKitConfig } from "../config/specs-kit-config.ts";
 import type { TaskFile } from "../tasks/task-parser.ts";
 import type { PiStreamEvent } from "../agent/json-stream.ts";
-import { assistantText, formatStreamEvent } from "../agent/stream-format.ts";
 import type { PhaseRunOutcome, PhaseSpawnOptions } from "../agent/spawner.ts";
-import type { PhaseHandle, PhaseMeter } from "../measure/phase-meter.ts";
-import { PhaseLogWriter } from "../util/log-writer.ts";
-import { buildPhasePrompt } from "../prompt/prompt-builder.ts";
-import { resolvePhaseSkill, type ResolvedSkill } from "../prompt/skill-resolver.ts";
+import type { PhaseMeter } from "../measure/phase-meter.ts";
 import type { LoopBudget } from "./budget.ts";
 import type { HookResult } from "./hooks.ts";
 import { runPhaseHooks } from "./hooks.ts";
-import { loadProjectLearnings, parseLearnings } from "./learner.ts";
 import type {
   CleanupPhaseInput,
   ImplementationPhaseInput,
   ReviewPhaseInput,
   SyncPhaseInput,
 } from "./phase-inputs.ts";
+import { PhaseContext } from "./phase-context.ts";
+import { PhaseSpawner, type LearnerResult } from "./phase-spawn.ts";
 
 export interface PhaseExecutorDeps {
   config: SpecsKitConfig;
@@ -55,40 +51,10 @@ export interface PhaseStepResult {
   outcome: PhaseRunOutcome | null;
 }
 
-/** A resolved system prompt override: its text plus how to apply it. */
-export interface SystemPromptOverrideText {
-  mode: "append" | "replace";
-  content: string;
-}
-
-export interface LearnerResult {
-  outcome: PhaseRunOutcome;
-  /** Concatenated assistant text emitted during the run. */
-  text: string;
-}
-
-/** A phase subprocess outcome counts as failed on any of these conditions. */
-export function spawnFailed(outcome: PhaseRunOutcome | null): boolean {
-  if (!outcome) return true;
-  return outcome.exitCode !== 0 || outcome.timedOut || outcome.aborted || outcome.stopReason === "error";
-}
-
-/**
- * Compact prompt for the learner role: task id/title plus the request for a
- * bullet list of reusable learnings. Deliberately not built with the phase
- * prompt builder, which targets the four executable phases.
- */
-export function buildLearnerPrompt(task: TaskFile): string {
-  const fm = task.frontmatter;
-  return (
-    [
-      `The task ${fm.id} "${fm.title}" has just been implemented and approved by review.`,
-      "Write the reusable learnings from this task as a bullet list, one insight per line",
-      'starting with "-": pitfalls encountered, project conventions worth remembering,',
-      "anything that would help future tasks. Output only the bullet list.",
-    ].join("\n") + "\n"
-  );
-}
+export type { SystemPromptOverrideText } from "./phase-context.ts";
+export type { LearnerResult } from "./phase-spawn.ts";
+export { buildLearnerPrompt } from "./phase-spawn.ts";
+export { spawnFailed } from "./phase-spawn.ts";
 
 /**
  * Executes the single phases of the loop on behalf of the engine: hooks,
@@ -97,144 +63,31 @@ export function buildLearnerPrompt(task: TaskFile): string {
  */
 export class PhaseExecutor {
   readonly #deps: PhaseExecutorDeps;
-  readonly #skills = new Map<PhaseName, ResolvedSkill | null>();
-  readonly #autoModelWarned = new Set<RoleName>();
+  readonly #context: PhaseContext;
+  readonly #spawner: PhaseSpawner;
 
   constructor(deps: PhaseExecutorDeps) {
     this.#deps = deps;
-  }
-
-  async #skill(phase: PhaseName): Promise<ResolvedSkill | null> {
-    if (!this.#skills.has(phase)) {
-      const skill = await resolvePhaseSkill(phase);
-      if (!skill) {
-        this.#deps.onNotify(`skill for phase ${phase} not found: prompt without a skill block`, "warning");
-      }
-      this.#skills.set(phase, skill);
-    }
-    return this.#skills.get(phase) ?? null;
-  }
-
-  /**
-   * Applies the configured policy to an override that cannot be honored
-   * (unreadable file, missing file/text value): loud by default, downgraded
-   * to a warning when the operator asked for "skip". Never silent.
-   */
-  #unusableOverride(phase: PhaseName, detail: string): undefined {
-    if (this.#deps.config.prompts.unsupportedPolicy === "error") {
-      throw new Error(`system prompt override for phase ${phase}: ${detail}`);
-    }
-    this.#deps.onNotify(`system prompt override for phase ${phase} ignored: ${detail}`, "warning");
-    return undefined;
-  }
-
-  /**
-   * System prompt override for a phase, resolved from its configured source
-   * (inline text or a file relative to the project root). All four
-   * mode/source combinations of the schema are supported; the mode decides
-   * whether the text replaces the agent system prompt or is appended to it.
-   */
-  async #systemPromptOverride(phase: PhaseName): Promise<SystemPromptOverrideText | undefined> {
-    const { config } = this.#deps;
-    const override = config.prompts.phaseOverrides[phase];
-    if (!override) return undefined;
-    if (override.source === "text") {
-      if (!override.text) return this.#unusableOverride(phase, 'source "text" without a "text" value');
-      return { mode: override.mode, content: override.text };
-    }
-    if (!override.file) return this.#unusableOverride(phase, 'source "file" without a "file" value');
-    const file = path.resolve(config.projectRoot, override.file);
-    try {
-      return { mode: override.mode, content: await readFile(file, "utf8") };
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      return this.#unusableOverride(phase, `cannot read ${file} (${reason})`);
-    }
-  }
-
-  /**
-   * Warn once per role about the "auto" model: in ephemeral mode the agent CLI
-   * gets no --model flag and falls back to the last model used interactively,
-   * which is rarely what the operator expects from an unattended loop.
-   */
-  #warnAutoModel(role: RoleName): void {
-    if (this.#autoModelWarned.has(role)) return;
-    this.#autoModelWarned.add(role);
-    this.#deps.onNotify(
-      `role ${role} has model "auto": the agent CLI picks the last model used interactively, ` +
-        `set agents.${role}_model to pin it`,
-      "warning",
-    );
-  }
-
-  /**
-   * Open a measurement handle for a phase about to run. The configured model
-   * is only a fallback: the meter prefers the model observed on the stream.
-   */
-  #beginMeter(spec: string, task: string, phase: string, attempt: number, role: RoleName): PhaseHandle | null {
-    const meter = this.#deps.meter;
-    if (!meter) return null;
-    const configured = this.#deps.config.roles[role].model;
-    return meter.beginPhase({
-      spec,
-      task,
-      phase,
-      attempt,
-      role,
-      model: configured && configured !== "auto" ? configured : null,
+    this.#context = new PhaseContext({
+      config: deps.config,
+      specDir: deps.specDir,
+      onNotify: deps.onNotify,
+      meter: deps.meter,
     });
-  }
-
-  async #spawn(
-    taskId: string,
-    label: string,
-    role: RoleName,
-    prompt: string,
-    systemPromptOverride: SystemPromptOverrideText | undefined,
-    signal: AbortSignal | undefined,
-    captureText: boolean,
-    meterHandle: PhaseHandle | null = null,
-  ): Promise<LearnerResult> {
-    const { config } = this.#deps;
-    // Every phase reaches the agent through here, so charging the budget at
-    // this single point is what makes the ceilings inescapable. It throws
-    // before the log file is opened: a refused spawn leaves nothing behind.
-    this.#deps.budget.consume();
-    const writer = new PhaseLogWriter(this.#deps.specDir, taskId, label, {
-      noLogFiles: config.run.noLogFiles,
-      onFailure: (message) => this.#deps.onNotify(message, "warning"),
+    this.#spawner = new PhaseSpawner({
+      config: deps.config,
+      specDir: deps.specDir,
+      budget: deps.budget,
+      spawnPhase: deps.spawnPhase,
+      onNotify: deps.onNotify,
+      onStream: deps.onStream,
+      onLogPath: deps.onLogPath,
+      onPhaseStart: deps.onPhaseStart,
+      onLogLine: deps.onLogLine,
+      meter: deps.meter,
+      warnAutoModel: (role) => this.#context.warnAutoModel(role),
+      beginMeter: (spec, task, phase, attempt, role) => this.#context.beginMeter(spec, task, phase, attempt, role),
     });
-    this.#deps.onLogPath(writer.path);
-    this.#deps.onPhaseStart();
-    if (config.run.showPrompt) writer.writeLine(`$ prompt\n${prompt}`);
-    let text = "";
-    const roleConfig = config.roles[role];
-    if (!roleConfig.model || roleConfig.model === "auto") this.#warnAutoModel(role);
-    try {
-      const outcome = await this.#deps.spawnPhase({
-        prompt,
-        model: roleConfig.model,
-        thinkingLevel: roleConfig.thinkingLevel,
-        appendSystemPrompt: systemPromptOverride?.mode === "append" ? systemPromptOverride.content : undefined,
-        systemPrompt: systemPromptOverride?.mode === "replace" ? systemPromptOverride.content : undefined,
-        cwd: config.projectRoot,
-        timeoutMs: config.run.timeoutMs,
-        signal,
-        onEvent: (event) => {
-          if (meterHandle) this.#deps.meter?.recordEvent(meterHandle, event);
-          // The learner's answer is read off the completed message: over the
-          // wire the deltas carry no cumulative snapshot to read it from.
-          if (captureText && event.type === "message_end") text += assistantText(event.message);
-          const formatted = formatStreamEvent(event);
-          writer.writeStream(formatted);
-          this.#deps.onStream(event, formatted);
-        },
-        onStderrLine: (line) => writer.writeLine(`! stderr: ${line}`),
-      });
-      return { outcome, text };
-    } finally {
-      await writer.close();
-    }
   }
 
   /**
@@ -263,7 +116,7 @@ export class PhaseExecutor {
     const blockOnFailure = "firstAttempt" in input ? input.firstAttempt : true;
     // The handle spans hooks and subprocess alike: the phase duration in the
     // ledger is the whole step, not just the agent session.
-    const meterHandle = this.#beginMeter(input.specId, task.frontmatter.id, phase, input.attempt, role);
+    const meterHandle = this.#context.beginMeter(input.specId, task.frontmatter.id, phase, input.attempt, role);
     try {
       const preResults = await this.#deps.runHooks(config.hooks, phase, "pre", config.projectRoot, {
         onStdoutLine: (line) => this.#deps.onLogLine(`[pre-${phase}] ${line}`),
@@ -272,35 +125,8 @@ export class PhaseExecutor {
       if (preResults.some((r) => !r.ok) && blockOnFailure) {
         return { preHooksOk: false, hookResults: preResults, outcome: null };
       }
-      const [skill, systemPromptOverride] = await Promise.all([this.#skill(phase), this.#systemPromptOverride(phase)]);
-
-      // Project-level learnings accumulated across specs.
-      let projectLearnings: string[] | undefined;
-      try {
-        const loaded = await loadProjectLearnings(config.projectRoot, config.specsDir);
-        if (loaded.length > 0) projectLearnings = loaded;
-      } catch {
-        // Project learnings are optional.
-      }
-
-      const prompt = buildPhasePrompt({
-        config,
-        specDir: this.#deps.specDir,
-        phase,
-        task,
-        learnings: input.learnings,
-        skill,
-        preHookResults: preResults,
-        // Channels a phase cannot declare keep the value the wide signature
-        // defaulted them to: no feedback, no format error, no contracts, no
-        // routed fixes.
-        reviewFeedback: "reviewFeedback" in input ? input.reviewFeedback : null,
-        reviewFormatError: "reviewFormatError" in input ? input.reviewFormatError : null,
-        upstreamProvides: "upstreamProvides" in input ? input.upstreamProvides : undefined,
-        routedSuggestions: "routedSuggestions" in input ? input.routedSuggestions : undefined,
-        projectLearnings,
-      });
-      const { outcome } = await this.#spawn(
+      const { prompt, systemPromptOverride } = await this.#context.buildPrompt(phase, input, preResults);
+      const { outcome } = await this.#spawner.spawn(
         task.frontmatter.id,
         phase,
         role,
@@ -324,13 +150,7 @@ export class PhaseExecutor {
 
   /** Run the learner role and capture its textual output. */
   async runLearner(task: TaskFile, opts: { signal?: AbortSignal } = {}): Promise<LearnerResult> {
-    const spec = path.basename(this.#deps.specDir);
-    const meterHandle = this.#beginMeter(spec, task.frontmatter.id, "learner", 1, "learner");
-    try {
-      return await this.#spawn(task.frontmatter.id, "learner", "learner", buildLearnerPrompt(task), undefined, opts.signal, true, meterHandle);
-    } finally {
-      if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
-    }
+    return this.#spawner.runLearner(task, opts);
   }
 
   /**
@@ -338,31 +158,7 @@ export class PhaseExecutor {
    * merge related entries, and drop outdated insights. Returns the cleaned list.
    */
   async compactLearnings(learnings: string[], opts: { signal?: AbortSignal } = {}): Promise<string[]> {
-    const prompt = [
-      "Review the following accumulated project learnings. Clean up the list:",
-      "- Remove entries that are outdated or no longer relevant.",
-      "- Merge entries that say the same thing in different ways.",
-      "- Keep only actionable, reusable insights — drop trivia.",
-      "- Output only the cleaned bullet list, one insight per line starting with \"-\".",
-      "",
-      learnings.map((l) => `- ${l}`).join("\n"),
-    ].join("\n");
-    const meterHandle = this.#beginMeter(path.basename(this.#deps.specDir), "learnings", "compact", 1, "learner");
-    try {
-      const { text } = await this.#spawn(
-        "learnings",
-        "compact",
-        "learner",
-        prompt,
-        undefined,
-        opts.signal,
-        true,
-        meterHandle,
-      );
-      return parseLearnings(text);
-    } finally {
-      if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
-    }
+    return this.#spawner.compactLearnings(learnings, opts);
   }
 
   /** Run a hook command and stream its output through the log channel. */
@@ -371,14 +167,6 @@ export class PhaseExecutor {
     label: string,
     opts: { cwd: string; timeoutMs: number; signal?: AbortSignal } = { cwd: ".", timeoutMs: 30_000 },
   ): Promise<HookResult> {
-    const { runHook: runHookImpl } = await import("../loop/hooks.ts");
-    return runHookImpl(command, {
-      cwd: opts.cwd,
-      timeoutMs: opts.timeoutMs,
-      stream: {
-        onStdoutLine: (line) => this.#deps.onLogLine(`[${label}] ${line}`),
-        onStderrLine: (line) => this.#deps.onLogLine(`[${label}] ! ${line}`),
-      },
-    });
+    return this.#spawner.runHook(command, label, opts);
   }
 }
