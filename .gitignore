@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output (the project ships source; no build step)
+dist/
+build/
+*.tsbuildinfo
+
+# Logs and scratch
+*.log
+.orchestra/logs/
+tmp/
+
+# Local pi runtime state (project .pi/settings.json may be committed on purpose)
+.pi/sessions/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Test / coverage artifacts
+coverage/
+.nyc_output/

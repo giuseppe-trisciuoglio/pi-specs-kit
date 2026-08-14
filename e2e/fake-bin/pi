@@ -1,0 +1,111 @@
+#!/bin/bash
+# Fake agent CLI for the e2e harness: emulates `--print --mode json` by
+# emitting a realistic JSONL event stream on stdout. Behavior is driven by
+# environment variables so tests can exercise retries, halts and missing
+# review files without a real agent.
+set -u
+
+echo "fake pi starting" >&2
+
+# The prompt is always the last argument.
+PROMPT="${!#}"
+
+# Detect the loop phase from markers in the prompt text. The review prompt is
+# the only one carrying a concrete report path (with a numeric task id); skill
+# excerpts inlined in other prompts may mention the pattern with placeholders.
+PHASE="unknown"
+TASK_ID=$(printf '%s' "$PROMPT" | grep -oE 'tasks/TASK-[0-9]+--review\.md' | head -n 1 | sed -e 's|tasks/||' -e 's|--review\.md||')
+if [[ -n "$TASK_ID" ]]; then
+  PHASE="review"
+elif [[ "$PROMPT" == *"bullet list"* ]]; then
+  PHASE="learner"
+elif [[ "$PROMPT" == *"Modify the code in the workspace"* ]]; then
+  PHASE="implementation"
+elif [[ "$PROMPT" == *"Clean up the code touched"* ]]; then
+  PHASE="cleanup"
+elif [[ "$PROMPT" == *"Update the specification documentation"* ]]; then
+  PHASE="sync"
+fi
+
+# Emit the JSONL event stream: session, agent/turn lifecycle, a tool call with
+# its execution events, one assistant message streamed as deltas, then the
+# closing markers. Shaped after a stream captured from a real run, so the
+# parser and the transcript are exercised on the events they see in practice.
+emit_stream() {
+  local text="$1"
+  local stop_reason="$2"
+  local error_message="$3"
+  printf '{"type":"session","id":"fake-session"}\n'
+  printf '{"type":"agent_start"}\n'
+  printf '{"type":"turn_start"}\n'
+  printf '{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"prompt"}]}}\n'
+  printf '{"type":"message_start","message":{"role":"assistant","content":[],"provider":"fake","model":"fake-model"}}\n'
+  printf '{"type":"message_update","assistantMessageEvent":{"type":"toolcall_start","contentIndex":0}}\n'
+  printf '{"type":"message_update","assistantMessageEvent":{"type":"toolcall_end","contentIndex":0,"toolCall":{"type":"toolCall","id":"call-1","name":"read","arguments":{"path":"README.md"}}}}\n'
+  printf '{"type":"message_end","message":{"role":"assistant","stopReason":"toolUse","provider":"fake","model":"fake-model","content":[{"type":"toolCall","id":"call-1","name":"read","arguments":{"path":"README.md"}}],"usage":{"input":100,"output":10,"cacheRead":0,"cacheWrite":0,"totalTokens":110,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}}}\n'
+  printf '{"type":"tool_execution_start","toolCallId":"call-1","toolName":"read","args":{"path":"README.md"}}\n'
+  printf '{"type":"tool_execution_end","toolCallId":"call-1","toolName":"read","result":{"content":[{"type":"text","text":"file contents"}]},"isError":false}\n'
+  printf '{"type":"turn_start"}\n'
+  printf '{"type":"message_start","message":{"role":"assistant","content":[],"provider":"fake","model":"fake-model"}}\n'
+  printf '{"type":"message_update","assistantMessageEvent":{"type":"text_start","contentIndex":0}}\n'
+  printf '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"%s"}}\n' "$text"
+  printf '{"type":"message_end","message":{"role":"assistant","stopReason":"%s","provider":"fake","model":"fake-model","content":[{"type":"text","text":"%s"}],"usage":{"input":200,"output":20,"cacheRead":0,"cacheWrite":0,"totalTokens":220,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}}}\n' \
+    "$stop_reason" "$text"
+  printf '{"type":"turn_end","toolResults":[]}\n'
+  if [[ -n "$error_message" ]]; then
+    printf '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"error","errorMessage":"%s"}]}\n' \
+      "$error_message"
+  else
+    printf '{"type":"agent_end","messages":[{"role":"assistant","stopReason":"%s"}]}\n' "$stop_reason"
+  fi
+  printf '{"type":"agent_settled"}\n'
+}
+
+# Forced-failure injection: fail the first FAKE_PI_FAIL_TIMES invocations of
+# FAKE_PI_FAIL_PHASE. The counter lives in FAKE_PI_STATE_FILE so it survives
+# across separate processes.
+if [[ -n "${FAKE_PI_FAIL_PHASE:-}" && "$PHASE" == "$FAKE_PI_FAIL_PHASE" ]]; then
+  STATE_FILE="${FAKE_PI_STATE_FILE:?FAKE_PI_STATE_FILE is required for failure injection}"
+  mkdir -p "$(dirname "$STATE_FILE")"
+  COUNT=0
+  if [[ -f "$STATE_FILE" ]]; then
+    COUNT=$(cat "$STATE_FILE")
+    [[ "$COUNT" =~ ^[0-9]+$ ]] || COUNT=0
+  fi
+  COUNT=$((COUNT + 1))
+  printf '%s' "$COUNT" > "$STATE_FILE"
+  if (( COUNT <= ${FAKE_PI_FAIL_TIMES:-0} )); then
+    echo "fake pi failing phase $PHASE (invocation $COUNT)" >&2
+    emit_stream "simulated failure of phase $PHASE" "error" "fake pi forced failure"
+    exit 1
+  fi
+fi
+
+# Assistant text depends on the phase; the learner must produce a bullet list.
+case "$PHASE" in
+  learner)
+    TEXT='- persist the loop state after every step\n- keep task files small and focused'
+    ;;
+  *)
+    TEXT="fake pi completed phase $PHASE"
+    ;;
+esac
+
+# The review phase must leave a verdict report on disk, unless the test asked
+# us to skip it (to exercise the review file retry path).
+if [[ "$PHASE" == "review" && "${FAKE_PI_SKIP_REVIEW_FILE:-0}" != "1" && -n "${FAKE_PI_SPEC_DIR:-}" ]]; then
+  mkdir -p "$FAKE_PI_SPEC_DIR/tasks"
+  cat > "$FAKE_PI_SPEC_DIR/tasks/${TASK_ID}--review.md" <<EOF
+---
+review_status: ${FAKE_PI_REVIEW_VERDICT:-PASSED}
+summary: fake review for $TASK_ID
+---
+
+## Review
+
+The implementation matches the task description; no issues found.
+EOF
+fi
+
+emit_stream "$TEXT" "stop" ""
+exit 0

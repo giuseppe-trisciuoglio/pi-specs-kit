@@ -1,0 +1,35 @@
+version: 2
+updates:
+  # Keep npm dependencies (runtime + dev) fresh.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Bundle minor/patch updates of non-pi dev tools into a single PR.
+      dev-tooling:
+        applies-to: version-updates
+        patterns:
+          - "eslint"
+          - "typescript-eslint"
+          - "globals"
+          - "typescript"
+          - "@types/node"
+      # pi runtime packages move together; bundle their updates too.
+      pi-packages:
+        applies-to: version-updates
+        patterns:
+          - "@earendil-works/*"
+
+  # Keep GitHub Actions versions current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(ci)"

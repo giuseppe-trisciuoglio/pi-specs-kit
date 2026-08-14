@@ -1,0 +1,75 @@
+{
+  "name": "@giuseppe.trisciuoglio/pi-specs-kit",
+  "version": "1.0.0",
+  "description": "Native task-loop runner extension for pi: runs implementation → review → cleanup → sync as orchestrated pi subprocesses with persisted state and safe resume.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Giuseppe Trisciuoglio",
+  "homepage": "https://github.com/giuseppe-trisciuoglio/pi-rules#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/giuseppe-trisciuoglio/pi-rules.git"
+  },
+  "bugs": {
+    "url": "https://github.com/giuseppe-trisciuoglio/pi-rules/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "pi-coding-agent",
+    "specification-driven-development",
+    "task-loop",
+    "agent-orchestration",
+    "llm",
+    "automation"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "src",
+    "skills",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "pi": {
+    "name": "pi-specs-kit",
+    "displayName": "Specs Kit",
+    "description": "Native task-loop runner for pi: runs implementation → review → cleanup → sync as orchestrated pi subprocesses.",
+    "category": "developer-tools",
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --test",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
+  },
+  "dependencies": {
+    "yaml": "^2.8.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^0.84.1",
+    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@earendil-works/pi-tui": "^0.84.1",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0",
+    "typebox": "^1.3.13",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}
