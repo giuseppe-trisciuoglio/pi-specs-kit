@@ -159,13 +159,16 @@ export function buildPhasePrompt(ctx: PromptContext): string {
     blocks.push(`<memory>\n${learnings.map((l) => `- ${l}`).join("\n")}\n</memory>`);
   }
 
-  // Pre-hook outcomes, each with command, status and bounded output.
+  // Pre-hook outcomes. Command and status are shown for every hook — that
+  // certifies the gate ran and what verdict it returned. Output enters the
+  // prompt only for failed hooks, where it carries the bounded context the
+  // next spawn needs to act on; an ok hook's stdout is not actionable.
   if (ctx.preHookResults && ctx.preHookResults.length > 0) {
     const lines: string[] = [];
     for (const hook of ctx.preHookResults) {
       lines.push(`$ ${hook.command}`);
       lines.push(`status: ${hook.ok ? "ok" : "failed"}`);
-      if (hook.output.trim()) {
+      if (!hook.ok && hook.output.trim()) {
         lines.push("output:");
         lines.push(truncateOutput(hook.output));
       }

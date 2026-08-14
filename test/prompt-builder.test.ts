@@ -151,10 +151,74 @@ test("hooks block reports command, status and bounded output", () => {
       ],
     }),
   );
-  assert.ok(prompt.includes("$ npm test\nstatus: ok\noutput:\nall green"));
+  // A hook that passes certifies the gate ran green; its command and status
+  // are enough — its stdout is not context the agent needs to act on.
+  assert.ok(prompt.includes("$ npm test\nstatus: ok"));
+  assert.ok(!prompt.includes("all green"), "ok hook output must not enter the prompt");
+  // A failing hook carries the bounded output so the next spawn has repair context.
   assert.ok(prompt.includes("$ npm run build\nstatus: failed"));
   assert.ok(prompt.includes("characters omitted"));
   assert.ok(prompt.length < 8000);
+});
+
+test("hooks block omits output for hooks that pass", () => {
+  const prompt = buildPhasePrompt(
+    makeCtx({
+      preHookResults: [
+        { command: "npm test", ok: true, output: "all green\nTests: 42 passed" },
+      ],
+    }),
+  );
+  assert.match(prompt, /\$ npm test\nstatus: ok/);
+  assert.ok(!prompt.includes("output:"), "an ok hook never carries its stdout");
+  assert.ok(!prompt.includes("all green"), "ok hook output must be dropped before the prompt");
+});
+
+test("hooks block keeps output (with truncation) for hooks that fail", () => {
+  const long = "x".repeat(7000);
+  const prompt = buildPhasePrompt(
+    makeCtx({
+      preHookResults: [{ command: "npm run build", ok: false, output: long }],
+    }),
+  );
+  assert.ok(prompt.includes("$ npm run build\nstatus: failed"));
+  assert.ok(prompt.includes("output:"));
+  assert.ok(prompt.includes("characters omitted"));
+  assert.ok(prompt.length < 8000, "truncation cap is preserved");
+});
+
+test("hooks block mixes ok and failed hooks: ok drops output, failed keeps it", () => {
+  const prompt = buildPhasePrompt(
+    makeCtx({
+      preHookResults: [
+        { command: "npm test", ok: true, output: "all green" },
+        { command: "npm run lint", ok: true, output: "no warnings" },
+        { command: "npm run build", ok: false, output: "build failed at step 3" },
+      ],
+    }),
+  );
+  // Two passing hooks: only command + status.
+  assert.ok(prompt.includes("$ npm test\nstatus: ok"));
+  assert.ok(prompt.includes("$ npm run lint\nstatus: ok"));
+  assert.ok(!prompt.includes("all green"));
+  assert.ok(!prompt.includes("no warnings"));
+  // One failing hook: bounded output preserved.
+  assert.ok(prompt.includes("$ npm run build\nstatus: failed"));
+  assert.ok(prompt.includes("output:"));
+  assert.ok(prompt.includes("build failed at step 3"));
+});
+
+test("hooks block emits command and status for an ok hook with empty output", () => {
+  // Command + status stay even when an ok hook produced no stdout — the model
+  // still needs to see which command ran and that it passed.
+  const prompt = buildPhasePrompt(
+    makeCtx({
+      preHookResults: [{ command: "true", ok: true, output: "" }],
+    }),
+  );
+  assert.ok(prompt.includes("<hooks>"));
+  assert.ok(prompt.includes("$ true\nstatus: ok"));
+  assert.ok(!prompt.includes("output:"), "no dangling output header for an empty stdout");
 });
 
 test("hooks block omitted without hook results", () => {

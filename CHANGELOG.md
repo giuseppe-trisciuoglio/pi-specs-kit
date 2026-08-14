@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No changes yet._
+### Changed
+
+- Pre-hook output in the phase prompt is now shown only for hooks that
+  failed; passing hooks contribute their command and status but not their
+  stdout. The output of a passing build or test suite was repeating verbatim
+  in every spawn of every phase, so the prompt carried the same green
+  context as many times as the loop re-entered the phase. Failed-hook
+  output — the bounded context the next spawn needs to act on — is
+  preserved unchanged, including the existing 6000/4500 character
+  truncation. This is a deliberate change in what the agent reads, pinned
+  by dedicated tests rather than hidden inside a cleanup pass.
 
 ## [1.0.0] - 2025-08-10
 
