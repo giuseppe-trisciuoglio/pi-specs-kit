@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { copyFile, readFile, rename, writeFile } from "node:fs/promises";
 import YAML from "yaml";
-import type { HookStage, PhaseName, RoleName } from "./specs-kit-config.ts";
+import type { HookStage, PanelReviewer, PhaseName, RoleName } from "./specs-kit-config.ts";
 
 /**
  * Paths already backed up in this process: the original file is snapshotted
@@ -144,6 +144,24 @@ export async function updateRoleConfig(
     } else if (update.thinkingLevel !== undefined) {
       agents.set(`${role}_thinking_level`, update.thinkingLevel);
     }
+  });
+}
+
+/**
+ * Replace the declared adversarial review panel
+ * (`adversarial_review.panel`), leaving every other field untouched. The list
+ * is written whole rather than merged: a reviewer removed from the panel has to
+ * disappear from the file, or the next review still spends on a model the
+ * operator just took out. An empty list clears the panel.
+ */
+export async function updateReviewPanel(configPath: string, reviewers: PanelReviewer[]): Promise<void> {
+  await rewriteConfig(configPath, (doc) => {
+    const entries = reviewers.map((reviewer) =>
+      reviewer.thinkingLevel === undefined
+        ? { model: reviewer.model }
+        : { model: reviewer.model, thinking: reviewer.thinkingLevel },
+    );
+    ensureMap(doc, "adversarial_review").set("panel", doc.createNode(entries));
   });
 }
 

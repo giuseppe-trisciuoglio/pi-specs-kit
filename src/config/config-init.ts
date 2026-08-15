@@ -53,6 +53,9 @@ export function defaultConfigYaml(): string {
       max_spawns_per_run: run.maxSpawnsPerRun,
       max_run_duration: formatDurationMs(run.maxRunDurationMs),
     },
+    // Empty on purpose: the review panel is declared model by model, because
+    // reviewing spends on every model listed here.
+    adversarial_review: { panel: [] },
     git: { baseBranch: DEFAULT_BASE_BRANCH },
     hooks: {
       timeout: formatDurationMs(hooks.timeoutMs),

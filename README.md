@@ -168,7 +168,7 @@ within `max_attempts`).
 | `/specs-kit-status` | — | Current phase, attempt, progress, last error, log path. |
 | `/specs-kit-refresh` | `[--spec p]` | Regenerate the fix plan from the task files: a task turned reviewed is marked done, one sent back to any other status returns to the queue. |
 | `/specs-kit-attach` | — | Fullscreen transcript of the phase running now. |
-| `/specs-kit-config` | — | Pick model (searchable list) and thinking level per role, written to the configuration. |
+| `/specs-kit-config` | — | Pick model (searchable list) and thinking level per role, edit the adversarial review panel, the phase hooks and the run options, written to the configuration. |
 | `/specs-kit-new` | — | Brainstorm a new functional specification and set it active on completion. |
 | `/specs-kit-spec` | — | Show or set the active spec. |
 | `/specs-kit-continue` | — | Advance the active spec to its next authoring step. |
@@ -235,6 +235,15 @@ which leaves the choice to the agent CLI: in ephemeral mode that means the last
 model used interactively, so pin `<role>_model` for reproducible runs (the loop
 warns once per role). `/specs-kit-config` rewrites these fields surgically (with
 a `.bak` backup on the first write of each session).
+
+**The adversarial review panel** is a separate, ordered list under
+`adversarial_review.panel`: the models the pre-implementation review runs as
+independent reviewers, each with an optional `thinking` level. It is empty by
+default and is never filled in automatically — a review spends on every model
+listed here, and several providers bill per token on every model they expose, so
+the panel stays an explicit choice. Edit it from `/specs-kit-config` →
+*Adversarial review panel*, where the order of the list decides which reviewer
+holds which critique angle.
 
 ## Spending ceilings
 

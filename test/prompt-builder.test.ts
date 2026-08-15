@@ -22,6 +22,7 @@ function makeConfig(overrides: Partial<SpecsKitConfig> = {}): SpecsKitConfig {
     mode: "full",
     pollIntervalMs: 1000,
     roles: defaultRoles(),
+    reviewPanel: [],
     run: { ...DEFAULT_RUN_CONFIG },
     git: { baseBranch: "main" },
     hooks: defaultHooks(),

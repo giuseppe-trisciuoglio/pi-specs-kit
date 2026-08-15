@@ -15,6 +15,7 @@ import {
   updateActiveSpec,
   updateHooksTimeout,
   updatePhaseHooks,
+  updateReviewPanel,
   updateRoleConfig,
   updateRunConfig,
 } from "../src/config/config-writer.ts";
@@ -478,6 +479,90 @@ test("ensureConfigFile creates a default file that loads back as the defaults", 
     }
     // No spec is picked yet: the authoring tool writes it later.
     assert.equal(config.spec, undefined);
+  });
+});
+
+test("the review panel is read as an ordered list of reviewers", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, CONFIG_FILE_NAME),
+      [
+        "adversarial_review:",
+        "  panel:",
+        "    - model: provider-a/first",
+        "    - model: provider-b/second",
+        "      thinking: high",
+        "    - model: provider-c/third",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const config = await loadSpecsKitConfig(dir);
+    // Order is meaningful: it decides which reviewer gets which critique angle.
+    assert.deepEqual(config.reviewPanel, [
+      { model: "provider-a/first" },
+      { model: "provider-b/second", thinkingLevel: "high" },
+      { model: "provider-c/third" },
+    ]);
+  });
+});
+
+test("a review panel that is absent or malformed reads as empty", async () => {
+  await withTempDir(async (dir) => {
+    for (const yaml of [
+      "",
+      "adversarial_review: {}\n",
+      "adversarial_review:\n  panel: not-a-list\n",
+      // Entries without a model name nothing to spawn, so they are dropped
+      // instead of becoming a reviewer the run cannot start.
+      "adversarial_review:\n  panel:\n    - thinking: high\n    - {}\n",
+    ]) {
+      await writeFile(path.join(dir, CONFIG_FILE_NAME), yaml, "utf8");
+      assert.deepEqual((await loadSpecsKitConfig(dir)).reviewPanel, [], yaml);
+    }
+  });
+});
+
+test("a review panel entry may be written as a bare model string", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, CONFIG_FILE_NAME),
+      "adversarial_review:\n  panel: [provider-a/first, provider-b/second]\n",
+      "utf8",
+    );
+    assert.deepEqual((await loadSpecsKitConfig(dir)).reviewPanel, [
+      { model: "provider-a/first" },
+      { model: "provider-b/second" },
+    ]);
+  });
+});
+
+test("updateReviewPanel replaces the list and leaves the rest of the file alone", async () => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, CONFIG_FILE_NAME);
+    await writeFile(file, "specs_dir: docs/custom-specs\nagents:\n  agent_model: provider/fast\n", "utf8");
+
+    await updateReviewPanel(file, [
+      { model: "provider-a/first" },
+      { model: "provider-b/second", thinkingLevel: "high" },
+    ]);
+
+    const config = await loadSpecsKitConfig(dir);
+    assert.deepEqual(config.reviewPanel, [
+      { model: "provider-a/first" },
+      { model: "provider-b/second", thinkingLevel: "high" },
+    ]);
+    assert.equal(config.specsDir, "docs/custom-specs");
+    assert.equal(config.roles.agent.model, "provider/fast");
+
+    // The list is replaced wholesale: a reviewer removed from the panel must
+    // not survive in the file, or the next run spends on a model the operator
+    // just took out.
+    await updateReviewPanel(file, [{ model: "provider-a/first" }]);
+    assert.deepEqual((await loadSpecsKitConfig(dir)).reviewPanel, [{ model: "provider-a/first" }]);
+
+    await updateReviewPanel(file, []);
+    assert.deepEqual((await loadSpecsKitConfig(dir)).reviewPanel, []);
   });
 });
 

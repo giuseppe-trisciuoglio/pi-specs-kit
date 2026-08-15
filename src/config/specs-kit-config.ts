@@ -76,6 +76,29 @@ export interface HooksConfig {
   sync: PhaseHooks;
 }
 
+/**
+ * One member of the adversarial review panel. The panel is declared, never
+ * inferred from the models the CLI happens to expose: several providers bill
+ * per token on every model they list, so picking one automatically would spend
+ * on a model the operator never chose.
+ */
+export interface PanelReviewer {
+  /** Model id passed to the agent CLI, as "provider/model". */
+  model: string;
+  /** Thinking level for this reviewer; undefined means "agent CLI default". */
+  thinkingLevel?: string;
+}
+
+/**
+ * Critique angle of each panel slot, in order. The names are what the review
+ * skill assigns to the reviewers and what the configuration menu shows, so the
+ * operator sees which angle they are choosing a model for.
+ */
+export const PANEL_PERSONAS: readonly string[] = ["The Adversary", "The Operator", "The Executor", "The Historian"];
+
+/** Panel slots the configuration accepts; every extra reviewer is another billed run. */
+export const MAX_PANEL_REVIEWERS = PANEL_PERSONAS.length;
+
 export interface SystemPromptOverride {
   mode: "append" | "replace";
   source: "file" | "text";
@@ -103,6 +126,8 @@ export interface SpecsKitConfig {
   mode: "fast" | "full";
   pollIntervalMs: number;
   roles: Record<RoleName, RoleConfig>;
+  /** Declared adversarial review panel, in persona order; empty when unset. */
+  reviewPanel: PanelReviewer[];
   run: RunConfig;
   git: { baseBranch: string };
   hooks: HooksConfig;
@@ -204,6 +229,25 @@ function positiveDuration(value: unknown, file: string, field: string): number |
   return ms;
 }
 
+/**
+ * Read the declared review panel. An entry is either a bare model string or a
+ * map with a model and an optional thinking level; entries naming no model are
+ * dropped, since there is nothing to spawn for them. Extra reviewers beyond the
+ * supported slots are cut: each one is another billed run.
+ */
+function panelReviewers(value: unknown): PanelReviewer[] {
+  if (!Array.isArray(value)) return [];
+  const reviewers: PanelReviewer[] = [];
+  for (const entry of value) {
+    const model = typeof entry === "string" ? text(entry) : text(record(entry).model);
+    if (model === undefined) continue;
+    const thinkingLevel = typeof entry === "string" ? undefined : text(record(entry).thinking);
+    reviewers.push(thinkingLevel === undefined ? { model } : { model, thinkingLevel });
+    if (reviewers.length === MAX_PANEL_REVIEWERS) break;
+  }
+  return reviewers;
+}
+
 /** Normalize a single command string or a list of command strings to a list. */
 function commandList(value: unknown): string[] {
   if (typeof value === "string") return [value];
@@ -226,6 +270,7 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
     mode: "fast",
     pollIntervalMs: 100,
     roles: defaultRoles(),
+    reviewPanel: [],
     run: { ...DEFAULT_RUN_CONFIG },
     git: { baseBranch: DEFAULT_BASE_BRANCH },
     hooks: defaultHooks(),
@@ -261,6 +306,8 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
       thinkingLevel: text(agents[`${role}_thinking_level`]),
     };
   }
+
+  config.reviewPanel = panelReviewers(record(doc.adversarial_review).panel);
 
   const src = record(doc.run);
   const run = config.run;
