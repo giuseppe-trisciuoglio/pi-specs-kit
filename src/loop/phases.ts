@@ -48,6 +48,12 @@ export interface PhaseStepResult {
   /** False when a pre hook failed: the phase subprocess never started. */
   preHooksOk: boolean;
   hookResults: HookResult[];
+  /** False when a post hook failed after the phase subprocess ran. */
+  postHooksOk: boolean;
+  /** The failed post hooks only; empty when every post hook passed. The
+   * caller feeds them to the next attempt instead of re-deriving them from
+   * the full result list. */
+  failedPostHooks: HookResult[];
   outcome: PhaseRunOutcome | null;
 }
 
@@ -96,7 +102,8 @@ export class PhaseExecutor {
    * tie the phase name to it, so the body can only read what the calling
    * node handed over at the boundary: the fix plan cannot reach the prompt
    * through here. A failed pre hook blocks the phase (the engine counts the
-   * attempt); a failed post hook is only a warning.
+   * attempt); a failed post hook is reported to the caller, which owns what
+   * a red gate means for its phase.
    */
   async run(phase: "implementation", input: ImplementationPhaseInput): Promise<PhaseStepResult>;
   async run(phase: "review", input: ReviewPhaseInput): Promise<PhaseStepResult>;
@@ -123,7 +130,7 @@ export class PhaseExecutor {
         onStderrLine: (line) => this.#deps.onLogLine(`[pre-${phase}] ! ${line}`),
       });
       if (preResults.some((r) => !r.ok) && blockOnFailure) {
-        return { preHooksOk: false, hookResults: preResults, outcome: null };
+        return { preHooksOk: false, hookResults: preResults, postHooksOk: true, failedPostHooks: [], outcome: null };
       }
       const { prompt, systemPromptOverride } = await this.#context.buildPrompt(phase, input, preResults);
       const { outcome } = await this.#spawner.spawn(
@@ -142,7 +149,13 @@ export class PhaseExecutor {
       });
       const failedPost = postResults.find((r) => !r.ok);
       if (failedPost) this.#deps.onNotify(`post-${phase} hook failed: ${failedPost.command}`, "warning");
-      return { preHooksOk: true, hookResults: [...preResults, ...postResults], outcome };
+      return {
+        preHooksOk: true,
+        hookResults: [...preResults, ...postResults],
+        postHooksOk: !failedPost,
+        failedPostHooks: failedPost ? postResults.filter((r) => !r.ok) : [],
+        outcome,
+      };
     } finally {
       if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
     }

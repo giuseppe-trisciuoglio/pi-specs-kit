@@ -58,6 +58,12 @@ export function declareFinalSyncNode(deps: TaskNodeDeps, plan: FixPlan, runState
         signal: deps.signal(),
       });
       if (!sy.preHooksOk || spawnFailed(sy.outcome)) deps.notify("final sync failed, continuing", "warning");
+      // The end-of-range sync shares the tail rule: no retry path, so a red
+      // post hook is recorded and named when the run closes.
+      if (!sy.postHooksOk) {
+        plan.state.postHookGateFailed = "sync";
+        await deps.persist(plan);
+      }
 
       // Compact project-level learnings at the end of the range.
       try {

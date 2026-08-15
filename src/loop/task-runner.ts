@@ -53,6 +53,7 @@ export class TaskRunner {
       feedback: null,
       lastVerdict: null,
       implStatus: "ok",
+      postHookFailures: null,
       routedSuggestions: [],
       runState,
     };

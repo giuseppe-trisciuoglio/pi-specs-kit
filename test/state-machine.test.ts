@@ -8,6 +8,7 @@ import { loadFixPlan, type FixPlan, type LoopState } from "../src/fixplan/fix-pl
 import { parseTaskFile } from "../src/tasks/task-parser.ts";
 import { LoopEngine, type LoopEndReason, type LoopStartOptions } from "../src/loop/engine.ts";
 import type { PhaseRunOutcome, PhaseSpawnOptions } from "../src/agent/spawner.ts";
+import { runPhaseHooks, type HookResult } from "../src/loop/hooks.ts";
 import { reviewFilePath } from "../src/loop/review-report.ts";
 
 const tmpDirs: string[] = [];
@@ -125,6 +126,7 @@ async function runLoop(
   behavior: Behavior,
   configure: (config: SpecsKitConfig) => void = () => {},
   startOpts: Partial<LoopStartOptions> = {},
+  runHooks: typeof runPhaseHooks = async () => [],
 ): Promise<RunResult> {
   const config = await loadSpecsKitConfig(root);
   configure(config);
@@ -171,7 +173,7 @@ async function runLoop(
     {
       config,
       spawnPhase,
-      runHooks: async () => [],
+      runHooks,
       commitCheckpoint: async (_root, message) => {
         checkpoints.push(message);
         return { committed: true };
@@ -883,4 +885,135 @@ test("a role left on the auto model warns once", async () => {
   const auto = run.notifications.filter((n) => n.message.includes('model "auto"'));
   assert.equal(auto.filter((n) => n.message.includes("role agent")).length, 1);
   assert.equal(auto.some((n) => n.message.includes("role reviewer")), false);
+});
+
+test("a red implementation post hook fails the attempt and does not reach review", async () => {
+  const { root, specDir } = await createSpec();
+  const FAILING_POST: HookResult = {
+    command: "npm run build",
+    ok: false,
+    exitCode: 1,
+    timedOut: false,
+    output: "build failed: 2 errors",
+  };
+  // The gate is red only for the first implementation post run: the retry
+  // then passes and the task completes, proving the attempt was spent without
+  // ever handing a broken workspace to the reviewer.
+  let postRuns = 0;
+  const run = await runLoop(
+    root,
+    specDir,
+    () => {},
+    (config) => {
+      config.mode = "fast";
+    },
+    {},
+    async (_hooks, _phase, stage) => {
+      if (stage !== "post") return [];
+      postRuns++;
+      return postRuns === 1 ? [FAILING_POST] : [];
+    },
+  );
+
+  assert.equal(run.result.reason, "completed");
+  const impls = run.calls.filter((c) => c.task === "TASK-001" && c.phase === "implementation");
+  assert.equal(impls.length, 2, "the red gate costs the attempt like a spawn failure");
+  assert.ok(
+    run.states.some((s) => s.current_task === "TASK-001" && s.retry_count === 1),
+    "retry_count 1 persisted after the red gate",
+  );
+  assert.ok(!impls[0].prompt.includes("post hooks of the previous attempt"), "first attempt has no gate history");
+  assert.ok(impls[1].prompt.includes("post hooks of the previous attempt (failed only):"));
+  assert.ok(impls[1].prompt.includes("$ npm run build\nstatus: failed\noutput:\nbuild failed: 2 errors"));
+  const review = run.calls.find((c) => c.task === "TASK-001" && c.phase === "review");
+  assert.ok(review, "the reviewer is only spawned after a green gate");
+  assert.ok(run.plan.done.includes("TASK-001"), "the task completes once the gate is green");
+});
+
+test("with attempts exhausted a red implementation post hook closes the task through the funnel", async () => {
+  const { root, specDir } = await createSpec();
+  const FAILING_POST: HookResult = {
+    command: "npm run build",
+    ok: false,
+    exitCode: 1,
+    timedOut: false,
+    output: "build failed",
+  };
+  const run = await runLoop(
+    root,
+    specDir,
+    () => {},
+    (config) => {
+      config.mode = "fast";
+      config.run.maxAttempts = 2;
+    },
+    {},
+    async (_hooks, _phase, stage) => (stage === "post" ? [FAILING_POST] : []),
+  );
+
+  // The exhaustion guard covers the new status: with the budget spent the
+  // red gate must route to the failure funnel, not loop back for a third try.
+  assert.equal(run.result.reason, "halted");
+  assert.ok(run.result.error?.includes("TASK-001"));
+  assert.equal(run.plan.state.step, "failed");
+  assert.equal(run.plan.state.retry_count, 2);
+  assert.equal(countCalls(run.calls, "TASK-001", "implementation"), 2);
+  assert.equal(run.calls.some((c) => c.task === "TASK-001" && c.phase === "review"), false);
+});
+
+test("a red post hook of cleanup or sync is recorded and reported at range close", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(
+    root,
+    specDir,
+    () => {},
+    (config) => {
+      config.mode = "full";
+    },
+    {},
+    async (_hooks, phase, stage) => {
+      if (stage !== "post" || (phase !== "cleanup" && phase !== "sync")) return [];
+      return [
+        { command: `npm run ${phase}`, ok: false, exitCode: 1, timedOut: false, output: `gate ${phase} failed` },
+      ];
+    },
+  );
+
+  // Cleanup and sync have no retry path: their red gates must not vanish into
+  // transient warnings. The run completes, the closing notice names the gate,
+  // and the field is cleared so the next run starts blank.
+  assert.equal(run.result.reason, "completed");
+  assert.deepEqual(run.plan.done, ["TASK-001", "TASK-002", "TASK-003"]);
+  const closing = run.notifications.filter((n) => n.message.includes("failed post-hook gate"));
+  assert.equal(closing.length, 1, "one notice at close, whatever the transient warnings");
+  assert.ok(closing[0].type === "warning");
+  assert.ok(closing[0].message.includes("sync"), "the notice names the last red gate");
+  assert.equal(run.plan.state.postHookGateFailed, null, "cleared after the notice");
+});
+
+test("a red post hook of the end-of-range sync is recorded and reported at close", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(
+    root,
+    specDir,
+    (call) => (call.task === "TASK-001" ? {} : { fail: true }),
+    (config) => {
+      config.mode = "fast";
+      config.run.continueOnFailure = true;
+    },
+    { phase: "sync" },
+    async (_hooks, phase, stage) =>
+      stage === "post" && phase === "sync"
+        ? [{ command: "npm run sync", ok: false, exitCode: 1, timedOut: false, output: "gate sync failed" }]
+        : [],
+  );
+
+  // No task sync ran (the first task's entry sync is skipped in fast mode and
+  // the tail fails), so the end-of-range sync fires on the completed task and
+  // its red gate is recorded like any other.
+  assert.equal(run.result.reason, "completed");
+  const closing = run.notifications.filter((n) => n.message.includes("failed post-hook gate"));
+  assert.equal(closing.length, 1);
+  assert.ok(closing[0].message.includes("sync"));
+  assert.equal(run.plan.state.postHookGateFailed, null, "cleared after the notice");
 });

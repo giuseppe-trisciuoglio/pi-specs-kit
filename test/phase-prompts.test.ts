@@ -84,15 +84,17 @@ interface Harness {
   specId: string;
   /** Loop learnings of the spec, injected as task memory. */
   learnings: string[];
-  /** Scripted pre-hook results; post hooks always return none. */
+  /** Scripted pre-hook results; post hooks return none unless configured. */
   preHooks: HookResult[];
+  /** Scripted post-hook results; empty by default. */
+  postHooks: HookResult[];
   executor: PhaseExecutor;
   /** The prompt of every spawn, in order. */
   prompts: string[];
 }
 
 /** Real executor over a tmp project, with the spawn and hooks scripted out. */
-async function harness(opts: { preHooks?: HookResult[] } = {}): Promise<Harness> {
+async function harness(opts: { preHooks?: HookResult[]; postHooks?: HookResult[] } = {}): Promise<Harness> {
   const root = await mkdtemp(path.join(tmpdir(), "phase-prompts-"));
   tmpDirs.push(root);
   const specDir = path.join(root, "docs/specs/001-spec");
@@ -102,6 +104,7 @@ async function harness(opts: { preHooks?: HookResult[] } = {}): Promise<Harness>
   const config = await loadSpecsKitConfig(root);
   config.run.noLogFiles = true;
   const preHooks = opts.preHooks ?? [];
+  const postHooks = opts.postHooks ?? [];
 
   const prompts: string[] = [];
   const executor = new PhaseExecutor({
@@ -112,14 +115,14 @@ async function harness(opts: { preHooks?: HookResult[] } = {}): Promise<Harness>
       prompts.push(opts.prompt);
       return okOutcome;
     },
-    runHooks: async (_hooks, _phase, stage) => (stage === "pre" ? preHooks : []),
+    runHooks: async (_hooks, _phase, stage) => (stage === "pre" ? preHooks : postHooks),
     onNotify: () => {},
     onStream: () => {},
     onLogPath: () => {},
     onPhaseStart: () => {},
     onLogLine: () => {},
   });
-  return { config, specDir, specId: "001-spec", learnings: ["always validate input"], preHooks, executor, prompts };
+  return { config, specDir, specId: "001-spec", learnings: ["always validate input"], preHooks, postHooks, executor, prompts };
 }
 
 /** The declared ingress every phase shares, as the node builds it at the boundary. */
@@ -144,6 +147,7 @@ async function expectedPrompt(h: Harness, phase: PhaseName, input: PhaseInput): 
     learnings: input.learnings,
     skill,
     preHookResults: h.preHooks,
+    postHookFailures: "postHookFailures" in input ? input.postHookFailures : undefined,
     reviewFeedback: "reviewFeedback" in input ? input.reviewFeedback : null,
     reviewFormatError: "reviewFormatError" in input ? input.reviewFormatError : null,
     upstreamProvides: "upstreamProvides" in input ? input.upstreamProvides : undefined,
@@ -166,6 +170,7 @@ test("implementation on retry carries review feedback, upstream contracts and ro
   const input: ImplementationPhaseInput = {
     ...baseInput(h, 2),
     reviewFeedback: "Found problems\n- Missing input validation",
+    postHookFailures: null,
     upstreamProvides: ["parseSpec(text: string): Spec"],
     routedSuggestions: [{ to: "TASK-001", text: "extract the retry helper", from: "TASK-000" }],
     // What the node declares on a retry: the pre-hook output becomes context.
@@ -188,6 +193,7 @@ test("implementation on the first attempt has no feedback block at all", async (
   const input: ImplementationPhaseInput = {
     ...baseInput(h),
     reviewFeedback: null,
+    postHookFailures: null,
     upstreamProvides: [],
     routedSuggestions: [],
     firstAttempt: true,
@@ -206,6 +212,7 @@ test("a failing pre-hook blocks the phase on the first attempt: no spawn at all"
   const input: ImplementationPhaseInput = {
     ...baseInput(h),
     reviewFeedback: null,
+    postHookFailures: null,
     upstreamProvides: [],
     routedSuggestions: [],
     firstAttempt: true,
@@ -222,6 +229,7 @@ test("a failing pre-hook on a retry feeds its output into the prompt as context"
   const input: ImplementationPhaseInput = {
     ...baseInput(h, 2),
     reviewFeedback: "Found problems\n- Missing input validation",
+    postHookFailures: null,
     upstreamProvides: [],
     routedSuggestions: [],
     firstAttempt: false,
@@ -231,6 +239,48 @@ test("a failing pre-hook on a retry feeds its output into the prompt as context"
   assert.equal(prompt, await expectedPrompt(h, "implementation", input));
 
   assert.ok(prompt.includes("<hooks>\n$ npm test\nstatus: failed\noutput:\n1 failing test\n</hooks>"));
+});
+
+test("a failing post hook is exposed and feeds the retry prompt, labeled against the pre hooks", async () => {
+  const FAILING_POSTHOOK: HookResult = {
+    command: "npm run build",
+    ok: false,
+    exitCode: 1,
+    timedOut: false,
+    output: "build failed: 2 errors",
+  };
+  const h = await harness({ postHooks: [FAILING_POSTHOOK] });
+  const input: ImplementationPhaseInput = {
+    ...baseInput(h),
+    reviewFeedback: null,
+    postHookFailures: null,
+    upstreamProvides: [],
+    routedSuggestions: [],
+    firstAttempt: true,
+  };
+
+  // The executor exposes the red gate explicitly instead of burying it in the
+  // full result list: the node does not re-derive the outcome.
+  const first = await h.executor.run("implementation", input);
+  assert.equal(first.preHooksOk, true);
+  assert.equal(first.postHooksOk, false);
+  assert.deepEqual(first.failedPostHooks, [FAILING_POSTHOOK]);
+
+  // The next attempt declares the failures; the prompt renders them inside
+  // the hooks block under a label naming gate and attempt, so the model
+  // cannot confuse them with the pre hooks of this spawn.
+  const retryInput: ImplementationPhaseInput = {
+    ...input,
+    attempt: 2,
+    firstAttempt: false,
+    postHookFailures: first.failedPostHooks,
+  };
+  const retry = await h.executor.run("implementation", retryInput);
+  assert.equal(retry.postHooksOk, false, "the scripted gate stays red");
+  const prompt = h.prompts[h.prompts.length - 1];
+  assert.equal(prompt, await expectedPrompt(h, "implementation", retryInput));
+  assert.ok(prompt.includes("post hooks of the previous attempt (failed only):"));
+  assert.ok(prompt.includes("$ npm run build\nstatus: failed\noutput:\nbuild failed: 2 errors"));
 });
 
 test("review on first spawn has no format error and no routed suggestions", async () => {

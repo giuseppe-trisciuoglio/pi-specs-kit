@@ -39,6 +39,7 @@ const registry = {
   impl_failed_attempts_exhausted: (ctx) => ctx.implStatus !== "ok" && !ctx.attemptsLeft,
   impl_pre_hook_failed: (ctx) => ctx.implStatus === "pre-hook-failed",
   impl_spawn_failed: (ctx) => ctx.implStatus === "spawn-failed",
+  impl_post_hook_failed: (ctx) => ctx.implStatus === "post-hook-failed",
   impl_ok: (ctx) => ctx.implStatus === "ok",
 
   // Leaving the review gate, on the verdict it just dispatched. A rejection

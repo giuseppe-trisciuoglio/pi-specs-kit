@@ -18,6 +18,7 @@ function makeRuntime(overrides: Partial<TaskRuntime> = {}): TaskRuntime {
     feedback: null,
     lastVerdict: null,
     implStatus: "ok",
+    postHookFailures: null,
     routedSuggestions: [],
     runState: { syncRan: false, lastCompleted: null },
     ...overrides,
@@ -186,6 +187,41 @@ test("edge order is first-match-wins: the exhaustion guard wins over the failure
     "done",
   );
   assert.deepEqual(retrying, ["implementation", "implementation", "implementation", "task_failed"]);
+
+  // Attempts still left and a red post-hook gate: the same back-edge applies,
+  // so the exhaustion guard above is what funnels a spent budget, whatever
+  // failure kind the node recorded.
+  const postHook: string[] = [];
+  let postHookVisits = 0;
+  const gPostHook = graph(
+    [
+      node("implementation", "agentic", visit(postHook, "implementation", (rt) => {
+        postHookVisits += 1;
+        rt.implStatus = postHookVisits === 1 ? "post-hook-failed" : "ok";
+      })),
+      node("task_failed", "deterministic", visit(postHook, "task_failed")),
+      node("review", "agentic", visit(postHook, "review")),
+      node("task_done", "sink", undefined, "done"),
+    ],
+    [
+      { from: "implementation", to: "task_failed", type: "attempts-exhausted", when: "impl_failed_attempts_exhausted" },
+      { from: "implementation", to: "implementation", type: "pre-hook-failed", when: "impl_pre_hook_failed" },
+      { from: "implementation", to: "implementation", type: "spawn-failed", when: "impl_spawn_failed" },
+      { from: "implementation", to: "implementation", type: "post-hook-failed", when: "impl_post_hook_failed" },
+      { from: "implementation", to: "review", type: "advance", when: "impl_ok" },
+      { from: "review", to: "task_done", type: "advance", when: "always" },
+      { from: "task_failed", to: "task_done", type: "continue-on-failure", when: "continue_on_failure" },
+    ],
+    "implementation",
+  );
+  assert.equal(
+    await interpretTaskGraph(gPostHook, {
+      runtime: makeRuntime(),
+      facts: makeFacts({ continueOnFailure: true, attemptsLeft: () => true }),
+    }),
+    "done",
+  );
+  assert.deepEqual(postHook, ["implementation", "implementation", "review"]);
 });
 
 test("sinks are terminal: no action runs on them and their outcome is returned", async () => {

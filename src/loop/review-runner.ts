@@ -120,15 +120,23 @@ export async function runReviewStep(
     }
     // A subprocess that failed left no verdict to read, and reading the absent
     // report as "the reviewer forgot to write it" would spend the whole review
-    // budget re-spawning an agent that cannot even start: a rejected model, an
-    // expired key or a rate limit fails the same way every time.
+    // budget re-spawning an agent that cannot even start. This is an
+    // environment failure — a rejected model, an expired key or a rate limit
+    // fails identically on every spawn — so no re-implementation can fix it:
+    // the only useful answer is to stop the task and say so, without spending
+    // an attempt on it.
     if (spawnFailed(rev.outcome)) {
       state.review_file_retry = 0;
       const reason = rev.outcome?.timedOut ? "timed out" : (rev.outcome?.errorMessage ?? "agent error");
-      notify(`review did not run for ${id} (${reason}), attempt failed`, "warning");
+      notify(`review did not run for ${id} (${reason}), task abandoned`, "warning");
       await persist();
-      return { kind: "attemptFailed" };
+      return { kind: "reportUnusable", detail: `review subprocess failed (${reason})` };
     }
+    // The reviewer does not write code, so a red gate after it is nothing the
+    // review itself can act on and there is no retry path here to spend. It is
+    // recorded like the gates of the other phases that cannot react, so the
+    // range does not close clean over it.
+    if (!rev.postHooksOk) state.postHookGateFailed = "review";
 
     const report = await readReviewReport(specDir, id);
     if (!report) {

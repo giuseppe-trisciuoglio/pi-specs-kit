@@ -42,7 +42,8 @@ export async function runHook(
 /**
  * Run the pre or post hooks of a phase sequentially, stopping at the first
  * failure. Callers decide what a failure means: a failed pre hook blocks the
- * phase, a failed post hook is only a warning.
+ * phase, a failed post hook is reported as a gate outcome the caller routes
+ * (a red implementation gate costs the attempt; the tail phases record it).
  */
 export async function runPhaseHooks(
   hooks: HooksConfig,

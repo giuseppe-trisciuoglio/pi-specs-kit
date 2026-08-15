@@ -51,6 +51,13 @@ export interface LoopState {
    * Advisory only — tolerated as missing on older fix plans.
    */
   graphPartialSync?: boolean;
+  /**
+   * Phase whose post-hook gate failed on a phase with no retry path (cleanup,
+   * sync): the phase completed, but the gate was red. Reported once when the
+   * range closes and reset when the next run starts. Advisory only — tolerated
+   * as missing on older fix plans.
+   */
+  postHookGateFailed?: string | null;
   last_updated: string;
 }
 

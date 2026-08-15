@@ -444,6 +444,15 @@ lettura diretta, senza file per-spec proiettato) e, se manca, emette un warning
 indisponibili. Il resolver è iniettabile (`ControllerDeps.findGraphifySkill`);
 dettagli e motivazione in `docs/adr/0009`.
 
+**Pre-flight modelli.** Accanto al check graphify, `LoopController.start`
+confronta i modelli configurati per i cinque ruoli (scartando `auto` e valori
+vuoti) col catalogo `pi --list-models` (`src/loop/model-check.ts`): un modello
+che il CLI non conosce è una certezza — lo spawn fallirebbe identico a ogni
+tentativo — quindi l'avvio rifiuta nominando ruoli e modelli; un catalogo non
+ottenibile (comando assente, errore, timeout, output vuoto) produce solo un
+warning e il loop parte, come per graphify. La funzione di interrogazione è
+iniettabile (`ControllerDeps.listModels`); decisione in `docs/adr/0013`.
+
 ### 4.11 `measure/*`
 
 Registro delle misure (formato in §3.4). `phase-meter.ts` è agganciato al

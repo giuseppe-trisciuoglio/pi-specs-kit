@@ -28,6 +28,7 @@ const EDGE_TYPE_VOCABULARY: readonly EdgeType[] = [
   "attempts-exhausted",
   "pre-hook-failed",
   "spawn-failed",
+  "post-hook-failed",
   "mode-skip",
   "continue-on-failure",
   "halt-on-failure",
@@ -116,10 +117,11 @@ test("exhaustion guards are evaluated before the back-edges", () => {
     return index;
   };
 
-  // Implementation: once attempts are gone, pre-hook and spawn failures go to
-  // the funnel instead of looping back.
+  // Implementation: once attempts are gone, pre-hook, spawn and post-hook
+  // failures go to the funnel instead of looping back.
   assert.ok(order("implementation", "attempts-exhausted") < order("implementation", "pre-hook-failed"));
   assert.ok(order("implementation", "attempts-exhausted") < order("implementation", "spawn-failed"));
+  assert.ok(order("implementation", "attempts-exhausted") < order("implementation", "post-hook-failed"));
 
   // Review gate: the retry verdicts loop back only while attempts remain.
   assert.ok(order("review_gate", "attempts-exhausted") < order("review_gate", "failed"));

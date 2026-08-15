@@ -70,6 +70,7 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         specId: plan.spec_id,
         attempt: state.retry_count + 1,
         reviewFeedback: io.runtime.feedback,
+        postHookFailures: io.runtime.postHookFailures,
         upstreamProvides: upstreamProvides(taskFile, selected, plan.done),
         routedSuggestions: io.runtime.routedSuggestions,
         // The node declares how the world is, not what to do; the executor
@@ -98,6 +99,18 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         io.runtime.implStatus = "spawn-failed";
         return { kind: "ok" };
       }
+      // The post hooks are the phase's own gate: the build does not compile
+      // or the tests are red, the attempt is spent exactly like a spawn
+      // failure, and the next one is told what the gate caught.
+      if (!impl.postHooksOk) {
+        notify(`post-implementation hook failed (${id})`, "warning");
+        state.retry_count++;
+        await persist();
+        io.runtime.postHookFailures = impl.failedPostHooks;
+        io.runtime.implStatus = "post-hook-failed";
+        return { kind: "ok" };
+      }
+      io.runtime.postHookFailures = null;
       io.runtime.implStatus = "ok";
       return { kind: "ok" };
     },

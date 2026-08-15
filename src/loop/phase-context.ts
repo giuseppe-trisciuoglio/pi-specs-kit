@@ -161,6 +161,7 @@ export class PhaseContext {
       skill,
       preHookResults: preResults,
       reviewFeedback: "reviewFeedback" in input ? input.reviewFeedback : null,
+      postHookFailures: "postHookFailures" in input ? input.postHookFailures : undefined,
       reviewFormatError: "reviewFormatError" in input ? input.reviewFormatError : null,
       upstreamProvides: "upstreamProvides" in input ? input.upstreamProvides : undefined,
       routedSuggestions: "routedSuggestions" in input ? input.routedSuggestions : undefined,

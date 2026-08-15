@@ -77,6 +77,13 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
       });
       if (deps.stopping() === "now") return { kind: "stopped" };
       if (!cl.preHooksOk || spawnFailed(cl.outcome)) notify(`cleanup failed for ${id}, continuing`, "warning");
+      // A red post hook does not fail the phase — cleanup has no retry path —
+      // but it must not vanish into a transient warning either: record it so
+      // the run close names the gate instead of declaring the task clean.
+      if (!cl.postHooksOk) {
+        plan.state.postHookGateFailed = "cleanup";
+        await persist();
+      }
       return { kind: "ok" };
     },
 
@@ -124,6 +131,12 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
       io.runtime.runState.syncRan = true;
       if (deps.stopping() === "now") return { kind: "stopped" };
       if (!sy.preHooksOk || spawnFailed(sy.outcome)) notify(`sync failed for ${id}, continuing`, "warning");
+      // Same rule as cleanup: the phase completes and never retries, so a red
+      // post hook is recorded for the run close rather than dropped.
+      if (!sy.postHooksOk) {
+        plan.state.postHookGateFailed = "sync";
+        await persist();
+      }
       return { kind: "ok" };
     },
 

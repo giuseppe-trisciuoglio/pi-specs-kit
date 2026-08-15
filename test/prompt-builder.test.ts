@@ -225,6 +225,68 @@ test("hooks block omitted without hook results", () => {
   assert.ok(!buildPhasePrompt(makeCtx()).includes("<hooks>"));
 });
 
+test("failed post hooks of the previous attempt render inside the hooks block, labeled", () => {
+  const long = "x".repeat(7000);
+  const prompt = buildPhasePrompt(
+    makeCtx({
+      preHookResults: [{ command: "npm test", ok: true, output: "all green" }],
+      postHookFailures: [{ command: "npm run build", ok: false, exitCode: 1, timedOut: false, output: long }],
+    }),
+  );
+  // The gate of the previous attempt is named, so it cannot be confused with
+  // the pre hooks of this spawn; the failing hook carries the bounded output.
+  assert.ok(prompt.includes("$ npm test\nstatus: ok"));
+  assert.ok(prompt.includes("post hooks of the previous attempt (failed only):"));
+  assert.ok(prompt.includes("$ npm run build\nstatus: failed"));
+  assert.ok(prompt.includes("output:"));
+  assert.ok(prompt.includes("characters omitted"));
+  assert.ok(prompt.length < 8000, "truncation cap is preserved across both gate sections");
+});
+
+test("passed post hooks leave nothing in the prompt", () => {
+  const prompt = buildPhasePrompt(
+    makeCtx({
+      postHookFailures: [
+        { command: "npm run build", ok: true, exitCode: 0, timedOut: false, output: "build ok\nTests: 42 passed" },
+        { command: "npm test", ok: true, exitCode: 0, timedOut: false, output: "all green" },
+      ],
+    }),
+  );
+  // The rule that output enters the prompt only for failed hooks holds here
+  // too: an all-green gate is certified by its absence from the retry context.
+  assert.ok(!prompt.includes("<hooks>"), "no failed hook, no hooks block at all");
+  assert.ok(!prompt.includes("post hooks of the previous attempt"));
+  assert.ok(!prompt.includes("build ok"));
+});
+
+test("failed post hooks render even when this attempt has no pre-hook results", () => {
+  const prompt = buildPhasePrompt(
+    makeCtx({
+      postHookFailures: [{ command: "npm run build", ok: false, exitCode: 1, timedOut: false, output: "build failed" }],
+    }),
+  );
+  assert.ok(prompt.includes("<hooks>"));
+  assert.ok(prompt.includes("post hooks of the previous attempt (failed only):"));
+  assert.ok(prompt.includes("$ npm run build\nstatus: failed\noutput:\nbuild failed"));
+});
+
+test("failed post hooks stay distinguishable from the pre hooks of this attempt", () => {
+  const prompt = buildPhasePrompt(
+    makeCtx({
+      preHookResults: [{ command: "npm run lint", ok: false, output: "lint error on line 3" }],
+      postHookFailures: [{ command: "npm run build", ok: false, exitCode: 1, timedOut: false, output: "build failed" }],
+    }),
+  );
+  // Both gates failed, but each section names its own: the pre hook of this
+  // attempt is unlabeled, the post hook of the previous one is labeled, and
+  // both outputs survive with their commands attached.
+  assert.ok(prompt.includes("$ npm run lint\nstatus: failed\noutput:\nlint error on line 3"));
+  const postSection = prompt.slice(prompt.indexOf("post hooks of the previous attempt"));
+  assert.ok(postSection.includes("$ npm run build\nstatus: failed"));
+  assert.ok(!postSection.includes("npm run lint"), "the labeled section carries only the post hook");
+  assert.ok(postSection.indexOf("post hooks of the previous attempt") < postSection.indexOf("$ npm run build"));
+});
+
 test("review_feedback appears only when set", () => {
   const base = buildPhasePrompt(makeCtx());
   assert.ok(!base.includes("review_feedback"));

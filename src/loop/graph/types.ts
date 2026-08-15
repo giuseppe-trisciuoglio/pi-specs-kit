@@ -11,6 +11,7 @@ import type { FixPlan, LoopStep } from "../../fixplan/fix-plan.ts";
 import type { TaskFile } from "../../tasks/task-parser.ts";
 import type { LoopBudget } from "../budget.ts";
 import type { commitCheckpoint } from "../checkpoint.ts";
+import type { HookResult } from "../hooks.ts";
 import type { PhaseExecutor } from "../phases.ts";
 import type { RoutedSuggestion } from "../review-report.ts";
 import type { ConditionName } from "./conditions.ts";
@@ -33,6 +34,7 @@ export type EdgeType =
   | "attempts-exhausted"
   | "pre-hook-failed"
   | "spawn-failed"
+  | "post-hook-failed"
   | "mode-skip"
   | "continue-on-failure"
   | "halt-on-failure";
@@ -55,7 +57,7 @@ export type TaskNodeId =
   | "task_halted";
 
 /** What the implementation phase produced, as routing sees it. */
-export type ImplStatus = "ok" | "pre-hook-failed" | "spawn-failed";
+export type ImplStatus = "ok" | "pre-hook-failed" | "spawn-failed" | "post-hook-failed";
 
 /** Review verdict shapes that route; a stopped verdict never reaches routing
  * because it propagates as the action outcome. */
@@ -91,6 +93,9 @@ export interface TaskRuntime {
   lastVerdict: RoutingVerdict | null;
   /** Outcome of the last implementation run, consumed when leaving it. */
   implStatus: ImplStatus;
+  /** Failed post hooks of the last implementation attempt, fed to the next
+   * one as context; null when the last attempt's post hooks all passed. */
+  postHookFailures: HookResult[] | null;
   /** Fixes earlier reviews routed to this task, collected once at entry. */
   routedSuggestions: RoutedSuggestion[];
   runState: RunState;

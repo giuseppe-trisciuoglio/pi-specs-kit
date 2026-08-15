@@ -87,6 +87,17 @@ export async function walkSelection(
             "warning",
           );
         }
+        // A red post-hook gate on a phase with no retry path stays recorded
+        // so the run does not declare itself clean when a gate was red. Named
+        // once here and cleared, so the next run starts from a blank slate.
+        if (plan.state.postHookGateFailed) {
+          deps.notify(
+            `range completed with a failed post-hook gate: the ${plan.state.postHookGateFailed} phase ended with a red gate`,
+            "warning",
+          );
+          plan.state.postHookGateFailed = null;
+          await deps.persist(plan);
+        }
         return { reason: "completed" };
       }
       taskFile = selected[index];

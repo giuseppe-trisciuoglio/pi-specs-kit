@@ -7,6 +7,7 @@
 
 import path from "node:path";
 import type { PhaseName, SpecsKitConfig } from "../config/specs-kit-config.ts";
+import type { HookResult } from "../loop/hooks.ts";
 import type { RoutedSuggestion } from "../loop/review-report.ts";
 import type { TaskFile } from "../tasks/task-parser.ts";
 import type { ResolvedSkill } from "./skill-resolver.ts";
@@ -27,6 +28,10 @@ export interface PromptContext {
   learnings?: string[];
   skill?: ResolvedSkill | null;
   preHookResults?: PreHookResult[];
+  /** Failed post hooks of the previous attempt of the same phase, fed to
+   * the retry; rendered inside the hooks block, labeled with the gate and
+   * the attempt they belong to. */
+  postHookFailures?: HookResult[] | null;
   /** Verbatim feedback from a failed review, set on implementation retries. */
   reviewFeedback?: string | null;
   /** What was wrong with the previous review report, set on review re-spawns. */
@@ -162,10 +167,14 @@ export function buildPhasePrompt(ctx: PromptContext): string {
   // Pre-hook outcomes. Command and status are shown for every hook — that
   // certifies the gate ran and what verdict it returned. Output enters the
   // prompt only for failed hooks, where it carries the bounded context the
-  // next spawn needs to act on; an ok hook's stdout is not actionable.
-  if (ctx.preHookResults && ctx.preHookResults.length > 0) {
+  // next spawn needs to act on; an ok hook's stdout is not actionable. The
+  // failed post hooks of the previous attempt ride the same block under a
+  // label that names gate and attempt, so the model cannot mistake them for
+  // the pre hooks of this spawn; passed post hooks leave nothing behind.
+  const failedPostHooks = (ctx.postHookFailures ?? []).filter((hook) => !hook.ok);
+  if ((ctx.preHookResults && ctx.preHookResults.length > 0) || failedPostHooks.length > 0) {
     const lines: string[] = [];
-    for (const hook of ctx.preHookResults) {
+    for (const hook of ctx.preHookResults ?? []) {
       lines.push(`$ ${hook.command}`);
       lines.push(`status: ${hook.ok ? "ok" : "failed"}`);
       if (!hook.ok && hook.output.trim()) {
@@ -173,6 +182,18 @@ export function buildPhasePrompt(ctx: PromptContext): string {
         lines.push(truncateOutput(hook.output));
       }
       lines.push("");
+    }
+    if (failedPostHooks.length > 0) {
+      lines.push("post hooks of the previous attempt (failed only):");
+      for (const hook of failedPostHooks) {
+        lines.push(`$ ${hook.command}`);
+        lines.push("status: failed");
+        if (hook.output.trim()) {
+          lines.push("output:");
+          lines.push(truncateOutput(hook.output));
+        }
+        lines.push("");
+      }
     }
     blocks.push(`<hooks>\n${lines.join("\n").trimEnd()}\n</hooks>`);
   }

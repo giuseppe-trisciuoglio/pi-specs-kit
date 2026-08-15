@@ -15,6 +15,14 @@ import { refreshFixPlan } from "../fixplan/refresh.ts";
 import { LoopEngine, type LoopEndReason, type LoopStartOptions } from "./engine.ts";
 import { idleStatus, type LoopStatus } from "./loop-status.ts";
 import { findGraphifySkill, graphifyMissingWarning } from "../prompt/graphify.ts";
+import {
+  configuredModels,
+  findMissingModels,
+  listModels,
+  modelListUnavailableWarning,
+  unknownModelsError,
+  type ListedModel,
+} from "./model-check.ts";
 import { discoverSpecs, type SpecInfo } from "./spec-discovery.ts";
 
 export interface ControllerEvents {
@@ -35,6 +43,8 @@ export interface ControllerEvents {
 export interface ControllerDeps {
   /** Locates the graphify skill; defaults to the shared-directory lookup. */
   findGraphifySkill?: typeof findGraphifySkill;
+  /** Queries the agent CLI model catalogue; defaults to `pi --list-models`. */
+  listModels?: () => Promise<ListedModel[]>;
 }
 
 /** Ring buffer capacity of log lines shown in the widget. */
@@ -57,10 +67,12 @@ export class LoopController {
   #logLines: string[] = [];
   readonly #logLineListeners = new Set<(line: string) => void>();
   readonly #findGraphifySkill: typeof findGraphifySkill;
+  readonly #listModels: () => Promise<ListedModel[]>;
 
   constructor(events: ControllerEvents = {}, deps: ControllerDeps = {}) {
     this.#events = events;
     this.#findGraphifySkill = deps.findGraphifySkill ?? findGraphifySkill;
+    this.#listModels = deps.listModels ?? listModels;
   }
 
   /** Load the yaml config of a project root into memory. */
@@ -112,6 +124,27 @@ export class LoopController {
     // becomes unavailable.
     if (!(await this.#findGraphifySkill())) {
       this.#safely(() => this.#events.onNotify?.(graphifyMissingWarning(), "warning"));
+    }
+
+    // A mistyped model id is only discovered at spawn time, once per attempt.
+    // Check the configured models against the CLI catalogue before the run: a
+    // model the CLI does not know is a certainty, so refusing to start is
+    // cheaper than spending the run budget on it. When the catalogue cannot
+    // be read the check is skipped with a warning — uncertainty does not
+    // block the operator, the same choice made for a missing graphify. With
+    // every role on "auto" there is nothing to validate and the CLI is not
+    // even queried.
+    const configured = configuredModels(config);
+    if (configured.length > 0) {
+      const listed = await this.#listModels();
+      if (listed.length === 0) {
+        this.#safely(() => this.#events.onNotify?.(modelListUnavailableWarning(), "warning"));
+      } else {
+        const missing = findMissingModels(configured, listed);
+        if (missing.length > 0) {
+          throw new Error(unknownModelsError(missing));
+        }
+      }
     }
 
     let markStarted: () => void = () => {};

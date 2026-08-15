@@ -33,9 +33,17 @@ const TASK: TaskFile = parseTaskFile(
 const okResult: PhaseStepResult = {
   preHooksOk: true,
   hookResults: [],
+  postHooksOk: true,
+  failedPostHooks: [],
   outcome: { exitCode: 0, timedOut: false, aborted: false, stopReason: "stop", errorMessage: null, elapsedMs: 1, stderr: "" },
 };
-const preHookFailure: PhaseStepResult = { preHooksOk: false, hookResults: [], outcome: null };
+const preHookFailure: PhaseStepResult = {
+  preHooksOk: false,
+  hookResults: [],
+  postHooksOk: true,
+  failedPostHooks: [],
+  outcome: null,
+};
 const abortedResult: PhaseStepResult = { ...okResult, outcome: { ...okResult.outcome!, aborted: true } };
 const crashedResult: PhaseStepResult = { ...okResult, outcome: { ...okResult.outcome!, exitCode: 1, stopReason: "error" } };
 
@@ -101,13 +109,42 @@ test("a failed pre-review hook hands a full review file budget to the next attem
 test("a review subprocess that failed is not read as a reviewer who forgot the file", async () => {
   // An agent that cannot start (rejected model, expired key, rate limit) fails
   // the same way every time: spending the review file budget on it buys three
-  // more identical failures, so one is enough to end the attempt.
+  // more identical failures, so one is enough to end the attempt. Nothing the
+  // implementation does can change the outcome, so the verdict is unusable
+  // rather than a lost attempt, and the attempt counter stays put.
   const h = await harness(() => crashedResult);
   const verdict = await runReviewStep(h.deps, h.plan, TASK);
 
-  assert.deepEqual(verdict, { kind: "attemptFailed" } satisfies ReviewVerdict);
+  assert.deepEqual(
+    verdict,
+    { kind: "reportUnusable", detail: "review subprocess failed (agent error)" } satisfies ReviewVerdict,
+  );
   assert.equal(h.spawns(), 1, "the crashed spawn is not retried against the review file budget");
   assert.equal(h.plan.state.review_file_retry, 0);
+});
+
+test("a timed-out reviewer is reported as unusable with the real cause", async () => {
+  const timedOut: PhaseStepResult = { ...okResult, outcome: { ...okResult.outcome!, timedOut: true } };
+  const h = await harness(() => timedOut);
+  const verdict = await runReviewStep(h.deps, h.plan, TASK);
+
+  assert.deepEqual(
+    verdict,
+    { kind: "reportUnusable", detail: "review subprocess failed (timed out)" } satisfies ReviewVerdict,
+  );
+});
+
+test("a review spawn failure does not consume a task attempt", async () => {
+  // The review step itself never touches the attempt counter, and the gate
+  // routes an unusable verdict to the failure funnel without incrementing it:
+  // an environment failure must not spend any of the task's attempts, or the
+  // next re-implementation would start from a smaller budget for nothing.
+  const h = await harness(() => crashedResult);
+  h.plan.state.retry_count = 2;
+  const verdict = await runReviewStep(h.deps, h.plan, TASK);
+
+  assert.equal(verdict.kind, "reportUnusable");
+  assert.equal(h.plan.state.retry_count, 2, "the attempt counter is untouched by a spawn failure");
 });
 
 test("a re-spawned reviewer is told what was wrong with its previous report", async () => {
@@ -179,4 +216,43 @@ test("a prior verdict is archived before the canonical report is wiped", async (
     "---\nreview_status: PASSED\nsummary: ok\nissues: []\nrouted: []\n---\n\nbody\n",
     "the canonical path now holds the fresh verdict",
   );
+});
+
+test("a red post-hook gate after the review is recorded on the run", async () => {
+  // The reviewer writes no code, so nothing it could do differently would turn
+  // the gate green, and this phase has no retry path of its own. Recording it
+  // is what keeps the range from closing clean over a red gate.
+  const { root, specDir } = await createSpec();
+  const config = await loadSpecsKitConfig(root);
+  const plan = emptyFixPlan("001-spec", "docs/specs/001-spec");
+  const executor = {
+    run: async (): Promise<PhaseStepResult> => {
+      await writeFile(
+        reviewFilePath(specDir, "TASK-001"),
+        "---\nreview_status: PASSED\nsummary: ok\nissues: []\nrouted: []\n---\n\nbody\n",
+        "utf8",
+      );
+      return {
+        ...okResult,
+        postHooksOk: false,
+        failedPostHooks: [
+          { command: "mvn verify", ok: false, output: "BUILD FAILURE", exitCode: 1, timedOut: false },
+        ],
+      };
+    },
+  } as unknown as PhaseExecutor;
+  const deps: ReviewStepDeps = {
+    config,
+    specDir,
+    executor,
+    persist: async () => {},
+    notify: () => {},
+    stopping: () => null,
+    signal: () => undefined,
+  };
+
+  const verdict = await runReviewStep(deps, plan, TASK);
+
+  assert.equal(verdict.kind, "passed", "a red gate does not change the verdict the reviewer stated");
+  assert.equal(plan.state.postHookGateFailed, "review", "the red gate is recorded for the closing notice");
 });

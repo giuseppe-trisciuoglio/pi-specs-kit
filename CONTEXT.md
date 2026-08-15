@@ -41,7 +41,10 @@ Documento di istruzioni iniettato nel prompt di una fase (specs-kit-task-impleme
 _Avoid_: prompt template
 
 **Hook**:
-Comando shell eseguito prima (pre) o dopo (post) una fase; un pre-hook fallito blocca la fase, un post-hook fallito no.
+Comando shell eseguito prima (pre) o dopo (post) una fase; un pre-hook fallito blocca la fase. Un
+post-hook è un gate: per l'implementazione un gate rosso costa il tentativo e il suo output entra nel
+prompt del tentativo successivo; per le fasi senza retry (cleanup, sync) viene registrato nello stato
+e riportato alla chiusura del range.
 _Avoid_: guard, script
 
 **Learner**:

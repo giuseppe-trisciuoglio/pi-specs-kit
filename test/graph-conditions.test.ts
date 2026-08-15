@@ -44,6 +44,7 @@ test("the registry contains exactly the declared routing predicates", () => {
     "halt_on_failure",
     "impl_failed_attempts_exhausted",
     "impl_ok",
+    "impl_post_hook_failed",
     "impl_pre_hook_failed",
     "impl_spawn_failed",
     "sync_not_wanted",
@@ -117,9 +118,16 @@ test("implementation predicates read the implementation outcome and the retry bu
     [{ implStatus: "pre-hook-failed" }, false],
     [{ implStatus: "ok" }, false],
   ]);
+  truth("impl_post_hook_failed", [
+    [{ implStatus: "post-hook-failed" }, true],
+    [{ implStatus: "pre-hook-failed" }, false],
+    [{ implStatus: "spawn-failed" }, false],
+    [{ implStatus: "ok" }, false],
+  ]);
   truth("impl_failed_attempts_exhausted", [
     [{ implStatus: "pre-hook-failed", attemptsLeft: false }, true],
     [{ implStatus: "spawn-failed", attemptsLeft: false }, true],
+    [{ implStatus: "post-hook-failed", attemptsLeft: false }, true],
     [{ implStatus: "pre-hook-failed", attemptsLeft: true }, false],
     [{ implStatus: "ok", attemptsLeft: false }, false],
   ]);

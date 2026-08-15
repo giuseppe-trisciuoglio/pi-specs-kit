@@ -11,6 +11,7 @@
  */
 
 import type { TaskFile } from "../tasks/task-parser.ts";
+import type { HookResult } from "./hooks.ts";
 import type { RoutedSuggestion } from "./review-report.ts";
 
 /** Identity of the measurement ledger row: which spec, which attempt. */
@@ -30,6 +31,10 @@ export interface PhaseSpawnInput extends PhaseMeterId {
 export interface ImplementationPhaseInput extends PhaseSpawnInput {
   /** Verbatim feedback from a failed review, null on the first attempt. */
   reviewFeedback: string | null;
+  /** Failed post hooks of the previous attempt, fed to the retry as the
+   * context it needs to repair what the gate caught; null when the last
+   * attempt's post hooks all passed. */
+  postHookFailures: HookResult[] | null;
   /** Public API contracts from completed dependency tasks. */
   upstreamProvides: string[];
   /** Fixes earlier reviews routed to this task. */

@@ -87,6 +87,9 @@ export async function prepareRun(config: SpecsKitConfig, opts: RunSetupOptions):
   if (!resume) {
     plan.state = { ...emptyFixPlan(plan.spec_id, plan.spec_folder).state };
   }
+  // A red gate belongs to the run that reported it: the closing notice reads
+  // this field, and a resume must not re-report a failure of the previous run.
+  plan.state.postHookGateFailed = null;
   if (opts.force) {
     // "Start over" means the whole persisted state, not just the step pointer:
     // with the done set intact every task in range would be skipped and the
