@@ -186,40 +186,77 @@ model is spelled correctly.
 
 ## Phase 3: Critique Prompt Construction
 
-**Goal**: Build one prompt per reviewer, self-contained and hostile.
+**Goal**: Build one prompt per reviewer, self-contained, hostile and explicit about the
+artefact it must leave behind.
 
 Each reviewer runs as a fresh subprocess with no session and no memory of this
-conversation, so the prompt must carry everything it needs.
+conversation, so the prompt must carry everything it needs. The prompt is written in
+**sections with headings** — objective, review surface, rules, output contract — the same
+delegation shape used elsewhere in this project: a reviewer told in one paragraph what to
+do and how to answer routinely gets the answer format wrong, and an unparseable critique
+is a lost reviewer.
 
-**Prompt skeleton** (per reviewer):
+Two things carry the reviewer: the **system prompt** fixes the role, the **user prompt**
+fixes the work.
+
+**System prompt** (passed with `--append-system-prompt`, persona filled in per reviewer):
 
 ```
-You are reviewing a software specification and its task breakdown BEFORE any code is
-written. Your role: <persona name> — <persona mandate from the table above>.
+You are a hostile specification reviewer, acting as <persona name>: <persona mandate>.
+Your job is to find defects, not to approve — approval is worthless here. You are
+autonomous: read the documents you are pointed at with the tools you have, and judge
+them. You do not write files, you do not modify anything, you do not ask for
+confirmation. Your entire deliverable is one JSON object, emitted as the last thing you
+say, matching exactly the schema in the task. No prose before it, no prose after it, no
+markdown fences around it.
+```
 
-Your job is to find defects, not to approve. Approval is worthless here: the work has
-already been read by its author and by a quality pass. You are the last chance to catch
-what they missed. If you conclude a section is sound, say which specific attack you
-tried on it and why it did not land — do not simply omit it.
+**User prompt skeleton** (per reviewer):
 
-Rules:
+```
+# Objective
+
+Review the specification and task breakdown at <spec folder> BEFORE any code is written,
+as <persona name>, and report every defect you can substantiate.
+
+# Review surface
+
+Read these files, and only these:
+
+- <spec folder>/YYYY-MM-DD--feature-name.md — the functional specification
+- <spec folder>/technical-plan.md — architectural decisions
+- <spec folder>/tasks/TASK-*.md — the generated tasks (N files, all of them)
+- <spec folder>/data-model.md, <spec folder>/contracts/ — when present
+- docs/specs/architecture.md, docs/specs/ontology.md — project-level, when present
+
+No code exists yet for this work. Do not read source files, tests or the codebase graph:
+the question is "does this specification hold together", not "does the code match it".
+
+# Rules
+
 - Every finding must be falsifiable: state a concrete scenario (given X, the
   implementation will do Y, which contradicts Z). A finding you cannot phrase this way
   must be dropped.
 - Do not invent requirements the specification never claimed. Judge the work against
   what it says it does.
 - Do not report style, wording or formatting.
-- You are reviewing documents only. No code exists yet for this work, and you have not
-  been shown the codebase: do not speculate about implementation details, existing
-  source files, or how the code will be written. Judge what the documents commit to.
+- If you conclude a section is sound, say which specific attack you tried on it and why
+  it did not land — record it under attacks_that_did_not_land, do not simply omit it.
 - Severity: BLOCKER (implementation would produce wrong or unsafe behaviour, or a task
   cannot be executed as written) | MAJOR (real defect, discovered late it costs rework)
   | MINOR (worth fixing, does not endanger the implementation).
 
-<inline content of: specification, technical plan, task files, data model, contracts,
- architecture and ontology documents when present>
+# Acceptance criteria
 
-Answer with JSON only, no prose around it:
+- [ ] Every file in the review surface has been read, tasks included
+- [ ] Every finding carries a concrete failure scenario
+- [ ] The answer is a single JSON object, nothing else
+
+# Output contract
+
+Answer with this JSON object and nothing else — no preamble, no trailing commentary, no
+code fences:
+
 {
   "findings": [
     {
@@ -235,12 +272,15 @@ Answer with JSON only, no prose around it:
   ],
   "confidence": "high|medium|low"
 }
+
+The deliverable is the JSON, not an explanation of it. You are autonomous: read, judge,
+emit.
 ```
 
-**Content budget**: if the inlined material would exceed a reasonable prompt size, inline
-the specification and the technical plan in full and summarise the task files down to
-id, title, dependencies, acceptance criteria and DoD. Never drop a task silently — a
-reviewer that cannot see a task cannot find the gap it leaves.
+**Pointing beats inlining**: the reviewer has read tools, so name the files rather than
+pasting them. Give the full task list by path — never abbreviate it to "the tasks in
+`tasks/`", a reviewer that does not know a task exists cannot find the gap it leaves.
+Inline a document only when it lives outside the folder the reviewer can reach.
 
 ---
 
@@ -250,18 +290,49 @@ reviewer that cannot see a task cannot find the gap it leaves.
 
 **Actions**:
 
-1. For each reviewer, spawn a subprocess:
+1. For each reviewer, spawn a subprocess. Pass the prompt through a here-doc: a critique
+   prompt is long and full of quotes, braces and newlines, and squeezing it onto the
+   command line is how it arrives at the model mangled.
+
    ```bash
-   pi --print --mode json --no-session --model "<declared model>" \
-      [--thinking <level, when the panel entry declares one>] \
-      --append-system-prompt "<persona mandate>" \
-      "<critique prompt>"
+   OUTDIR="docs/specs/[id]/adversarial-review"
+   mkdir -p "$OUTDIR"
+
+   read -r -d '' PROMPT <<'EOF'
+   # Objective
+   ...the user prompt from Phase 3, verbatim...
+   EOF
+
+   REVIEWER_SYSTEM_PROMPT='You are a hostile specification reviewer, acting as <persona name>: <persona mandate>. ...'
+
+   pi --model "<declared model>" \
+      --tools read,grep,find,ls \
+      --append-system-prompt "$REVIEWER_SYSTEM_PROMPT" \
+      --no-session \
+      --thinking high \
+      -p "$PROMPT" 2>&1 | tee "$OUTDIR/raw--<provider>-<model>.txt"
    ```
-   Reviewers are independent: nothing from one run enters another.
-2. Persist each raw result to
+
+   Flags, and why each one:
+
+   | Flag | Why |
+   |------|-----|
+   | `--model <provider/model>` | the declared reviewer, never a substitute |
+   | `--tools read,grep,find,ls` | the reviewer reads the spec folder itself. **No `write`, no `edit`, no `bash`**: a reviewer must not touch the work it is judging |
+   | `--append-system-prompt` | fixes the persona and the "JSON only" contract at the system level, where the model is least likely to drift from it |
+   | `--no-session` | each critique is an isolated run — this is what keeps reviewers independent |
+   | `--thinking high` | attacking a specification is the reasoning-heavy part of the workflow; a panel entry declaring its own level overrides this |
+   | `-p` | non-interactive: the reviewer answers and exits |
+   | `\| tee` | the raw answer lands on disk *and* stays visible, so a run that dies mid-way still leaves evidence |
+
+   Reviewers are independent: nothing from one run enters another. Run them sequentially
+   unless the operator asked otherwise — three metered models at once is a cost spike,
+   not a speedup.
+2. The `tee`d file is the raw evidence. Then extract the JSON object from it and write
    `docs/specs/[id]/adversarial-review/raw--<provider>-<model>.json`, with a header
-   recording model, persona, timestamp and the exit status. Raw output is kept even when
-   it fails to parse: it is the evidence behind the merged report.
+   recording model, persona, timestamp and exit status. Keep the `.txt` alongside it even
+   when parsing succeeds, and especially when it fails: it is the evidence behind the
+   merged report.
 3. **Failure handling** (each is best-effort, never fatal on its own):
    - Non-zero exit or timeout: record the reviewer as `unavailable` with the reason.
    - Output that is not valid JSON: attempt to extract the JSON object; if that fails,
@@ -280,11 +351,12 @@ Only worth running when round 1 produced findings the reviewers disagree about.
 **Actions**:
 
 1. Build, per reviewer, the list of findings raised by the *others*.
-2. Spawn each reviewer again, with the same persona, asking only:
+2. Spawn each reviewer again with the same invocation shape as Phase 4 — same flags, same
+   here-doc, same system prompt with its persona — and a user prompt asking only:
    *for each of these findings, does it hold? Answer AGREE, DISAGREE or UNSURE with one
    sentence of reasoning. You did not raise these; say plainly if you now think they are
-   right.*
-3. Persist as `rebuttal--<provider>-<model>.json`.
+   right.* The output contract is again JSON only, one verdict per finding id.
+3. Persist as `rebuttal--<provider>-<model>.json`, with the `tee`d raw text beside it.
 4. A finding that survives rebuttal with 2+ AGREE is promoted to convergent even if only
    one reviewer raised it originally. A finding with 2+ DISAGREE is demoted to a
    contested area.
@@ -345,18 +417,21 @@ Raised by: <model A>, <model C>
 **Claim**: ...
 **Scenario**: ...
 **Suggested fix**: ...
+Status: OPEN
 
 ## Singleton findings
 
 ### F7 — MAJOR — spec §Functional Requirements
 Raised by: <model B>
 ...
+Status: OPEN
 
 ## Contested areas (reviewers disagree)
 
 ### C1 — TASK-002, retry semantics
 <model A> considers it a defect; <model B> explicitly judged it sound.
 **Open question**: ...
+Status: OPEN
 
 ## Panel health
 
@@ -375,6 +450,11 @@ Raised by: <model B>
 | Contracts | n/a |
 ```
 
+Every finding is written with `Status: OPEN`. The report is not only the panel's verdict, it
+is the worklist that follows it: the remediation skills write back into this file as they
+close findings, so a later reader sees both what was found and what was done. Nothing else
+in the report is ever rewritten — claims, scenarios and panel health are evidence.
+
 Then print a short `[specs-kit]`-prefixed summary to the user: verdict, counts, report
 path.
 
@@ -389,7 +469,9 @@ path.
 1. **BLOCKER findings present, no `--force`**: the run ends BLOCKED. Do not proceed to
    implementation and do not offer to. Tell the user, per blocker, which skill resolves
    it:
-   - ambiguity or gap in the specification → `/skill:specs-kit-spec-check`
+   - ambiguity or gap in the specification → `/skill:specs-kit-spec-check`, which reads
+     this report, queues the open findings ahead of its own questions, and writes each
+     resolution back here as `RESOLVED` or `REJECTED`
    - the specification is wrong about what the feature should do → re-run
      `/skill:specs-kit-brainstorm` on the affected area
    - architectural defect → `/skill:specs-kit-technical-plan`
@@ -402,6 +484,22 @@ path.
 4. **Clean**: report and proceed.
 5. **Idempotent**: re-running produces a new dated report; earlier reports are never
    overwritten, so the history of what the panel said is preserved alongside the spec.
+6. **The remediation loop**: BLOCKED → fix → re-review. The panel judged a specification
+   that no longer exists once the fixes land, so its verdict does not carry over: only a new
+   run can clear the gate. On a re-run, read the previous report's statuses before merging —
+   a finding closed as `REJECTED` that the panel raises again is worth flagging as such in
+   the new report, since the user already ruled on it once.
+
+   ```
+   adversarial-review (BLOCKED)
+     → spec-check          closes the findings that target the specification
+     → spec-to-tasks       closes the findings that target the task set
+     → technical-plan      closes the architectural ones
+   adversarial-review (re-run, operator's decision)
+   ```
+
+   No remediation skill ever re-runs the panel by itself: another round is another set of
+   metered runs, and that is the operator's call.
 
 ---
 
