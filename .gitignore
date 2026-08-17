@@ -28,3 +28,5 @@ tmp/
 # Test / coverage artifacts
 coverage/
 .nyc_output/
+graphify-out/
+_ralph_loop/fix_plan.json
