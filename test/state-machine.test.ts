@@ -65,6 +65,8 @@ interface BehaviorResult {
   text?: string;
   /** Hang until the abort signal fires, then report an aborted run. */
   waitAbort?: boolean;
+  /** Answer with the provider payload a rate-limited spawn really returns. */
+  rateLimited?: boolean;
 }
 
 interface FakeCtx {
@@ -127,6 +129,18 @@ async function runLoop(
   configure: (config: SpecsKitConfig) => void = () => {},
   startOpts: Partial<LoopStartOptions> = {},
   runHooks: typeof runPhaseHooks = async () => [],
+  // The temp project root is not a git repository, so the real fingerprint
+  // reads null there and the no-progress guard stays dormant unless a test
+  // scripts it explicitly.
+  workspaceFingerprint: () => Promise<string | null> = async () => null,
+  // The real refresh shells out to graphify; tests answer for it so the suite
+  // never depends on an external binary being installed.
+  refreshCodebaseGraph: (
+    projectRoot: string,
+  ) => Promise<{ status: "refreshed" | "unavailable" | "failed"; detail: string }> = async () => ({
+    status: "unavailable",
+    detail: "",
+  }),
 ): Promise<RunResult> {
   const config = await loadSpecsKitConfig(root);
   configure(config);
@@ -166,6 +180,15 @@ async function runLoop(
     if (phase === "review" && b.review !== "missing") {
       await writeFile(reviewFilePath(specDir, task), reviewContent(b.review ?? "PASSED"), "utf8");
     }
+    if (b.rateLimited) {
+      return {
+        ...okOutcome(1),
+        stopReason: "error",
+        errorMessage:
+          '429 {"type":"error","error":{"type":"rate_limit_error","message":"Token Plan usage limit reached: ' +
+          'Upgrade your Token Plan or purchase Credits for more usage. (2056)"}}',
+      };
+    }
     return okOutcome(b.fail ? 1 : 0);
   };
 
@@ -178,6 +201,8 @@ async function runLoop(
         checkpoints.push(message);
         return { committed: true };
       },
+      workspaceFingerprint,
+      refreshCodebaseGraph,
       now: () => FIXED_NOW,
     },
     {
@@ -208,6 +233,7 @@ test("an empty task selection halts instead of reporting a completed run", async
         config,
         spawnPhase: async () => assert.fail("no phase may run on an empty selection"),
         runHooks: async () => [],
+        refreshCodebaseGraph: async () => ({ status: "unavailable" as const, detail: "" }),
         now: () => FIXED_NOW,
       },
       {},
@@ -397,6 +423,166 @@ test("a review rejecting twice with the same feedback ends the task instead of l
   assert.equal(countCalls(run.calls, "TASK-001", "review"), 2);
   assert.match(run.plan.state.error ?? "", /identical feedback/);
   assert.equal(run.plan.state.step, "failed");
+});
+
+test("the codebase graph is refreshed once per task, not once per range", async () => {
+  const { root, specDir } = await createSpec();
+  const refreshes: string[] = [];
+  const run = await runLoop(root, specDir, () => ({}), (config) => {
+    config.mode = "fast";
+  }, {}, async () => [], async () => null, async (projectRoot) => {
+    refreshes.push(projectRoot);
+    return { status: "refreshed" as const, detail: "Rebuilt: 1577 nodes, 6886 edges" };
+  });
+
+  // In fast mode the sync phase — the one that rebuilds the graph — runs once
+  // for the whole range, so every task after the first used to read a map that
+  // predated the work already landed. Re-extracting the code needs no model
+  // call, so the task entry does it instead.
+  assert.equal(run.result.reason, "completed");
+  assert.equal(refreshes.length, 3, "one refresh per task");
+  assert.deepEqual(new Set(refreshes), new Set([root]));
+  assert.ok(
+    run.notifications.some((n) => n.message.includes("Rebuilt: 1577 nodes")),
+    "the operator sees what the refresh produced",
+  );
+});
+
+test("a refresh that fails warns and lets the task run on the graph it has", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(root, specDir, () => ({}), (config) => {
+    config.mode = "fast";
+    config.run.fromTask = "TASK-001";
+    config.run.toTask = "TASK-001";
+  }, {}, async () => [], async () => null, async () => ({ status: "failed" as const, detail: "boom" }));
+
+  // A stale map is still better than a halted run: the phases proceed and the
+  // operator is told what they are reading.
+  assert.equal(run.result.reason, "completed");
+  assert.equal(countCalls(run.calls, "TASK-001", "implementation"), 1);
+  const warned = run.notifications.filter(
+    (n) => n.type === "warning" && n.message.includes("could not refresh the codebase graph"),
+  );
+  assert.equal(warned.length, 1);
+  assert.match(warned[0].message, /predate the tasks already completed/);
+});
+
+test("a provider that refuses the implementation ends the task without spending its attempts", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(
+    root,
+    specDir,
+    (call) => (call.phase === "implementation" ? { rateLimited: true } : {}),
+    (config) => {
+      config.mode = "fast";
+      config.run.maxAttempts = 5;
+    },
+  );
+
+  // The same refusal answers every spawn, so re-implementing working code buys
+  // five identical failures. One is enough: the task stops, the counter never
+  // moves, and the reviewer is never spawned on a tree nobody produced.
+  assert.equal(run.result.reason, "halted");
+  assert.equal(countCalls(run.calls, "TASK-001", "implementation"), 1);
+  assert.equal(countCalls(run.calls, "TASK-001", "review"), 0);
+  assert.equal(run.plan.state.retry_count, 0, "an environment failure must not cost an attempt");
+  assert.match(run.plan.state.error ?? "", /implementation quota/);
+
+  const shouted = run.notifications.filter((n) => n.type === "error");
+  assert.ok(shouted.length > 0, "a refused provider is an error, not a warning");
+  assert.match(shouted[0].message, /Token Plan usage limit reached/, "the provider is quoted verbatim");
+  assert.match(shouted[0].message, /fails identically/, "the operator is told a retry cannot help");
+});
+
+test("an agent error the loop cannot attribute still costs an attempt", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(
+    root,
+    specDir,
+    (call) => (call.phase === "implementation" && call.n === 1 ? { fail: true } : {}),
+    (config) => {
+      config.mode = "fast";
+      config.run.maxAttempts = 5;
+    },
+  );
+
+  // Nothing in the output names a provider refusal, so the retry path is left
+  // exactly as it was: a transient crash is still worth another attempt.
+  assert.equal(countCalls(run.calls, "TASK-001", "implementation"), 2);
+  assert.equal(run.result.reason, "completed");
+});
+
+test("a retry that leaves the workspace untouched ends the task before the review runs", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(
+    root,
+    specDir,
+    (call) => (call.phase === "review" ? { review: "FAILED" } : {}),
+    (config) => {
+      config.mode = "fast";
+      config.run.maxAttempts = 5;
+    },
+    {},
+    async () => [],
+    async () => "same-tree",
+  );
+
+  // The rejected first attempt bought a second one that re-read the task, ran
+  // the gate and wrote nothing. Handing that tree to the reviewer would only
+  // reproduce the rejection, so the task ends without spawning it again: the
+  // guard saves the review session too, not just the attempts after it.
+  assert.equal(run.result.reason, "halted");
+  assert.equal(countCalls(run.calls, "TASK-001", "implementation"), 2);
+  assert.equal(countCalls(run.calls, "TASK-001", "review"), 1);
+  assert.match(run.plan.state.error ?? "", /left the workspace unchanged/);
+  assert.equal(run.plan.state.step, "failed");
+  assert.ok(
+    run.notifications.some((n) => /changed nothing/.test(n.message) && n.type === "warning"),
+    "the operator is told why the task stopped",
+  );
+});
+
+test("a retry that changes the workspace stays on the normal review path", async () => {
+  const { root, specDir } = await createSpec();
+  let tree = 0;
+  const run = await runLoop(
+    root,
+    specDir,
+    (call) => (call.phase === "review" ? { review: "FAILED" } : {}),
+    (config) => {
+      config.mode = "fast";
+      config.run.maxAttempts = 5;
+    },
+    {},
+    async () => [],
+    async () => `tree-${tree++}`,
+  );
+
+  // Real work between the two fingerprints: the guard stays out of the way and
+  // the task ends on the pre-existing stall guard instead.
+  assert.equal(countCalls(run.calls, "TASK-001", "review"), 2);
+  assert.match(run.plan.state.error ?? "", /identical feedback/);
+});
+
+test("a first attempt writing nothing is left for the reviewer to judge", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(
+    root,
+    specDir,
+    () => ({}),
+    (config) => {
+      config.mode = "fast";
+    },
+    {},
+    async () => [],
+    async () => "same-tree",
+  );
+
+  // Nothing has rejected the work yet, so an unchanged tree is a verdict for
+  // the review to reach, not a stall — and the guard never measures it.
+  assert.equal(run.result.reason, "completed");
+  assert.equal(countCalls(run.calls, "TASK-001", "implementation"), 1);
+  assert.equal(countCalls(run.calls, "TASK-001", "review"), 1);
 });
 
 test("a reviewer that never leaves a readable verdict does not re-run the implementation", async () => {

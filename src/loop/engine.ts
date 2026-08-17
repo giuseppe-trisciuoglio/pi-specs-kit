@@ -15,6 +15,8 @@ import type { PhaseMeter } from "../measure/phase-meter.ts";
 import { runPhaseHooks } from "./hooks.ts";
 import { BudgetExceededError } from "./budget.ts";
 import { commitCheckpoint } from "./checkpoint.ts";
+import { refreshCodebaseGraph } from "./codebase-graph.ts";
+import { workspaceFingerprint } from "./workspace.ts";
 import { LoopStatusTracker, type LoopStatus } from "./loop-status.ts";
 import { prepareRun } from "./run-setup.ts";
 import { assembleRun } from "./run-assembly.ts";
@@ -44,6 +46,8 @@ export interface EngineDeps {
   spawnPhase?: (opts: PhaseSpawnOptions) => Promise<PhaseRunOutcome>;
   runHooks?: typeof runPhaseHooks;
   commitCheckpoint?: typeof commitCheckpoint;
+  workspaceFingerprint?: typeof workspaceFingerprint;
+  refreshCodebaseGraph?: typeof refreshCodebaseGraph;
   /** Phase measurement; defaults to the real ledger/write-ahead writer. */
   meter?: PhaseMeter;
   now?: () => Date;
@@ -58,6 +62,8 @@ interface ResolvedDeps {
   spawnPhase: (opts: PhaseSpawnOptions) => Promise<PhaseRunOutcome>;
   runHooks: typeof runPhaseHooks;
   commitCheckpoint: typeof commitCheckpoint;
+  workspaceFingerprint: typeof workspaceFingerprint;
+  refreshCodebaseGraph: typeof refreshCodebaseGraph;
   /** Null means "build the real one at run start", keeping the constructor inert. */
   meter: PhaseMeter | null;
   now: () => Date;
@@ -78,6 +84,8 @@ export class LoopEngine {
       spawnPhase: deps.spawnPhase ?? runAgentPhase,
       runHooks: deps.runHooks ?? runPhaseHooks,
       commitCheckpoint: deps.commitCheckpoint ?? commitCheckpoint,
+      workspaceFingerprint: deps.workspaceFingerprint ?? workspaceFingerprint,
+      refreshCodebaseGraph: deps.refreshCodebaseGraph ?? refreshCodebaseGraph,
       meter: deps.meter ?? null,
       now: deps.now ?? (() => new Date()),
     };
@@ -187,6 +195,8 @@ export class LoopEngine {
       spawnPhase: this.#deps.spawnPhase,
       runHooks: this.#deps.runHooks,
       commitCheckpoint: this.#deps.commitCheckpoint,
+      workspaceFingerprint: this.#deps.workspaceFingerprint,
+      refreshCodebaseGraph: this.#deps.refreshCodebaseGraph,
       meter: this.#deps.meter,
       now: this.#deps.now,
       notify: (m, t) => this.#notify(m, t),

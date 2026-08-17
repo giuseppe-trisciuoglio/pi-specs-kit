@@ -54,7 +54,14 @@ const EDGE_DECLARATIONS: readonly TaskEdge[] = [
   // for that case.
   { from: "enter_task", to: "task_failed", type: "attempts-exhausted", when: "always" },
 
+  // Ahead of the exhaustion guard: a refused spawn is worth naming as such
+  // even on the last attempt, where "attempts exhausted" would hide the cause.
+  { from: "implementation", to: "task_failed", type: "report-unusable", when: "impl_environment_failed" },
   { from: "implementation", to: "task_failed", type: "attempts-exhausted", when: "impl_failed_attempts_exhausted" },
+  // Sits next to the exhaustion guard for the same reason: both say another
+  // round cannot help. A retry that produced no change would hand the reviewer
+  // the tree it has already rejected.
+  { from: "implementation", to: "task_failed", type: "stall-guard", when: "impl_no_op_retry" },
   { from: "implementation", to: "implementation", type: "pre-hook-failed", when: "impl_pre_hook_failed" },
   { from: "implementation", to: "implementation", type: "spawn-failed", when: "impl_spawn_failed" },
   { from: "implementation", to: "implementation", type: "post-hook-failed", when: "impl_post_hook_failed" },

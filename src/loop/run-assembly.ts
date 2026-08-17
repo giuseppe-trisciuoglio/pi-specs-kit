@@ -17,6 +17,8 @@ import { PhaseMeter } from "../measure/phase-meter.ts";
 import { walPath } from "../measure/wal.ts";
 import { LoopBudget } from "./budget.ts";
 import type { commitCheckpoint } from "./checkpoint.ts";
+import type { refreshCodebaseGraph } from "./codebase-graph.ts";
+import type { workspaceFingerprint } from "./workspace.ts";
 import { declareFinalSyncNode, type RunNode } from "./graph/run-graph.ts";
 import type { TaskNodeDeps } from "./graph/types.ts";
 import type { runPhaseHooks } from "./hooks.ts";
@@ -34,6 +36,8 @@ export interface RunAssemblyDeps {
   spawnPhase: (opts: PhaseSpawnOptions) => Promise<PhaseRunOutcome>;
   runHooks: typeof runPhaseHooks;
   commitCheckpoint: typeof commitCheckpoint;
+  workspaceFingerprint: typeof workspaceFingerprint;
+  refreshCodebaseGraph: typeof refreshCodebaseGraph;
   /** Phase measurement; null means "build the real one now". */
   meter: PhaseMeter | null;
   now: () => Date;
@@ -125,6 +129,8 @@ export function assembleRun(deps: RunAssemblyDeps): AssembledRun {
     stopping: () => deps.stopping(),
     signal: () => deps.signal(),
     commitCheckpoint: deps.commitCheckpoint,
+    workspaceFingerprint: deps.workspaceFingerprint,
+    refreshCodebaseGraph: deps.refreshCodebaseGraph,
     now: deps.now,
   };
   const runner = new TaskRunner(runnerDeps);

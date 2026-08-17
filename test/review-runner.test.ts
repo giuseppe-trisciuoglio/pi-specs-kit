@@ -117,7 +117,7 @@ test("a review subprocess that failed is not read as a reviewer who forgot the f
 
   assert.deepEqual(
     verdict,
-    { kind: "reportUnusable", detail: "review subprocess failed (agent error)" } satisfies ReviewVerdict,
+    { kind: "reportUnusable", detail: "review agent-error: agent error" } satisfies ReviewVerdict,
   );
   assert.equal(h.spawns(), 1, "the crashed spawn is not retried against the review file budget");
   assert.equal(h.plan.state.review_file_retry, 0);
@@ -130,7 +130,7 @@ test("a timed-out reviewer is reported as unusable with the real cause", async (
 
   assert.deepEqual(
     verdict,
-    { kind: "reportUnusable", detail: "review subprocess failed (timed out)" } satisfies ReviewVerdict,
+    { kind: "reportUnusable", detail: "review timeout: the phase outlived its timeout" } satisfies ReviewVerdict,
   );
 });
 

@@ -40,8 +40,19 @@ export interface PhaseRunOutcome {
   stderr: string;
 }
 
+/**
+ * Tools withheld from every phase agent. The loop runs its phases as detached
+ * subprocesses with nobody watching their stdin: an agent that stops to ask the
+ * operator a question blocks until the phase timeout and then dies having done
+ * nothing, and the answer it waited for was never coming. Both spellings are
+ * listed because the interactive tool appears under either name depending on
+ * whether the CLI or an extension registers it; an id the CLI does not know is
+ * ignored, so naming both costs nothing.
+ */
+export const WITHHELD_TOOLS: readonly string[] = ["ask_user_question", "ask_question"];
+
 export async function runAgentPhase(opts: PhaseSpawnOptions): Promise<PhaseRunOutcome> {
-  const args = ["--print", "--mode", "json", "--no-session"];
+  const args = ["--print", "--mode", "json", "--no-session", "--exclude-tools", WITHHELD_TOOLS.join(",")];
   if (opts.model && opts.model !== "auto") args.push("--model", opts.model);
   if (opts.thinkingLevel) args.push("--thinking", opts.thinkingLevel);
   if (opts.systemPrompt) args.push("--system-prompt", opts.systemPrompt);

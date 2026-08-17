@@ -170,6 +170,7 @@ async function runLoop(
         checkpoints.push(message);
         return { committed: true };
       },
+      refreshCodebaseGraph: async () => ({ status: "unavailable" as const, detail: "" }),
       now: () => FIXED_NOW,
     },
     {

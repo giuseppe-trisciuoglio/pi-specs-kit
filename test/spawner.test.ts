@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runAgentPhase } from "../src/agent/spawner.ts";
+import { runAgentPhase, WITHHELD_TOOLS } from "../src/agent/spawner.ts";
 import type { PiStreamEvent } from "../src/agent/json-stream.ts";
 import { assistantText } from "../src/agent/stream-format.ts";
 
@@ -66,6 +66,11 @@ test("successful run parses events, captures argv and stderr", async () => {
   const argv = JSON.parse(argvRaw.line.slice("ARGV:".length)) as string[];
   assert.deepEqual(argv.slice(0, 3), ["--print", "--mode", "json"]);
   assert.ok(argv.includes("--no-session"));
+  // The loop is unattended: an agent that stops to ask a question blocks the
+  // phase until its timeout, with nobody there to answer.
+  const excluded = argv[argv.indexOf("--exclude-tools") + 1].split(",");
+  assert.ok(excluded.includes("ask_user_question"), `interactive tool not withheld: ${excluded.join(",")}`);
+  assert.deepEqual(excluded, [...WITHHELD_TOOLS]);
   assert.deepEqual(argv[argv.indexOf("--model") + 1], "provider/model-x");
   assert.deepEqual(argv[argv.indexOf("--thinking") + 1], "low");
   assert.deepEqual(argv[argv.indexOf("--append-system-prompt") + 1], "extra rules");

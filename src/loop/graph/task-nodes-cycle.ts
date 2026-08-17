@@ -7,9 +7,11 @@
  */
 
 import path from "node:path";
-import { spawnFailed } from "../phases.ts";
+import { graphRefreshFailedWarning } from "../codebase-graph.ts";
+import { classifyPhaseFailure, environmentFailureMessage } from "../phases.ts";
 import { runReviewStep } from "../review-runner.ts";
 import { collectRoutedSuggestions } from "../routed-suggestions.ts";
+import { loopArtifactExclusions } from "../workspace.ts";
 import { upstreamProvides } from "./task-nodes-tail.ts";
 import type { NodeAction, TaskNodeEnv } from "./types.ts";
 
@@ -29,6 +31,9 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
   const state = plan.state;
   const id = taskFile.frontmatter.id;
   const maxAttempts = config.run.maxAttempts;
+  // The loop's own state file and phase logs are written while the phase runs;
+  // counting them would make every attempt look productive.
+  const fingerprintExclusions = loopArtifactExclusions(config.projectRoot, specDir);
 
   return {
     enter_task: async (io) => {
@@ -48,6 +53,18 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         notify(`task ${id}: ${taskFile.frontmatter.title}`, "info");
       }
 
+      // Every phase of this task reads the codebase graph, and everything the
+      // tasks before it landed is missing from the copy on disk: the sync
+      // phase is what rebuilds it, and in fast mode sync runs once per range.
+      // Re-extracting the code costs seconds and no model call, so it happens
+      // here, once per task, rather than leaving the map a range behind.
+      const refresh = await deps.refreshCodebaseGraph(config.projectRoot);
+      if (refresh.status === "refreshed" && refresh.detail) {
+        notify(`codebase graph refreshed: ${refresh.detail}`, "info");
+      } else if (refresh.status === "failed") {
+        notify(graphRefreshFailedWarning(refresh.detail), "warning");
+      }
+
       // The end-of-range sync keys on whether a sync actually ran in this
       // run, not on where the task resumed: a resume past the sync phase must
       // not claim a sync that never happened, or the run could close without
@@ -64,6 +81,11 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
       if (deps.stopping()) return { kind: "stopped" };
       state.step = "implementation";
       await persist();
+      // Only retries are fingerprinted. A first attempt has no rejection to
+      // act on, so writing nothing is a verdict for the reviewer to reach, not
+      // a stall; and skipping the measurement keeps the happy path free of it.
+      const isRetry = state.retry_count > 0;
+      const before = isRetry ? await deps.workspaceFingerprint(config.projectRoot, fingerprintExclusions) : null;
       const impl = await executor.run("implementation", {
         task: taskFile,
         learnings: plan.learnings,
@@ -92,7 +114,20 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         io.runtime.implStatus = "pre-hook-failed";
         return { kind: "ok" };
       }
-      if (spawnFailed(impl.outcome)) {
+      const failure = classifyPhaseFailure(impl.outcome);
+      if (failure?.environment) {
+        // The review step has always treated a refused spawn as an environment
+        // failure worth stopping on; the implementation used to spend an
+        // attempt on it, so a rate limit or a mistyped model id read exactly
+        // like code the agent got wrong and bought a re-implementation of
+        // working code for every attempt the task had left.
+        state.review_file_error = `implementation ${failure.kind}: ${failure.detail}`;
+        await persist();
+        notify(environmentFailureMessage("implementation", id, failure), "error");
+        io.runtime.implStatus = "environment-failed";
+        return { kind: "ok" };
+      }
+      if (failure) {
         notify(`implementation failed for ${id} (attempt ${state.retry_count + 1}/${maxAttempts})`, "warning");
         state.retry_count++;
         await persist();
@@ -111,6 +146,22 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         return { kind: "ok" };
       }
       io.runtime.postHookFailures = null;
+      // The attempt ran clean end to end. If it also left the tree exactly as
+      // it found it, the agent re-read the task, re-ran the gate and wrote
+      // nothing — the review would receive the same tree it rejected and
+      // reject it again, one agent session per round. A null fingerprint means
+      // the tree could not be read (no git, or a git failure): the signal is
+      // absent, so the attempt is taken at face value.
+      if (before !== null) {
+        const after = await deps.workspaceFingerprint(config.projectRoot, fingerprintExclusions);
+        if (after !== null && after === before) {
+          state.review_file_error = "implementation retry left the workspace unchanged, no progress";
+          await persist();
+          notify(`implementation retry for ${id} changed nothing, task abandoned`, "warning");
+          io.runtime.implStatus = "no-op-retry";
+          return { kind: "ok" };
+        }
+      }
       io.runtime.implStatus = "ok";
       return { kind: "ok" };
     },

@@ -59,8 +59,9 @@ export interface PhaseStepResult {
 
 export type { SystemPromptOverrideText } from "./phase-context.ts";
 export type { LearnerResult } from "./phase-spawn.ts";
-export { buildLearnerPrompt } from "./phase-spawn.ts";
-export { spawnFailed } from "./phase-spawn.ts";
+export { buildLearnerPrompt, parseConfirmations, CONFIRMED_PREFIX, MAX_CONFIRMATIONS } from "./phase-spawn.ts";
+export { classifyPhaseFailure, environmentFailureMessage, spawnFailed } from "./phase-failure.ts";
+export type { PhaseFailure, PhaseFailureKind } from "./phase-failure.ts";
 
 /**
  * Executes the single phases of the loop on behalf of the engine: hooks,
@@ -162,8 +163,12 @@ export class PhaseExecutor {
   }
 
   /** Run the learner role and capture its textual output. */
-  async runLearner(task: TaskFile, opts: { signal?: AbortSignal } = {}): Promise<LearnerResult> {
-    return this.#spawner.runLearner(task, opts);
+  async runLearner(
+    task: TaskFile,
+    known: readonly string[] = [],
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<LearnerResult> {
+    return this.#spawner.runLearner(task, known, opts);
   }
 
   /**

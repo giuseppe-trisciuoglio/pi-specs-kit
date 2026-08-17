@@ -199,7 +199,9 @@ is a lost reviewer.
 Two things carry the reviewer: the **system prompt** fixes the role, the **user prompt**
 fixes the work.
 
-**System prompt** (passed with `--append-system-prompt`, persona filled in per reviewer):
+**System prompt** — you do not write this one. `run-panel.sh` carries it and fills in the
+persona per reviewer, so that the "JSON only" contract is identical across the panel and
+cannot drift between reviewers. It reads:
 
 ```
 You are a hostile specification reviewer, acting as <persona name>: <persona mandate>.
@@ -290,55 +292,58 @@ Inline a document only when it lives outside the folder the reviewer can reach.
 
 **Actions**:
 
-1. For each reviewer, spawn a subprocess. Pass the prompt through a here-doc: a critique
-   prompt is long and full of quotes, braces and newlines, and squeezing it onto the
-   command line is how it arrives at the model mangled.
+The panel is spawned by `scripts/run-panel.sh`, next to this file. The flags that make a
+critique trustworthy — the declared model with no substitute, read-only tools, no shared
+session — live in the script rather than in a code block to be retyped, so they cannot be
+dropped by accident: a reviewer spawned without `--no-session` is no longer independent,
+and nothing downstream would notice.
+
+The script resolves nothing. Models come from Phase 2 already validated, prompts from
+Phase 3 already written; it spawns, captures, extracts and reports status.
+
+**Actions**:
+
+1. Write each reviewer's user prompt from Phase 3 to its own file under the output
+   directory, e.g. `prompt--<provider>-<model>.md`. A critique prompt is long and full of
+   quotes, braces and newlines; a file avoids every quoting hazard of passing it inline.
+2. Run the panel:
 
    ```bash
-   OUTDIR="docs/specs/[id]/adversarial-review"
-   mkdir -p "$OUTDIR"
-
-   read -r -d '' PROMPT <<'EOF'
-   # Objective
-   ...the user prompt from Phase 3, verbatim...
-   EOF
-
-   REVIEWER_SYSTEM_PROMPT='You are a hostile specification reviewer, acting as <persona name>: <persona mandate>. ...'
-
-   pi --model "<declared model>" \
-      --tools read,grep,find,ls \
-      --append-system-prompt "$REVIEWER_SYSTEM_PROMPT" \
-      --no-session \
-      --thinking high \
-      -p "$PROMPT" 2>&1 | tee "$OUTDIR/raw--<provider>-<model>.txt"
+   skills/specs-kit-adversarial-review/scripts/run-panel.sh \
+     --outdir "docs/specs/[id]/adversarial-review" \
+     --reviewer "<model 1>|The Adversary|<prompt file 1>" \
+     --reviewer "<model 2>|The Operator|<prompt file 2>" \
+     --reviewer "<model 3>|The Executor|<prompt file 3>"
    ```
 
-   Flags, and why each one:
+   | Argument | Meaning |
+   |----------|---------|
+   | `--outdir` | where transcripts and critiques land; created if missing |
+   | `--reviewer "model\|persona\|prompt-file[\|thinking]"` | one per reviewer, repeatable, 2 to 4. `persona` is the name **and** its mandate, taken from the Phase 2 table (`The Operator: what happens when it fails — partial writes, concurrency, ...`), since it is what the script drops into the system prompt. The optional fourth field overrides the default `high` thinking level |
+   | `--prefix` | file prefix, `raw` by default — Phase 5 passes `rebuttal` |
+   | `--sequential` | run one reviewer at a time instead of all at once |
+   | `--timeout` | per-reviewer seconds, when `timeout(1)` is available |
 
-   | Flag | Why |
-   |------|-----|
-   | `--model <provider/model>` | the declared reviewer, never a substitute |
-   | `--tools read,grep,find,ls` | the reviewer reads the spec folder itself. **No `write`, no `edit`, no `bash`**: a reviewer must not touch the work it is judging |
-   | `--append-system-prompt` | fixes the persona and the "JSON only" contract at the system level, where the model is least likely to drift from it |
-   | `--no-session` | each critique is an isolated run — this is what keeps reviewers independent |
-   | `--thinking high` | attacking a specification is the reasoning-heavy part of the workflow; a panel entry declaring its own level overrides this |
-   | `-p` | non-interactive: the reviewer answers and exits |
-   | `\| tee` | the raw answer lands on disk *and* stays visible, so a run that dies mid-way still leaves evidence |
-
-   Reviewers are independent: nothing from one run enters another. Run them sequentially
-   unless the operator asked otherwise — three metered models at once is a cost spike,
-   not a speedup.
-2. The `tee`d file is the raw evidence. Then extract the JSON object from it and write
-   `docs/specs/[id]/adversarial-review/raw--<provider>-<model>.json`, with a header
-   recording model, persona, timestamp and exit status. Keep the `.txt` alongside it even
-   when parsing succeeds, and especially when it fails: it is the evidence behind the
-   merged report.
-3. **Failure handling** (each is best-effort, never fatal on its own):
-   - Non-zero exit or timeout: record the reviewer as `unavailable` with the reason.
-   - Output that is not valid JSON: attempt to extract the JSON object; if that fails,
-     record the reviewer as `unparseable` and keep the raw text.
-   - Fewer than 2 usable reviewers: stop before the merge and report why. A merge over
-     one critique cannot distinguish consensus from opinion.
+   Reviewers run **in parallel** by default. They are independent by construction —
+   separate processes, no shared session, nothing from one run entering another — so
+   there is nothing to serialise. The cost is the same either way: the same runs, closer
+   together. Pass `--sequential` when two reviewers share a provider and the rate limit
+   makes the parallel run flakier than the wait it saves.
+3. Read the status lines the script prints — one per reviewer, tab-separated:
+   `model`, `persona`, `ok | unparseable | unavailable`, detail. They are the input to
+   the panel health table in Phase 7; the detail column carries the reason a reviewer is
+   missing, which belongs in the report verbatim.
+4. Each usable reviewer leaves `<prefix>--<provider>-<model>.json` — model, persona,
+   timestamp, exit status and the critique under `answer` — beside the full transcript
+   `<prefix>--<provider>-<model>.txt`. The transcript stays even when parsing succeeds,
+   and especially when it fails: it is the evidence behind the merged report.
+5. **Failure handling** is the script's, and is best-effort by design: a reviewer that
+   exits non-zero but still answered is kept, one that produced no JSON is recorded as
+   `unparseable`, one that died is `unavailable`. The panel continues either way.
+   Exit code `1` means fewer than 2 usable reviewers: **stop before the merge** and report
+   why. A merge over one critique cannot distinguish consensus from opinion. Exit code `2`
+   is a caller error — malformed arguments, missing `pi` — and is a bug in this phase, not
+   a failed panel.
 
 ---
 
@@ -351,12 +356,12 @@ Only worth running when round 1 produced findings the reviewers disagree about.
 **Actions**:
 
 1. Build, per reviewer, the list of findings raised by the *others*.
-2. Spawn each reviewer again with the same invocation shape as Phase 4 — same flags, same
-   here-doc, same system prompt with its persona — and a user prompt asking only:
-   *for each of these findings, does it hold? Answer AGREE, DISAGREE or UNSURE with one
-   sentence of reasoning. You did not raise these; say plainly if you now think they are
-   right.* The output contract is again JSON only, one verdict per finding id.
-3. Persist as `rebuttal--<provider>-<model>.json`, with the `tee`d raw text beside it.
+2. Write one prompt file per reviewer asking only: *for each of these findings, does it
+   hold? Answer AGREE, DISAGREE or UNSURE with one sentence of reasoning. You did not
+   raise these; say plainly if you now think they are right.* The output contract is again
+   JSON only — an object with a `verdicts` array, one entry per finding id.
+3. Run the same script with the same models and personas and `--prefix rebuttal`, which
+   persists `rebuttal--<provider>-<model>.json` beside its transcript.
 4. A finding that survives rebuttal with 2+ AGREE is promoted to convergent even if only
    one reviewer raised it originally. A finding with 2+ DISAGREE is demoted to a
    contested area.

@@ -75,7 +75,7 @@ test("a full run appends one ledger row per phase and leaves no WAL rows", async
   };
 
   const engine = new LoopEngine(
-    { config, spawnPhase, runHooks: async () => [], commitCheckpoint: async () => ({ committed: true }), meter },
+    { config, spawnPhase, runHooks: async () => [], commitCheckpoint: async () => ({ committed: true }), refreshCodebaseGraph: async () => ({ status: "unavailable" as const, detail: "" }), meter },
     {},
   );
   const result = await engine.start({ specDir });
@@ -129,7 +129,7 @@ test("a retried phase records the declared attempt number in the ledger", async 
   };
 
   const engine = new LoopEngine(
-    { config, spawnPhase, runHooks: async () => [], commitCheckpoint: async () => ({ committed: true }), meter },
+    { config, spawnPhase, runHooks: async () => [], commitCheckpoint: async () => ({ committed: true }), refreshCodebaseGraph: async () => ({ status: "unavailable" as const, detail: "" }), meter },
     {},
   );
   const result = await engine.start({ specDir });

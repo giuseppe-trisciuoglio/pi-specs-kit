@@ -330,6 +330,20 @@ test("phase instructions match each phase contract", () => {
   assert.ok(sync.includes("Update the specification documentation"));
 });
 
+test("the phases that edit code are told to scope their test runs, the ones that do not are left alone", () => {
+  for (const phase of ["implementation", "cleanup"] as const) {
+    const prompt = buildPhasePrompt(makeCtx({ phase }));
+    assert.ok(prompt.includes("run only the tests covering what you just changed"), `${phase} scopes the inner loop`);
+    assert.ok(prompt.includes("Run the full suite once at the end"), `${phase} still owes a regression pass`);
+  }
+  // Review and sync do not edit code: review verifies a finished tree and sync
+  // touches documentation, so neither has an inner loop to scope.
+  for (const phase of ["review", "sync"] as const) {
+    const prompt = buildPhasePrompt(makeCtx({ phase }));
+    assert.ok(!prompt.includes("run only the tests covering"), `${phase} carries no test scope rule`);
+  }
+});
+
 test("sync phase instructions include the reconcile mandate only when opted in and learnings exist", () => {
   // Default: flag off, so the back-edge stays silent even with learnings present.
   const offByDefault = buildPhasePrompt(

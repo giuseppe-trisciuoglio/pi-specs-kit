@@ -11,7 +11,7 @@ import { computeRangeProgress, type FixPlan } from "../../fixplan/fix-plan.ts";
 import { updateTaskStatus, type TaskFile } from "../../tasks/task-parser.ts";
 import { graphifyGraphExists, graphifyGraphMissingWarning } from "../../prompt/graphify.ts";
 import { mergeLearnings, parseLearnings, loadProjectLearnings, saveProjectLearnings, MAX_PROJECT_LEARNINGS } from "../learner.ts";
-import { spawnFailed } from "../phases.ts";
+import { parseConfirmations, spawnFailed } from "../phases.ts";
 import type { NodeAction, TaskNodeDeps, TaskNodeEnv } from "./types.ts";
 
 /** Collect the public API contracts from the already-completed dependency tasks. */
@@ -91,20 +91,43 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
       if (deps.stopping()) return { kind: "stopped" };
       state.step = "learner";
       await persist();
-      const lr = await executor.runLearner(taskFile, { signal: deps.signal() });
+      // The learner is shown what the project already knows so it can add
+      // instead of re-deriving; the same list is what its citations point into.
+      const known = [...plan.learnings];
+      const lr = await executor.runLearner(taskFile, known, { signal: deps.signal() });
       if (deps.stopping() === "now") return { kind: "stopped" };
       if (spawnFailed(lr.outcome)) {
         notify(`learner failed for ${id}, continuing`, "warning");
       } else {
         const found = parseLearnings(lr.text);
-        if (found.length > 0) {
-          plan.learnings = mergeLearnings(plan.learnings, found);
+        const confirmed = parseConfirmations(lr.text, known);
+        if (found.length > 0 || confirmed.length > 0) {
+          // A task the review had to reject paid for its insights: whatever it
+          // learned encodes a rule the project actually enforces, so it starts
+          // warmer than a note from a task that passed first time.
+          const merged = mergeLearnings({
+            existing: plan.learnings,
+            stats: plan.learning_stats,
+            incoming: found,
+            confirmed,
+            iteration: state.iteration,
+            fromRejection: state.retry_count > 0,
+          });
+          plan.learnings = merged.learnings;
+          plan.learning_stats = merged.stats;
           await persist();
           // Persist to the project-level file so future specs benefit.
           try {
             const existing = await loadProjectLearnings(config.projectRoot, config.specsDir);
-            const merged = mergeLearnings(existing, found, MAX_PROJECT_LEARNINGS);
-            await saveProjectLearnings(config.projectRoot, config.specsDir, merged);
+            const project = mergeLearnings({
+              existing,
+              incoming: found,
+              confirmed,
+              iteration: state.iteration,
+              fromRejection: state.retry_count > 0,
+              max: MAX_PROJECT_LEARNINGS,
+            });
+            await saveProjectLearnings(config.projectRoot, config.specsDir, project.learnings);
           } catch {
             // Project learnings are best-effort.
           }

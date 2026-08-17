@@ -37,19 +37,102 @@ export function parseLearnings(text: string): string[] {
 }
 
 /**
- * Merge new learnings into the existing list: entries already present
- * (case-insensitive) are skipped, the list is capped at MAX_LEARNINGS by
- * dropping the oldest entries.
+ * What the loop has observed about one insight. Nothing here is a judgement an
+ * agent declared about its own output: `hits` counts the tasks that met the
+ * insight again, `fromRejection` records that a review had to reject the task
+ * that produced it, and `lastSeen` is the iteration that last touched it.
  */
-export function mergeLearnings(existing: string[], incoming: string[], max = MAX_LEARNINGS): string[] {
-  const merged = [...existing];
-  const seen = new Set(existing.map((l) => l.toLowerCase()));
+export interface LearningStat {
+  hits: number;
+  fromRejection: boolean;
+  lastSeen: number;
+}
+
+/**
+ * Both weights are denominated in tasks, because the decay is one point per
+ * task: an insight survives roughly `score` more tasks before a fresh one
+ * outranks it. Six buys a stretch long enough to matter in a range of a dozen
+ * or so tasks, while still letting a tip nobody meets again fall behind the
+ * newcomers within a handful. Weighting them any lower — the first pass tried
+ * two and three — lets the decay eat the reinforcement outright: a rule met
+ * three times and paid for with a rejection still died within nine tasks,
+ * which is the failure this scoring exists to prevent.
+ */
+const HIT_WEIGHT = 6;
+/** Weight of having been paid for with a rejected review. */
+const REJECTION_WEIGHT = 6;
+
+export function neutralStat(iteration: number): LearningStat {
+  return { hits: 1, fromRejection: false, lastSeen: iteration };
+}
+
+/**
+ * How warm an insight is at a given iteration. Everything cools as the run
+ * moves on; only a later task meeting it again reheats it. A convention the
+ * project keeps re-teaching, or one a review had to enforce, outlives a
+ * stylistic tip that was mentioned once — which is the whole point, because
+ * dropping by age alone evicted an architectural invariant to make room for
+ * a note about a JPA default.
+ */
+export function learningScore(stat: LearningStat, iteration: number): number {
+  return stat.hits * HIT_WEIGHT + (stat.fromRejection ? REJECTION_WEIGHT : 0) - (iteration - stat.lastSeen);
+}
+
+export interface MergeInput {
+  existing: string[];
+  /** Positionally aligned with `existing`; missing entries read as neutral. */
+  stats?: LearningStat[];
+  incoming: string[];
+  /** Insights the learner cited as met again, verified against `existing`. */
+  confirmed?: readonly string[];
+  /** Task counter driving the decay. */
+  iteration: number;
+  fromRejection?: boolean;
+  max?: number;
+}
+
+export interface MergeResult {
+  learnings: string[];
+  stats: LearningStat[];
+}
+
+/**
+ * Merge a learner's output into the memory. Exact repeats and cited insights
+ * reheat the entry that is already there instead of adding a second copy;
+ * genuinely new insights are appended. When the result overflows the cap the
+ * coldest entries go, not the oldest.
+ */
+export function mergeLearnings(input: MergeInput): MergeResult {
+  const { existing, incoming, iteration, max = MAX_LEARNINGS } = input;
+  const learnings = [...existing];
+  // A plan written before stats existed reads as neutral rather than failing.
+  const stats: LearningStat[] = learnings.map((_, i) => input.stats?.[i] ?? neutralStat(iteration));
+  const indexOf = new Map(learnings.map((l, i) => [l.toLowerCase(), i]));
+
+  const reheat = (key: string): boolean => {
+    const at = indexOf.get(key.toLowerCase());
+    if (at === undefined) return false;
+    stats[at] = { ...stats[at], hits: stats[at].hits + 1, lastSeen: iteration };
+    return true;
+  };
+
+  for (const cited of input.confirmed ?? []) reheat(cited);
   for (const learning of incoming) {
-    if (seen.has(learning.toLowerCase())) continue;
-    seen.add(learning.toLowerCase());
-    merged.push(learning);
+    if (reheat(learning)) continue;
+    indexOf.set(learning.toLowerCase(), learnings.length);
+    learnings.push(learning);
+    stats.push({ hits: 1, fromRejection: input.fromRejection ?? false, lastSeen: iteration });
   }
-  return merged.length > max ? merged.slice(merged.length - max) : merged;
+
+  if (learnings.length <= max) return { learnings, stats };
+  // Evict the coldest. Ties break on age, so equal scores keep the newer entry
+  // and the order of what survives is left untouched.
+  const keep = learnings
+    .map((_, i) => i)
+    .sort((a, b) => learningScore(stats[b], iteration) - learningScore(stats[a], iteration) || b - a)
+    .slice(0, max)
+    .sort((a, b) => a - b);
+  return { learnings: keep.map((i) => learnings[i]), stats: keep.map((i) => stats[i]) };
 }
 
 /**

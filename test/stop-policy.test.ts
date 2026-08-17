@@ -106,6 +106,7 @@ test("a stop requested during the sync still completes the task, checkpoint and 
         checkpoints.push(message);
         return { committed: true };
       },
+      refreshCodebaseGraph: async () => ({ status: "unavailable" as const, detail: "" }),
       now: () => FIXED_NOW,
     },
     {

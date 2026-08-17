@@ -83,7 +83,7 @@ test("interrupt during implementation counts as a failed attempt and the loop re
     return okOutcome(0);
   };
 
-  engine = new LoopEngine({ config, spawnPhase, runHooks: async () => [], commitCheckpoint: async () => ({ committed: false }) });
+  engine = new LoopEngine({ config, spawnPhase, runHooks: async () => [], commitCheckpoint: async () => ({ committed: false }), refreshCodebaseGraph: async () => ({ status: "unavailable" as const, detail: "" }) });
   const result = await engine.start({ specDir });
 
   assert.equal(result.reason, "completed");
@@ -120,7 +120,7 @@ test("interrupt during review fails the attempt: implementation starts over", as
     return okOutcome(0);
   };
 
-  engine = new LoopEngine({ config, spawnPhase, runHooks: async () => [], commitCheckpoint: async () => ({ committed: false }) });
+  engine = new LoopEngine({ config, spawnPhase, runHooks: async () => [], commitCheckpoint: async () => ({ committed: false }), refreshCodebaseGraph: async () => ({ status: "unavailable" as const, detail: "" }) });
   const result = await engine.start({ specDir });
 
   assert.equal(result.reason, "completed");

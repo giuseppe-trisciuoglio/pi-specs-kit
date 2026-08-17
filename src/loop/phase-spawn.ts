@@ -23,27 +23,66 @@ export interface LearnerResult {
   text: string;
 }
 
-/** A phase subprocess outcome counts as failed on any of these conditions. */
-export function spawnFailed(outcome: PhaseRunOutcome | null): boolean {
-  if (!outcome) return true;
-  return outcome.exitCode !== 0 || outcome.timedOut || outcome.aborted || outcome.stopReason === "error";
+/** Prefix a learner uses to point at an insight the project already recorded. */
+export const CONFIRMED_PREFIX = "CONFIRMED:";
+
+/** How many existing insights one learner may cite as re-confirmed. */
+export const MAX_CONFIRMATIONS = 3;
+
+/**
+ * Compact prompt for the learner role: task id/title, what the project already
+ * knows, and the request for a bullet list of reusable learnings. Deliberately
+ * not built with the phase prompt builder, which targets the four executable
+ * phases.
+ *
+ * Handing over the existing list is what lets the learner add rather than
+ * re-derive: without it every task restates the same conventions in new words,
+ * which both wastes the memory budget and makes the duplicates unrecognizable
+ * to the loop — the wordings share almost no vocabulary. The citation line
+ * turns that restatement into a pointer instead: cheaper for the learner, and
+ * it tells the loop which insights the project keeps re-teaching.
+ */
+export function buildLearnerPrompt(task: TaskFile, known: readonly string[] = []): string {
+  const fm = task.frontmatter;
+  const lines = [
+    `The task ${fm.id} "${fm.title}" has just been implemented and approved by review.`,
+    "Write the reusable learnings from this task as a bullet list, one insight per line",
+    'starting with "-": pitfalls encountered, project conventions worth remembering,',
+    "anything that would help future tasks.",
+  ];
+  if (known.length > 0) {
+    lines.push(
+      "",
+      "The project has already recorded the insights below. Do not restate them, not even",
+      "in different words: list only what this task added.",
+      "",
+      ...known.map((k) => `- ${k}`),
+      "",
+      `If this task re-confirmed or tripped over one of them, add a line "${CONFIRMED_PREFIX} <the`,
+      'insight, copied exactly>" instead of rewriting it. Cite at most',
+      `${MAX_CONFIRMATIONS}, and only the ones this task genuinely met.`,
+    );
+  }
+  lines.push("", "Output only the bullet list and any such lines.");
+  return lines.join("\n") + "\n";
 }
 
 /**
- * Compact prompt for the learner role: task id/title plus the request for a
- * bullet list of reusable learnings. Deliberately not built with the phase
- * prompt builder, which targets the four executable phases.
+ * The insights a learner cited as re-confirmed. Only exact matches against the
+ * list it was shown are returned: the citation is a pointer into known text, so
+ * anything the learner reworded or invented is dropped rather than trusted.
  */
-export function buildLearnerPrompt(task: TaskFile): string {
-  const fm = task.frontmatter;
-  return (
-    [
-      `The task ${fm.id} "${fm.title}" has just been implemented and approved by review.`,
-      "Write the reusable learnings from this task as a bullet list, one insight per line",
-      'starting with "-": pitfalls encountered, project conventions worth remembering,',
-      "anything that would help future tasks. Output only the bullet list.",
-    ].join("\n") + "\n"
-  );
+export function parseConfirmations(text: string, known: readonly string[]): string[] {
+  const byLower = new Map(known.map((k) => [k.toLowerCase(), k]));
+  const cited: string[] = [];
+  for (const line of text.split("\n")) {
+    const match = new RegExp(`^\\s*(?:[-*]\\s*)?${CONFIRMED_PREFIX}\\s*(.+?)\\s*$`).exec(line);
+    if (!match) continue;
+    const hit = byLower.get(match[1].replace(/^["'`]|["'`]$/g, "").toLowerCase());
+    if (hit && !cited.includes(hit)) cited.push(hit);
+    if (cited.length === MAX_CONFIRMATIONS) break;
+  }
+  return cited;
 }
 
 export interface PhaseSpawnerDeps {
@@ -129,11 +168,15 @@ export class PhaseSpawner {
   }
 
   /** Run the learner role and capture its textual output. */
-  async runLearner(task: TaskFile, opts: { signal?: AbortSignal } = {}): Promise<LearnerResult> {
+  async runLearner(
+    task: TaskFile,
+    known: readonly string[] = [],
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<LearnerResult> {
     const spec = path.basename(this.#deps.specDir);
     const meterHandle = this.#deps.beginMeter(spec, task.frontmatter.id, "learner", 1, "learner");
     try {
-      return await this.spawn(task.frontmatter.id, "learner", "learner", buildLearnerPrompt(task), undefined, opts.signal, true, meterHandle);
+      return await this.spawn(task.frontmatter.id, "learner", "learner", buildLearnerPrompt(task, known), undefined, opts.signal, true, meterHandle);
     } finally {
       if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
     }

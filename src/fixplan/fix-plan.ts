@@ -9,6 +9,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { PhaseName } from "../config/specs-kit-config.ts";
 import { taskIdNumber, type TaskStatus } from "../tasks/task-parser.ts";
+import type { LearningStat } from "../loop/learner.ts";
 
 export interface FixPlanTask {
   id: string;
@@ -71,6 +72,12 @@ export interface FixPlan {
   superseded: string[] | null;
   optional: string[] | null;
   learnings: string[];
+  /**
+   * Warmth of each entry of `learnings`, aligned by position. Optional and
+   * tolerated as absent or short: a plan written before scoring existed reads
+   * as neutral, and `learnings` keeps its shape as a plain list of strings.
+   */
+  learning_stats?: LearningStat[];
   task_range: TaskRange;
   range_progress: RangeProgress;
   state: LoopState;

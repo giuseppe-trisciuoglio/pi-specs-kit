@@ -49,6 +49,23 @@ const HOOK_OUTPUT_LIMIT = 6000;
 /** Characters to keep from the head when truncating (the tail carries the build summary). */
 const HOOK_TAIL = 4500;
 
+/**
+ * Test discipline for the phases that edit code. Left unscoped, an agent runs
+ * the whole suite after every edit: the cost of that grows with the suite while
+ * the answer it needs — did the thing I just touched work — does not. The two
+ * runs answer different questions, so they belong at different moments. Phrased
+ * without naming a build tool: the project's own commands are the agent's to
+ * find.
+ */
+const TEST_SCOPE_RULE: readonly string[] = [
+  "While you iterate, run only the tests covering what you just changed, unit and",
+  "integration alike, rather than the whole suite. The full suite answers a different",
+  "question — whether the change broke something elsewhere — and that question does",
+  "not need an answer after every edit.",
+  "Run the full suite once at the end, when every affected test is green: that pass is",
+  "the regression check, and the phase is not finished without it.",
+];
+
 /** Static exit contract per phase (the learner never goes through here). */
 function phaseInstructions(phase: PhaseName, taskId: string, reconcile: boolean): string {
   switch (phase) {
@@ -56,6 +73,7 @@ function phaseInstructions(phase: PhaseName, taskId: string, reconcile: boolean)
       return [
         "Modify the code in the workspace to fully implement the task above.",
         "Keep changes focused on the task and verify them with the project's build and tests.",
+        ...TEST_SCOPE_RULE,
         "The phase ends when the implementation is complete in the workspace.",
       ].join("\n");
     case "review":
@@ -86,6 +104,7 @@ function phaseInstructions(phase: PhaseName, taskId: string, reconcile: boolean)
         "Clean up the code touched by the task above: remove debug logging, dead code,",
         "leftover scaffolding and stale comments; optimize imports and readability.",
         "Do not change the behavior of the implementation.",
+        ...TEST_SCOPE_RULE,
       ].join("\n");
     case "sync": {
       const lines = [

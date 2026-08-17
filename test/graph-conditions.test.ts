@@ -42,7 +42,9 @@ test("the registry contains exactly the declared routing predicates", () => {
     "enters_at_update_done",
     "final_sync_needed",
     "halt_on_failure",
+    "impl_environment_failed",
     "impl_failed_attempts_exhausted",
+    "impl_no_op_retry",
     "impl_ok",
     "impl_post_hook_failed",
     "impl_pre_hook_failed",
@@ -107,6 +109,17 @@ test("implementation predicates read the implementation outcome and the retry bu
     [{ implStatus: "ok" }, true],
     [{ implStatus: "pre-hook-failed" }, false],
     [{ implStatus: "spawn-failed" }, false],
+    [{ implStatus: "no-op-retry" }, false],
+  ]);
+  truth("impl_no_op_retry", [
+    [{ implStatus: "no-op-retry" }, true],
+    [{ implStatus: "ok" }, false],
+    [{ implStatus: "post-hook-failed" }, false],
+  ]);
+  truth("impl_environment_failed", [
+    [{ implStatus: "environment-failed" }, true],
+    [{ implStatus: "spawn-failed" }, false],
+    [{ implStatus: "ok" }, false],
   ]);
   truth("impl_pre_hook_failed", [
     [{ implStatus: "pre-hook-failed" }, true],
@@ -128,6 +141,7 @@ test("implementation predicates read the implementation outcome and the retry bu
     [{ implStatus: "pre-hook-failed", attemptsLeft: false }, true],
     [{ implStatus: "spawn-failed", attemptsLeft: false }, true],
     [{ implStatus: "post-hook-failed", attemptsLeft: false }, true],
+    [{ implStatus: "no-op-retry", attemptsLeft: false }, true],
     [{ implStatus: "pre-hook-failed", attemptsLeft: true }, false],
     [{ implStatus: "ok", attemptsLeft: false }, false],
   ]);

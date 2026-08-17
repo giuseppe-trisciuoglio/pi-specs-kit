@@ -11,9 +11,11 @@ import type { FixPlan, LoopStep } from "../../fixplan/fix-plan.ts";
 import type { TaskFile } from "../../tasks/task-parser.ts";
 import type { LoopBudget } from "../budget.ts";
 import type { commitCheckpoint } from "../checkpoint.ts";
+import type { refreshCodebaseGraph } from "../codebase-graph.ts";
 import type { HookResult } from "../hooks.ts";
 import type { PhaseExecutor } from "../phases.ts";
 import type { RoutedSuggestion } from "../review-report.ts";
+import type { workspaceFingerprint } from "../workspace.ts";
 import type { ConditionName } from "./conditions.ts";
 
 /** Terminal results of one task's walk through the graph. */
@@ -56,8 +58,17 @@ export type TaskNodeId =
   | "task_stopped"
   | "task_halted";
 
-/** What the implementation phase produced, as routing sees it. */
-export type ImplStatus = "ok" | "pre-hook-failed" | "spawn-failed" | "post-hook-failed";
+/** What the implementation phase produced, as routing sees it. `no-op-retry`
+ * is a retry that ran clean and left the workspace byte-identical: the agent
+ * re-read the task, re-ran the gate and wrote nothing. */
+export type ImplStatus =
+  | "ok"
+  | "pre-hook-failed"
+  | "spawn-failed"
+  | "post-hook-failed"
+  | "no-op-retry"
+  /** The provider refused the spawn: no retry against the same config can succeed. */
+  | "environment-failed";
 
 /** Review verdict shapes that route; a stopped verdict never reaches routing
  * because it propagates as the action outcome. */
@@ -160,6 +171,11 @@ export interface TaskNodeDeps {
   /** Abort signal for the next subprocess (loop stop plus phase interrupt). */
   signal: () => AbortSignal | undefined;
   commitCheckpoint: typeof commitCheckpoint;
+  /** Content fingerprint of the worktree, read around a retried phase to tell
+   * a retry that changed something from one that changed nothing. */
+  workspaceFingerprint: typeof workspaceFingerprint;
+  /** Re-extract the codebase graph the phases read; best-effort. */
+  refreshCodebaseGraph: typeof refreshCodebaseGraph;
   now: () => Date;
 }
 

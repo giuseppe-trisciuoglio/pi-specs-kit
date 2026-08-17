@@ -37,6 +37,15 @@ const registry = {
   // Leaving the implementation phase. The exhaustion guard comes first in the
   // table; once attempts are gone, the failure kind is irrelevant to routing.
   impl_failed_attempts_exhausted: (ctx) => ctx.implStatus !== "ok" && !ctx.attemptsLeft,
+  // A retry that ran clean and wrote nothing: the review asked for a change
+  // and the implementation produced a byte-identical tree. Sending it to
+  // review again reproduces the rejection it just failed to act on, so the
+  // task stops here rather than spending the rest of its attempts.
+  impl_no_op_retry: (ctx) => ctx.implStatus === "no-op-retry",
+  // A provider that refused the spawn refuses the next one identically, so
+  // this leaves the cycle without spending an attempt — the rule the review
+  // step has always applied to its own refused spawns.
+  impl_environment_failed: (ctx) => ctx.implStatus === "environment-failed",
   impl_pre_hook_failed: (ctx) => ctx.implStatus === "pre-hook-failed",
   impl_spawn_failed: (ctx) => ctx.implStatus === "spawn-failed",
   impl_post_hook_failed: (ctx) => ctx.implStatus === "post-hook-failed",

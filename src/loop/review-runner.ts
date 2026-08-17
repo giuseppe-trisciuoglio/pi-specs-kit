@@ -9,7 +9,7 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { FixPlan } from "../fixplan/fix-plan.ts";
 import type { TaskFile } from "../tasks/task-parser.ts";
-import { spawnFailed } from "./phases.ts";
+import { classifyPhaseFailure, environmentFailureMessage } from "./phases.ts";
 import {
   parseReviewReport,
   readReviewReport,
@@ -125,12 +125,19 @@ export async function runReviewStep(
     // fails identically on every spawn — so no re-implementation can fix it:
     // the only useful answer is to stop the task and say so, without spending
     // an attempt on it.
-    if (spawnFailed(rev.outcome)) {
+    const failure = classifyPhaseFailure(rev.outcome);
+    if (failure) {
       state.review_file_retry = 0;
-      const reason = rev.outcome?.timedOut ? "timed out" : (rev.outcome?.errorMessage ?? "agent error");
-      notify(`review did not run for ${id} (${reason}), task abandoned`, "warning");
       await persist();
-      return { kind: "reportUnusable", detail: `review subprocess failed (${reason})` };
+      // A refused spawn is reported as an error, not a warning: it names a
+      // provider or a configuration the operator has to change, and it read as
+      // one more failed attempt when it shared the severity of a lost round.
+      if (failure.environment) {
+        notify(environmentFailureMessage("review", id, failure), "error");
+      } else {
+        notify(`review did not run for ${id} (${failure.detail}), task abandoned`, "warning");
+      }
+      return { kind: "reportUnusable", detail: `review ${failure.kind}: ${failure.detail}` };
     }
     // The reviewer does not write code, so a red gate after it is nothing the
     // review itself can act on and there is no retry path here to spend. It is
