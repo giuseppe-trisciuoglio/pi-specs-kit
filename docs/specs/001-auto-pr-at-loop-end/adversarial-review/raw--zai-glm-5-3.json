@@ -1,0 +1,130 @@
+{
+  "model": "zai/glm-5.3",
+  "persona": "The Adversary: requirements that cannot be falsified, acceptance criteria that pass trivially, implicit assumptions, scope that quietly grew or shrank between spec and tasks",
+  "timestamp": "2026-08-17T14:20:24.687Z",
+  "exit_status": 0,
+  "answer": {
+    "findings": [
+      {
+        "severity": "BLOCKER",
+        "target": "contracts/forge-cli.md",
+        "claim": "The happy-path command `gh pr create --json url` does not exist: `gh pr create` (including the plan's stated minimum gh 2.40) has no `--json` flag and prints the created PR URL as plain stdout, so the contract's machine channel is built on an unsupported invocation.",
+        "scenario": "Given a real authenticated gh 2.40+ and a successful push, delivery runs `gh pr create --json url --base … --head …`; gh exits non-zero with `unknown flag: --json`, the output does not match the already-exists pattern, so the fallback view never runs and every delivery ends with `[specs-kit] delivery warning: pull request creation failed: unknown flag: --json` — no pull request is ever created on a real forge, violating REQ-017/AC-001, while both the unit tests (scripted fake) and the e2e (fake-bin/gh written to accept `--json`) pass and ship the defect.",
+        "suggested_fix": "Take the URL from `pr create`'s plain stdout (or follow a successful create with `gh pr view <head> --json url`) and reserve `--json` for the view command only."
+      },
+      {
+        "severity": "MAJOR",
+        "target": "2026-08-17--auto-pr-at-loop-end.md (REQ-007, data-model 'Spec branch')",
+        "claim": "Reusing an existing local spec branch via plain checkout (mandated 'never reset/force') can place the delivery on history that diverged from the current base, producing a pull request that proposes to revert base's progress.",
+        "scenario": "Given a first delivery that created `specs/001` from base at commit A, the base later advancing to B (other PRs merged), and a second run of the same spec started from base with a dirty tree, delivery probes on-base, finds the stale `specs/001`, checks it out plainly, commits the new work on top of A-derived history, and pushes; the forge's three-dot PR diff shows the new spec work plus the reversal of every base commit between A and B — reviewers see merged work proposed for deletion, contradicting the Reviewer goal of a 'complete, well-described pull request'.",
+        "suggested_fix": "When reusing the spec branch, verify it is not behind the configured base (fast-forward or merge base first, or refuse with a warning naming the divergence)."
+      },
+      {
+        "severity": "MAJOR",
+        "target": "2026-08-17--auto-pr-at-loop-end.md (REQ-008 + REQ-023)",
+        "claim": "The combination 'stay on the delivery branch after delivery' and 'non-base branch → PR from current branch' lets a later spec's pull request be opened from another spec's branch, since no requirement checks that the current branch belongs to the delivered spec.",
+        "scenario": "Given spec-001 delivered (working copy left on `specs/001` per REQ-023) and the operator then starting and completing spec-002's loop without switching branches, delivery sees a non-base working branch, performs no branch operation per REQ-008, runs `git push -u origin specs/001`, and opens a PR titled/described for spec-002 whose head is `specs/001` containing all of spec-001's commits — contradicting the ontology ('Ramo della spec … riusato … della stessa spec') and the Reviewer goal.",
+        "suggested_fix": "Add a guard: when the current branch matches another spec's `specs/<id>` naming, create/reuse this spec's branch instead of opening the PR from it."
+      },
+      {
+        "severity": "MAJOR",
+        "target": "2026-08-17--auto-pr-at-loop-end.md (REQ-002/REQ-009, task list 'git.baseBranch currently unused at runtime')",
+        "claim": "No document defines the default or absence-handling for the base branch, although REQ-002 mandates defaults for incomplete config and the task list confirms base_branch has no runtime consumer yet, making delivery its first and undefined consumer.",
+        "scenario": "Given a repository whose default branch is `master` and a config that enables `git.pull_request` but omits `git.base_branch`, the tolerant loader supplies some default (undefined in the spec); the loop runs on `master`, which is then not the configured base, so REQ-008's non-base path runs `git push -u origin master` — pushing the repository's default branch — and attempts a PR `master` → configured-base, wrong or unsafe behavior that the error table never anticipates.",
+        "suggested_fix": "Specify absent-base-branch behavior explicitly (fail delivery with a warning naming the missing key, or resolve the repo's default branch) in the spec, plan, and TASK-002/004."
+      },
+      {
+        "severity": "MAJOR",
+        "target": "2026-08-17--technical-plan.md (AD-005, Phase 1 branch decision)",
+        "claim": "The branch-reuse decision only inspects local branches, so a spec branch that exists on the remote (open PR from a previous delivery) but not locally causes a guaranteed non-fast-forward push rejection and breaks the documented re-delivery convergence.",
+        "scenario": "Given a previous delivery that left an open PR on `origin/specs/001` and an operator working from a fresh clone (or having deleted the local branch), a new completed run on base creates a fresh local `specs/001` at current base HEAD; `git push -u origin specs/001` is rejected as non-fast-forward against the diverged remote branch, delivery ends in a warning, and the clarified re-delivery semantics (clarification Q2, AD-005's 're-run simply delivers again, existing-PR path makes it idempotent') never engage.",
+        "suggested_fix": "Fetch/check the remote for `specs/<spec-id>` and base local reuse on `origin/specs/<id>` when the local branch is absent."
+      },
+      {
+        "severity": "MAJOR",
+        "target": "2026-08-17--technical-plan.md (Phase 1 builders) vs TASK-003",
+        "claim": "REQ-012/AC-011 require the title to be derived from the spec name, but the plan's builder input is only the spec id ('title: humanized spec id') and TASK-003's plain-data contract (spec id, range progress, outcome, warnings) never includes a spec name, making the requirement unimplementable as planned.",
+        "scenario": "Given spec directory `001-auto-pr-at-loop-end` whose document title is 'Automatic Pull Request at Loop Completion', `buildPrTitle` receives only the id and yields 'Auto Pr At Loop End'; AC-011 is violated on every real run while `test/delivery-content.test.ts` still passes because it feeds the same id — the verification is vacuous and the defect surfaces only at PR review time.",
+        "suggested_fix": "Pass the spec's display name into `buildPrTitle` and state where the walk obtains it (spec document title vs directory name)."
+      },
+      {
+        "severity": "MINOR",
+        "target": "2026-08-17--auto-pr-at-loop-end.md (REQ-004/REQ-022 vs User Interactions and Integration Requirements)",
+        "claim": "The spec gives three inconsistent pictures of the delivery notice's position and count relative to the closing summary (REQ-004: delivery before closing notifications; User Flow step 5: summary 'followed by' the URL; Integration table: outcome surfaces 'at delivery time and in the closing notice').",
+        "scenario": "Given a successful delivery, an implementer following REQ-004+REQ-022 emits the URL notice before the range-completed summary and exactly once, which passes AC-021 yet contradicts the User Flow ordering and the Integration table's implication of a second mention in the closing notice — TASK-005's notice-copy tests are written against whichever reading the implementer picks.",
+        "suggested_fix": "Pick one ordering and one mention count in the spec and align the User Flow and Integration table with it."
+      },
+      {
+        "severity": "MINOR",
+        "target": "2026-08-17--auto-pr-at-loop-end.md (REQ-007/REQ-008) vs technical plan Phase 1",
+        "claim": "Detached HEAD is classified by the plan and TASK-002 under the base-branch path, but the spec's REQ-008 trigger ('working branch is not the base branch') literally matches detached HEAD, where 'open the PR from the current branch' is undefined.",
+        "scenario": "Given a loop completing in a detached-HEAD checkout (CI-style), an implementer following REQ-008 literally attempts to open a PR from branch 'HEAD', which does not exist, while TASK-002's test 'detached HEAD treated like the base-branch path' encodes the opposite classification labeled 'spec edge case' though the spec never states it.",
+        "suggested_fix": "Amend REQ-007/008 to explicitly classify detached HEAD under the spec-branch path."
+      },
+      {
+        "severity": "MINOR",
+        "target": "tasks/*.md frontmatter and traceability-matrix.md",
+        "claim": "Several ac-mapping/imp-requirements entries contradict actual task coverage: TASK-001 lists REQ-003 with no criterion exercising it (it is TASK-002's AC-010), TASK-002's frontmatter omits REQ-023 though its AC covers it, TASK-006 implements and tests AC-002 (flag-off) but omits it from ac-mapping, and the matrix's AC-009 row lists no task or test file while TASK-002 unit-tests it.",
+        "scenario": "Given the loop's review phase that validates each task against its frontmatter mapping, TASK-006's flag-off behavior ships unreviewed (AC-002 absent from its mapping) and TASK-001's REQ-003 line invites implementing commit-flag semantics inside the configuration task, duplicating TASK-002.",
+        "suggested_fix": "Align every task's frontmatter mappings and the matrix rows with the coverage the task bodies actually implement and test."
+      },
+      {
+        "severity": "MINOR",
+        "target": "TASK-001.md",
+        "claim": "TASK-001's test instructions reference a criterion 'REG-02' that is defined nowhere in the specification, task list, or matrix.",
+        "scenario": "Given an implementer or the task-review phase resolving test instructions against listed criteria, 'Verify that the base branch parsing is unaffected by the new key. *(REG-02)*' points at a nonexistent regression criterion, so the check cannot be verified as specified and must be guessed.",
+        "suggested_fix": "Drop the REG-02 tag or define the regression criterion it refers to."
+      },
+      {
+        "severity": "MINOR",
+        "target": "2026-08-17--technical-plan.md (Phase 1 entry criteria) vs 2026-08-17--auto-pr-at-loop-end.md",
+        "claim": "The plan marks 'Functional spec approved' as checked while the spec's own Status is Draft, and the unchecked entry 'Spec-check pass closed the three open questions' contradicts the spec's statement that all open questions were resolved in the clarification pass (which AD-005 then cites as an 'Open Question 2 default').",
+        "scenario": "Given a phase-gate reader starting Phase 1, the checked approval box conflicts with the Draft spec (is the baseline final?), and the unchecked open-questions box either blocks the phase or licenses re-deciding clarifications the spec already records as answered, inviting divergence between implementation and clarified requirements.",
+        "suggested_fix": "Reconcile the documents: mark the spec Approved once clarifications are final and check the plan's entry criteria accordingly."
+      }
+    ],
+    "attacks_that_did_not_land": [
+      {
+        "target": "REQ-016 vs AD-006",
+        "attack": "Tried to show the create-then-view fallback violates 'each step at most once'.",
+        "why_not": "The view is a distinct operation from create; each command runs once, and TASK-004 pins 'no second create' in tests."
+      },
+      {
+        "target": "REQ-NR007 / fix-plan integrity",
+        "attack": "Tried to find a path where delivery writes or mutates the loop state document.",
+        "why_not": "AD-001 persists the done state before delivery runs, delivery receives a read-only view, and TASK-005 asserts the plan is unmutated; the risk table also carries it with detection."
+      },
+      {
+        "target": "Kill-mid-delivery convergence",
+        "attack": "Tried to construct a stuck half-delivered state after a kill between commit and push.",
+        "why_not": "Nothing is persisted beyond git's own effects, the working copy stays on the delivery branch, and the next completed run re-delivers via the already-exists path (modulo the fresh-clone case reported separately)."
+      },
+      {
+        "target": "Clean-tree / empty-range delivery",
+        "attack": "Tried to show undefined behavior when a completed run produces no new commits.",
+        "why_not": "The spec's error table explicitly covers 'no commits between branch and base' as a PR-creation warning, and TASK-004 tests it."
+      },
+      {
+        "target": "Acceptance taxonomy arithmetic",
+        "attack": "Recounted the [IMP]/[SEF]/[EXT] tags expecting the 60% rule or the matrix summary to be wrong.",
+        "why_not": "The counts are exactly 16/4/2 (≈73% IMP), matching both the spec's claim and the matrix summary."
+      },
+      {
+        "target": "Config tolerance (REQ-002)",
+        "attack": "Tried to break tolerance with malformed yaml values for the new flag.",
+        "why_not": "REQ-002 plus TASK-001's tests (string/number fall back to off, empty file, base-branch parsing unaffected) cover the malformed-input space."
+      },
+      {
+        "target": "Halted/stopped paths",
+        "attack": "Tried to find a requirement or task that lets delivery run on non-completed endings.",
+        "why_not": "REQ-005/REQ-NR003 and TASK-005's trigger tests (halted and stopped never invoke delivery, skip notice emitted) are consistent across spec, plan, and tasks."
+      },
+      {
+        "target": "Outcome preservation (REQ-NR002)",
+        "attack": "Tried to imagine a delivery failure flipping the run reason.",
+        "why_not": "Per AD-001 the completed reason is decided in the walk's completion branch before delivery is invoked, so delivery cannot affect it by construction, and TASK-005 tests it."
+      }
+    ],
+    "confidence": "medium"
+  }
+}

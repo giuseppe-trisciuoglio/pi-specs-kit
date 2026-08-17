@@ -1,0 +1,109 @@
+{
+  "findings": [
+    {
+      "severity": "BLOCKER",
+      "target": "tasks/TASK-002.md (also REQ-007/REQ-021, technical-plan risk table)",
+      "claim": "Reusing an existing spec branch via a plain `git checkout` before committing cannot succeed when the working tree is dirty over a diverged branch, so the 'reusing an existing one' half of REQ-007 is unimplementable as specified.",
+      "scenario": "A spec was delivered once (spec branch `specs/001-...` at commit C1, PR open); the operator switches back to the base branch and re-runs the loop, which leaves new dirty changes to the same spec files; delivery executes the branch decision first and runs `git checkout specs/001-...` with a dirty tree, which git refuses with 'your local changes would be overwritten', aborting delivery with a warning and never delivering the new run — contradicting REQ-007 ('creating it or reusing an existing one') and the re-delivery promise of REQ-021. With per-task checkpoints enabled the same step instead moves HEAD to the stale C1 and strands the new commits on the base branch, silently pushing a branch with no new work.",
+      "suggested_fix": "Specify a reuse mechanism that carries the current working state onto the existing branch (commit-then-move, or stash/checkout/apply), and add a real-git e2e for reuse-from-base with a dirty tree instead of checkout-before-commit."
+    },
+    {
+      "severity": "MAJOR",
+      "target": "2026-08-17--auto-pr-at-loop-end.md (REQ-023, AC-022)",
+      "claim": "REQ-023/AC-022 assert the working copy ends on the delivery branch 'on failure' too, but failures at or before branch creation leave it on the base branch (or in no repo), contradicting the spec's own error scenarios.",
+      "scenario": "A completed run starts in a non-git directory; delivery aborts at the probe step so no branch switch ever happens and the working copy remains wherever it was — the spec's own 'Not a git repository' error row has no delivery branch — yet AC-022 requires 'the working copy is on the delivery branch ... on failure', which is unsatisfiable.",
+      "suggested_fix": "Scope REQ-023/AC-022 to 'after a branch operation has occurred' so pre-branch and branch-creation failures are explicitly excluded."
+    },
+    {
+      "severity": "MAJOR",
+      "target": "2026-08-17--technical-plan.md Phase 1 (REQ-013, AC-012, TASK-003)",
+      "claim": "The PR body must include 'the loop outcome including terminal warnings' (partial sync, red gate) read 'from the fix plan', but nothing in the reviewed documents establishes that the fix plan persists those terminal warnings, and AD-005/REQ-NR007 forbid persisting them for delivery, so AC-012 may be unimplementable from the named source.",
+      "scenario": "A run completes with a red post-hook gate (a terminal warning) but the fix plan records only task states, not the gate failure; at delivery time buildPrBody finds no plan field to read, so the description silently omits the terminal warning, failing AC-012 ('description contains ... loop outcome including terminal warnings') with no documented source for that data.",
+      "suggested_fix": "Identify (or define) the exact fix-plan fields that carry the outcome and terminal warnings before implementing TASK-003, and add an acceptance check that a warned run's warning text actually appears in the body."
+    },
+    {
+      "severity": "MAJOR",
+      "target": "2026-08-17--auto-pr-at-loop-end.md (REQ-007/REQ-008, TASK-002)",
+      "claim": "The branch decision is stated as an exhaustive binary (base vs non-base) but detached HEAD is a third state where REQ-008's 'open the PR from the current working branch' is unsatisfiable, and the detached-HEAD handling exists only in the technical plan/tasks with no backing requirement or acceptance criterion.",
+      "scenario": "The loop runs on a detached HEAD (a state the risk table itself lists); following the spec alone, REQ-008 classifies it as 'not the base branch' and requires opening the PR from the current working branch, but a detached HEAD has no branch name to pass as `--head`, so the spec cannot be executed as written — the plan's 'treat like base' is an undocumented extension whose TASK-002 test checks behavior the spec never requires.",
+      "suggested_fix": "Add a spec requirement and acceptance criterion covering detached HEAD so the base/non-base decision is exhaustive and the task's detached-HEAD test is traceable to the spec."
+    },
+    {
+      "severity": "MINOR",
+      "target": "2026-08-17--technical-plan.md AD-002 (REQ-003, AC-010, TASK-002)",
+      "claim": "The plan reuses commitCheckpoint 'unchanged' for the delivery commit while REQ-003 requires the commit even when run.no_commit disables checkpoints, but no mechanism is specified for bypassing the checkpoint gate and the only AC-010 test uses an injected helper.",
+      "scenario": "If commitCheckpoint honors the no-checkpoint setting internally (the plan never states it does not), delivery with the flag on and checkpoints off would skip the commit, violating REQ-003/AC-010; even if it is ungated, no e2e exercises flag-on plus no_commit=true against the real helper, so the integration is unverified.",
+      "suggested_fix": "State explicitly that commitCheckpoint is ungated by config (or add a bypass parameter), and add a test case with flag on and checkpoints disabled against the real helper."
+    },
+    {
+      "severity": "MINOR",
+      "target": "traceability-matrix.md (AC-020, TASK-006)",
+      "claim": "AC-020 ('push updates the existing pull request') is tagged [SEF] and claimed verified by the fake-forge e2e, but a bare remote plus fake `gh` cannot observe a real PR being updated — only the 'no duplicate, existing URL reported' half (AC-013) is actually testable, so the PR-update half is external forge behavior misclassified as test-verified.",
+      "scenario": "TASK-006's fake `gh` returns a canned URL for the second create/view call; nothing in the e2e checks that the existing PR now points at the new head commit, so AC-020 is recorded 'verified' without any evidence that pushing updated the PR.",
+      "suggested_fix": "Reclassify the 'PR is updated by the push' half of AC-020 as [EXT] (forge-observed) and keep only 'no duplicate + existing URL reported' under e2e verification."
+    },
+    {
+      "severity": "MINOR",
+      "target": "contracts/forge-cli.md + technical-plan AD-006",
+      "claim": "Existing-PR detection relies on parsing gh's human-oriented error text (the already-exists pattern), the one channel the contract declares off-limits, and any wording drift or localization silently turns REQ-014's 'report the existing URL' into a generic failure warning.",
+      "scenario": "gh changes the already-exists message (or runs in a non-English locale); the pattern no longer matches, so the fallback to `pr view` never runs and the system emits '[specs-kit] delivery warning: pull request creation failed' for a PR that actually exists, violating REQ-014 which requires reporting the existing URL.",
+      "suggested_fix": "Detect the existing PR through a machine channel (a `gh pr list --head <branch> --json url` pre-flight, or `gh pr view <branch> --json url` on any create failure) instead of matching human error text."
+    },
+    {
+      "severity": "MINOR",
+      "target": "2026-08-17--auto-pr-at-loop-end.md Error Scenarios (TASK-004)",
+      "claim": "The 'empty range' error scenario attributes the failure to PR creation ('no commits between branch and base'), but on a freshly created empty branch the push step fails first, so the promised message can never be produced in that case.",
+      "scenario": "A completed empty-range run on the base branch with a clean tree creates `specs/<id>` with zero commits; `git push -u origin specs/<id>` fails ('src refspec ... does not match any') and delivery stops at push, never reaching `gh pr create`, contradicting the spec's error row that names 'pull request creation failed: no commits between <branch> and <base>'.",
+      "suggested_fix": "Distinguish 'no commits to push' (push-step failure) from 'head equals base / no new commits' (PR-step failure) in the error table so REQ-015's 'names the failed step' is accurate."
+    },
+    {
+      "severity": "MINOR",
+      "target": "2026-08-17--technical-plan.md AD-005 risk table",
+      "claim": "Because the plan is persisted as 'done' before delivery runs, a kill between the commit and the push leaves an unpushed commit on a plan that reads as finished, and --resume has no path to re-deliver — the risk table's 'next completed run re-delivers' only holds for a fresh run.",
+      "scenario": "The loop is killed after the delivery commit but before the push; the fix plan already says 'done', so `--resume` reports completion and never re-runs delivery, leaving the delivery commit local and unpushed with no notification — the operator only discovers it by inspecting git manually.",
+      "suggested_fix": "Either persist a 'delivery pending' marker (which REQ-NR007 currently forbids) or document that a half-finished delivery after a kill requires a fresh run or manual push, and surface the unpushed branch in the killed-run transcript."
+    },
+    {
+      "severity": "MINOR",
+      "target": "2026-08-17--auto-pr-at-loop-end.md (REQ-002, Data Requirements) + ontology",
+      "claim": "With the flag on and `git.base_branch` absent, no default base branch is defined anywhere, yet REQ-002 promises defaults for an incomplete config and the data requirements say the base branch is never hardcoded — so the PR target is unspecified.",
+      "scenario": "An operator sets `git.pull_request: true` in an otherwise empty config (no `base_branch`); the push succeeds but `gh pr create` receives no `--base` value, failing with an undefined target that the spec's 'incomplete config → default delivery settings' does not actually resolve.",
+      "suggested_fix": "Define a documented default base branch, or a pre-flight that warns/refuses when the flag is on and base_branch is unset, so the flag-on-without-base case has specified behavior."
+    },
+    {
+      "severity": "MINOR",
+      "target": "2026-08-17--auto-pr-at-loop-end.md Error Scenarios (REQ-005/REQ-015/REQ-019)",
+      "claim": "The 'not a git repository' failure reuses the 'delivery skipped' phrasing reserved for halted/stopped skips and does not name the failed step, so the operator cannot tell a deliberate skip from a delivery failure and REQ-015's 'names the failed step' is unmet.",
+      "scenario": "A completed run in a non-repo directory emits '[specs-kit] delivery skipped: <reason>', which is indistinguishable from the halted-run skip notice required by REQ-005 and never identifies the 'repository probe' step that failed.",
+      "suggested_fix": "Give the probe failure its own message form ('delivery warning: repository probe failed: ...') distinct from the halted/stopped skip notice."
+    }
+  ],
+  "attacks_that_did_not_land": [
+    {
+      "target": "2026-08-17--technical-plan.md AD-001 (REQ-004/REQ-022)",
+      "attack": "Argued that running delivery inside the walk completion branch would emit the PR notice after the 'range completed' summary and thus violate 'before the closing notifications' or produce more than one notice.",
+      "why_not": "Delivery is placed after the done-persist and before the closing notifications, and the range summary is a pre-existing notice distinct from the single delivery outcome notice, so REQ-004's ordering and REQ-022's single-notice rule both hold."
+    },
+    {
+      "target": "2026-08-17--technical-plan.md AD-005 (REQ-NR007)",
+      "attack": "Argued that not persisting delivery state makes re-delivery of an already-delivered spec non-idempotent or impossible to converge.",
+      "why_not": "A fresh completed run re-triggers delivery, and the already-exists path reports the existing PR URL, so convergence needs no persisted state; the residual gap I found (kill-mid-delivery + resume) is narrower and recorded separately."
+    },
+    {
+      "target": "contracts/forge-cli.md (invariants vs AD-006)",
+      "attack": "Argued that the 'human-oriented output never parsed' invariant directly contradicts the already-exists pattern match used for fallback.",
+      "why_not": "The invariant is scoped to extracting the URL as data (which always goes through `--json url`), while the pattern match is a boolean condition, so the contract is internally consistent — the fragility of that detection is a separate, narrower defect."
+    },
+    {
+      "target": "2026-08-17--technical-plan.md Performance (REQ-006)",
+      "attack": "Argued that the '0 tokens' claim is false because git and gh are external processes spawned during delivery.",
+      "why_not": "REQ-006 only forbids delegating delivery to an agent subprocess; git/gh consume no model tokens, so the zero-token guarantee holds as stated."
+    },
+    {
+      "target": "2026-08-17--auto-pr-at-loop-end.md AC-002 (flag off)",
+      "attack": "Argued that adding the new config key and its parsing necessarily changes loop-end behavior even when the flag is off.",
+      "why_not": "The flag defaults to off, the loader is tolerant, and the delivery dependency defaults to a no-op, so no delivery code path executes when the flag is off; the pre-existing behavior is preserved."
+    }
+  ],
+  "confidence": "high"
+}

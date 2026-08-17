@@ -1,0 +1,2 @@
+{"v":1,"kind":"authoring","ts":"2026-08-17T13:17:20.819Z","spec":"001-auto-pr-at-loop-end","started_at":"2026-08-17T12:59:25.629Z","duration_ms":6910,"usage":{"input":0,"output":0,"cache_read":0,"cache_write":0,"total":0},"cost_total":0}
+{"v":1,"kind":"authoring","ts":"2026-08-17T13:54:38.748Z","spec":"001-auto-pr-at-loop-end","started_at":"2026-08-17T13:02:15.456Z","duration_ms":3143292,"usage":{"input":193994,"output":55049,"cache_read":2849664,"cache_write":0,"total":3098707},"cost_total":0}

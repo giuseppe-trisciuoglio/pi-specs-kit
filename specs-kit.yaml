@@ -1,0 +1,62 @@
+# specs-kit configuration. Every value below is the default;
+# edit what you need, unknown fields are ignored.
+# The active spec is written here as `spec:` when one is selected.
+
+version: "1"
+specs_dir: docs/specs
+mode: fast
+agents:
+  agent_model: kimi-coding/k3
+  reviewer_model: opencode-go/deepseek-v4-pro
+  cleaner_model: minimax/MiniMax-M3
+  synchronizer_model: minimax/MiniMax-M3
+  learner_model: kimi-coding/k3-256k
+  agent_thinking_level: minimal
+  reviewer_thinking_level: medium
+  cleaner_thinking_level: medium
+  synchronizer_thinking_level: medium
+  learner_thinking_level: medium
+run:
+  max_attempts: 5
+  timeout: 1h
+  no_commit: true
+  yolo: true
+  debug_stream: true
+  no_log_files: false
+  show_prompt: true
+  skill_content: true
+  verbose: false
+  continue_on_failure: false
+  resume: false
+  review_file_retry: 3
+  max_spawns_per_task: 8
+  max_spawns_per_run: 60
+  max_run_duration: 6h
+adversarial_review:
+  panel:
+    - model: zai/glm-5.3
+    - model: opencode-go/deepseek-v4-pro
+    - model: minimax/MiniMax-M3
+git:
+  baseBranch: main
+hooks:
+  timeout: 5m
+  implementation:
+    pre: []
+    post:
+      - npm run lint && npm run test && npm run typecheck
+  review:
+    pre: []
+    post:
+      - npm run lint && npm run test && npm run typecheck
+  cleanup:
+    pre: []
+    post:
+      - npm run lint && npm run test && npm run typecheck
+  sync:
+    pre: []
+    post:
+      - npm run lint && npm run test && npm run typecheck
+knowledge_base:
+  files: []
+spec: docs/specs/001-auto-pr-at-loop-end
