@@ -138,6 +138,7 @@ The yaml configuration at `specs-kit.yaml` is the operator-facing surface. Each 
 | `run.max_spawns_per_task` / `run.max_spawns_per_run` | int | `8` / `60` | Budgets | — |
 | `run.max_run_duration` | duration string | `6h` | Run budget | — |
 | `run.reconcile_context` | bool | `false` | Sync phase | — |
+| `run.protect_spec_artifacts` | bool | `true` | Implementation phase: refuses an attempt that rewrote the spec's requirement document or a file under `contracts/` | ADR-0019 |
 | `git.base_branch` | string | `main` | Delivery PR target | ADR-0007 / technical-plan AD-003; default document in spec REQ-028 |
 | `git.pull_request` | bool | `false` | Delivery step (opt-in) | technical-plan AD-003 / F2 follow-up |
 | `hooks.timeout` | duration string | `4m` | Hook executor | — |

@@ -4,12 +4,21 @@
  * exhausting those costs a full attempt of the task. Kept apart from the
  * task state machine because it has its own retry budget and its own
  * failure vocabulary.
+ *
+ * Two things the sub-loop deliberately does not spend a task attempt on: a
+ * report whose block came out malformed (the reviewer's findings are on disk
+ * and only the block has to be rewritten) and a phase the operator or the
+ * environment interrupted (nothing was learned about the implementation, so
+ * re-implementing working code buys nothing). Both re-spawn the reviewer
+ * inside the same bounded budget.
  */
 
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 import type { FixPlan } from "../fixplan/fix-plan.ts";
 import type { TaskFile } from "../tasks/task-parser.ts";
 import { classifyPhaseFailure, environmentFailureMessage } from "./phases.ts";
+import { routedWithoutOwner, unownedRoutedFeedback } from "./routed-suggestions.ts";
 import {
   parseReviewReport,
   readReviewReport,
@@ -39,33 +48,52 @@ export type ReviewStepDeps = Pick<
   "config" | "specDir" | "executor" | "persist" | "notify" | "stopping" | "signal"
 >;
 
+/** Where an unreadable report is kept so the next spawn can repair it. */
+export function reviewUnreadablePath(specDir: string, taskId: string): string {
+  return path.join(specDir, "tasks", `${taskId}--review.unreadable.md`);
+}
+
 /**
- * Copy the current review report to a per-attempt archive when it holds a
- * readable verdict, so a retry never silently discards the reasoning of the
- * verdict it replaces. Unreadable files are skipped (archiving junk helps no
- * one); any I/O error is swallowed because archiving is best-effort and must
- * never gate the review itself.
+ * Rotate whatever the previous spawn left at the report path.
+ *
+ * A readable verdict is archived per attempt, so a retried review never
+ * silently discards the reasoning it replaces, and then removed so the next
+ * evaluation only sees fresh output. An unreadable one is moved aside instead
+ * of deleted: its findings are the expensive part of a review and the next
+ * spawn is asked to repair the block rather than to review the task again.
+ * Every step is best-effort — rotation must never gate the review itself.
  */
-async function archivePriorReview(specDir: string, taskId: string, retryCount: number): Promise<void> {
+async function rotatePriorReview(specDir: string, taskId: string, retryCount: number): Promise<string | null> {
   const target = reviewFilePath(specDir, taskId);
   let raw: string;
   try {
     raw = await readFile(target, "utf8");
   } catch {
-    return;
+    return null;
   }
-  if (!parseReviewReport(raw)) return;
+  if (parseReviewReport(raw)) {
+    try {
+      await writeFile(reviewAttemptArchivePath(specDir, taskId, retryCount), raw, "utf8");
+    } catch {
+      // Archiving is advisory: a failed write must not block the review.
+    }
+    await rm(target, { force: true }).catch(() => {});
+    return null;
+  }
+  const preserved = reviewUnreadablePath(specDir, taskId);
   try {
-    await writeFile(reviewAttemptArchivePath(specDir, taskId, retryCount), raw, "utf8");
+    await rename(target, preserved);
+    return preserved;
   } catch {
-    // Archiving is advisory: a failed write must not block the review.
+    await rm(target, { force: true }).catch(() => {});
+    return null;
   }
 }
 
 /**
  * Review step: spawn the reviewer until a valid report appears. A missing
  * or invalid report costs a review file retry (bounded); exhausting those
- * costs a full attempt. The stale report is deleted before every spawn so
+ * costs a full attempt. The stale report is rotated before every spawn so
  * each evaluation only sees fresh output.
  */
 export async function runReviewStep(
@@ -83,13 +111,10 @@ export async function runReviewStep(
   let formatError: string | null = null;
 
   for (;;) {
-    // Preserve any verdict the previous attempt left behind before wiping the
-    // canonical report: a retried review used to silently overwrite the
-    // reasoning of the verdict it replaced. Only a readable verdict is worth
-    // keeping; an unparseable file is dropped, not archived. Best-effort: a
-    // failing archive never blocks the review.
-    await archivePriorReview(specDir, id, state.retry_count);
-    await rm(reviewFilePath(specDir, id), { force: true });
+    const preserved = await rotatePriorReview(specDir, id, state.retry_count);
+    if (preserved !== null && formatError !== null) {
+      formatError = reviewFormatReminder(id, path.relative(config.projectRoot, preserved));
+    }
     if (deps.stopping()) return { kind: "stopped" };
     // The plan still flows in for the state counters (persist writes the
     // whole document), but the prompt channel is the declared input only.
@@ -112,11 +137,23 @@ export async function runReviewStep(
       return { kind: "attemptFailed" };
     }
     if (rev.outcome?.aborted) {
-      // Phase interrupt: the attempt is lost, a fresh one starts over.
-      state.review_file_retry = 0;
-      notify(`review interrupted for ${id}, attempt failed`, "warning");
+      // A phase interrupt says nothing about the implementation: it was never
+      // judged. Re-implementing working code to reach a second opinion costs
+      // two agent sessions to get back where the loop already was, so the
+      // reviewer is spawned again inside the same bounded budget instead.
+      state.review_file_retry++;
+      if (state.review_file_retry > config.run.reviewFileRetry) {
+        state.review_file_retry = 0;
+        notify(`review interrupted for ${id} beyond its retries, attempt failed`, "warning");
+        await persist();
+        return { kind: "attemptFailed" };
+      }
       await persist();
-      return { kind: "attemptFailed" };
+      notify(
+        `review interrupted for ${id}, new spawn ${state.review_file_retry}/${config.run.reviewFileRetry}`,
+        "warning",
+      );
+      continue;
     }
     // A subprocess that failed left no verdict to read, and reading the absent
     // report as "the reviewer forgot to write it" would spend the whole review
@@ -165,6 +202,33 @@ export async function runReviewStep(
     state.review_file_retry = 0;
     state.review_file_error = null;
     await persist();
+    // The report the loop read is the one that counts: nothing is left behind
+    // to make a later reader think the salvaged copy is still pending.
+    await rm(reviewUnreadablePath(specDir, id), { force: true }).catch(() => {});
+    if (report.recovered) {
+      notify(`review report of ${id} had a malformed frontmatter block, verdict read line by line`, "warning");
+    }
+    // A review that reports a requirement contradicted by the implementation
+    // cannot also wave it through: the reviewer describes the conflict, the
+    // loop decides what it costs. Without this the same session both raises
+    // the contradiction and absolves it, which is how one leaves a run as a
+    // note in a report nobody acts on.
+    if (report.specConflicts.length > 0) {
+      const first = report.specConflicts[0];
+      notify(
+        `review of ${id} reports ${report.specConflicts.length} requirement conflict(s): ${first}`,
+        "warning",
+      );
+      return { kind: "failed", feedback: reviewFeedback(report) };
+    }
+    // A deferral to a task that will not run is not a deferral: the fix would
+    // be recorded and never made. The implementation is asked to do it now,
+    // which is the only owner still available.
+    const unowned = routedWithoutOwner(report.routed, plan, id);
+    if (unowned.length > 0) {
+      notify(`review of ${id} routed ${unowned.length} fix(es) to a task that will not run`, "warning");
+      return { kind: "failed", feedback: unownedRoutedFeedback(unowned) };
+    }
     if (report.status === "PASSED") return { kind: "passed" };
     notify(`review rejected for ${id}: ${report.summary || "see the report"}`, "warning");
     return { kind: "failed", feedback: reviewFeedback(report) };

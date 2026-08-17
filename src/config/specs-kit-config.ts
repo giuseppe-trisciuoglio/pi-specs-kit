@@ -58,6 +58,13 @@ export interface RunConfig {
    * trust-boundary change, so it stays opt-in.
    */
   reconcileContext: boolean;
+  /**
+   * Refuse an implementation attempt that rewrote the requirement document or
+   * an interface contract of the spec. On by default: an agent allowed to edit
+   * what it is measured against can close any mismatch by moving the target.
+   * Turn it off only for a run whose job is to revise those documents.
+   */
+  protectSpecArtifacts: boolean;
 }
 
 export type HookStage = "pre" | "post";
@@ -157,6 +164,7 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
   maxSpawnsPerRun: 60,
   maxRunDurationMs: 6 * 60 * 60 * 1000,
   reconcileContext: false,
+  protectSpecArtifacts: true,
 };
 
 export function defaultRoles(): Record<RoleName, RoleConfig> {
@@ -327,6 +335,7 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
   run.maxSpawnsPerRun = count(src.max_spawns_per_run, 1) ?? run.maxSpawnsPerRun;
   run.maxRunDurationMs = positiveDuration(src.max_run_duration, file, "run.max_run_duration") ?? run.maxRunDurationMs;
   run.reconcileContext = flag(src.reconcile_context) ?? run.reconcileContext;
+  run.protectSpecArtifacts = flag(src.protect_spec_artifacts) ?? run.protectSpecArtifacts;
   const fromTask = text(src.from_task);
   if (fromTask !== undefined) run.fromTask = fromTask;
   const toTask = text(src.to_task);

@@ -99,9 +99,13 @@ test("a directory outside git yields no fingerprint instead of throwing", { skip
   assert.equal(await workspaceFingerprint(dir), null);
 });
 
-test("loopArtifactExclusions points at the loop folder of the spec", () => {
-  assert.deepEqual(loopArtifactExclusions("/repo", "/repo/docs/specs/001"), ["docs/specs/001/_ralph_loop"]);
-  // A spec folder outside the project root writes nothing this tree would see.
-  assert.deepEqual(loopArtifactExclusions("/repo", "/elsewhere/001"), []);
-  assert.deepEqual(loopArtifactExclusions("/repo", "/repo"), []);
+test("loopArtifactExclusions covers the loop folder of the spec and the generated graph", () => {
+  assert.deepEqual(loopArtifactExclusions("/repo", "/repo/docs/specs/001"), [
+    "graphify-out",
+    "docs/specs/001/_ralph_loop",
+  ]);
+  // A spec folder outside the project root writes nothing this tree would see,
+  // but the graph is generated into the project root either way.
+  assert.deepEqual(loopArtifactExclusions("/repo", "/elsewhere/001"), ["graphify-out"]);
+  assert.deepEqual(loopArtifactExclusions("/repo", "/repo"), ["graphify-out"]);
 });

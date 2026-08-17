@@ -226,6 +226,7 @@ export class LoopEngine {
           stopping: () => this.#stopping,
           notify: (m, t) => this.#notify(m, t),
           persist: (p) => this.#persist(specDir, p),
+          rangeClose: { projectRoot: config.projectRoot, specDir },
         },
       );
     } catch (err) {

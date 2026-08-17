@@ -46,6 +46,9 @@ const registry = {
   // this leaves the cycle without spending an attempt — the rule the review
   // step has always applied to its own refused spawns.
   impl_environment_failed: (ctx) => ctx.implStatus === "environment-failed",
+  // An attempt that rewrote a document it is measured against is sent back
+  // with the file names: the loop refuses the edit, it does not undo it.
+  impl_protected_paths_touched: (ctx) => ctx.implStatus === "protected-paths-touched",
   impl_pre_hook_failed: (ctx) => ctx.implStatus === "pre-hook-failed",
   impl_spawn_failed: (ctx) => ctx.implStatus === "spawn-failed",
   impl_post_hook_failed: (ctx) => ctx.implStatus === "post-hook-failed",

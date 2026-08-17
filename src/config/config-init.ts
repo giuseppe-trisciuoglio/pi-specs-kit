@@ -52,6 +52,10 @@ export function defaultConfigYaml(): string {
       max_spawns_per_task: run.maxSpawnsPerTask,
       max_spawns_per_run: run.maxSpawnsPerRun,
       max_run_duration: formatDurationMs(run.maxRunDurationMs),
+      // Refuses an attempt that rewrote the spec's requirement document or one
+      // of its contracts: what the work is measured against is not the work's
+      // to edit.
+      protect_spec_artifacts: run.protectSpecArtifacts,
     },
     // Empty on purpose: the review panel is declared model by model, because
     // reviewing spends on every model listed here.

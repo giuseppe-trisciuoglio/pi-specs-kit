@@ -1203,3 +1203,107 @@ test("a red post hook of the end-of-range sync is recorded and reported at close
   assert.ok(closing[0].message.includes("sync"));
   assert.equal(run.plan.state.postHookGateFailed, null, "cleared after the notice");
 });
+
+test("an attempt that rewrites a contract is refused and told which file", async () => {
+  // The cheapest way out of a mismatch between code and requirement is to
+  // reword the requirement, and once reworded the mismatch is invisible to
+  // every later reading. The loop refuses the edit rather than judging it.
+  const { root, specDir } = await createSpec();
+  await mkdir(path.join(specDir, "contracts"), { recursive: true });
+  const contract = path.join(specDir, "contracts", "git.md");
+  await writeFile(contract, "the guard uses a dry-run push\n", "utf8");
+
+  let rewritten = false;
+  const { calls, notifications, plan } = await runLoop(
+    root,
+    specDir,
+    async (call) => {
+      if (call.phase === "implementation" && call.task === "TASK-001" && !rewritten) {
+        rewritten = true;
+        await writeFile(contract, "the guard uses merge-base\n", "utf8");
+      }
+      return {};
+    },
+    (config) => {
+      config.mode = "fast";
+    },
+  );
+
+  assert.equal(countCalls(calls, "TASK-001", "implementation"), 2, "the attempt is spent, the task carries on");
+  assert.equal(countCalls(calls, "TASK-001", "review"), 1, "the rejected attempt never reached the reviewer");
+  assert.ok(
+    notifications.some((n) => /modified protected spec documents \(contracts\/git\.md\)/.test(n.message)),
+    "the warning names the file",
+  );
+  assert.deepEqual(plan.done, ["TASK-001", "TASK-002", "TASK-003"]);
+});
+
+test("the second attempt is given the file names and the two ways out", async () => {
+  const { root, specDir } = await createSpec();
+  await mkdir(path.join(specDir, "contracts"), { recursive: true });
+  const contract = path.join(specDir, "contracts", "git.md");
+  await writeFile(contract, "the guard uses a dry-run push\n", "utf8");
+
+  let rewritten = false;
+  const { calls } = await runLoop(
+    root,
+    specDir,
+    async (call) => {
+      if (call.phase === "implementation" && call.task === "TASK-001" && !rewritten) {
+        rewritten = true;
+        await writeFile(contract, "the guard uses merge-base\n", "utf8");
+      }
+      return {};
+    },
+    (config) => {
+      config.mode = "fast";
+    },
+  );
+
+  const retry = calls.filter((c) => c.task === "TASK-001" && c.phase === "implementation")[1];
+  assert.match(retry.prompt, /contracts\/git\.md/);
+  assert.match(retry.prompt, /Rewording them to match the code is never one of the two/);
+});
+
+test("a run allowed to revise the spec documents keeps the edit", async () => {
+  const { root, specDir } = await createSpec();
+  await mkdir(path.join(specDir, "contracts"), { recursive: true });
+  const contract = path.join(specDir, "contracts", "git.md");
+  await writeFile(contract, "the guard uses a dry-run push\n", "utf8");
+
+  const { calls } = await runLoop(
+    root,
+    specDir,
+    async (call) => {
+      if (call.phase === "implementation" && call.task === "TASK-001") {
+        await writeFile(contract, "the guard uses merge-base\n", "utf8");
+      }
+      return {};
+    },
+    (config) => {
+      config.mode = "fast";
+      config.run.protectSpecArtifacts = false;
+    },
+  );
+
+  assert.equal(countCalls(calls, "TASK-001", "implementation"), 1);
+  assert.equal(await readFile(contract, "utf8"), "the guard uses merge-base\n");
+});
+
+test("the plan's own task status follows the done set in fast mode too", async () => {
+  // The fix plan is the single source of truth, and it used to disagree with
+  // itself: a completed range whose task entries all still read as pending,
+  // because only the mode that rewrites the task files updated them.
+  const { root, specDir } = await createSpec();
+
+  const { plan } = await runLoop(root, specDir, () => ({}), (config) => {
+    config.mode = "fast";
+  });
+
+  assert.deepEqual(plan.done, ["TASK-001", "TASK-002", "TASK-003"]);
+  assert.deepEqual(
+    plan.tasks.map((t) => t.status),
+    ["reviewed", "reviewed", "reviewed"],
+    "the done set and the task entries tell the same story",
+  );
+});

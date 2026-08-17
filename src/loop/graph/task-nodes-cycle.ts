@@ -9,6 +9,12 @@
 import path from "node:path";
 import { graphRefreshFailedWarning } from "../codebase-graph.ts";
 import { classifyPhaseFailure, environmentFailureMessage } from "../phases.ts";
+import {
+  changedProtectedPaths,
+  protectedPathsFeedback,
+  protectedPathsWarning,
+  snapshotProtectedPaths,
+} from "../protected-paths.ts";
 import { runReviewStep } from "../review-runner.ts";
 import { collectRoutedSuggestions } from "../routed-suggestions.ts";
 import { loopArtifactExclusions } from "../workspace.ts";
@@ -34,6 +40,8 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
   // The loop's own state file and phase logs are written while the phase runs;
   // counting them would make every attempt look productive.
   const fingerprintExclusions = loopArtifactExclusions(config.projectRoot, specDir);
+  const protect = config.run.protectSpecArtifacts;
+  const snapshot = deps.snapshotProtectedPaths ?? snapshotProtectedPaths;
 
   return {
     enter_task: async (io) => {
@@ -86,6 +94,10 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
       // a stall; and skipping the measurement keeps the happy path free of it.
       const isRetry = state.retry_count > 0;
       const before = isRetry ? await deps.workspaceFingerprint(config.projectRoot, fingerprintExclusions) : null;
+      // Read on every attempt, not only on retries: the first one is exactly
+      // where a mismatch between code and requirement is most tempting to
+      // resolve by editing the requirement.
+      const protectedBefore = protect ? await snapshot(specDir) : null;
       const impl = await executor.run("implementation", {
         task: taskFile,
         learnings: plan.learnings,
@@ -146,6 +158,20 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         return { kind: "ok" };
       }
       io.runtime.postHookFailures = null;
+      // Checked before the no-op guard: an attempt that only rewrote a
+      // protected document did change the tree, so the fingerprint would
+      // happily call it progress and send it to review.
+      if (protectedBefore !== null) {
+        const changed = changedProtectedPaths(protectedBefore, await snapshot(specDir), specDir);
+        if (changed.length > 0) {
+          io.runtime.feedback = protectedPathsFeedback(changed);
+          state.retry_count++;
+          await persist();
+          notify(protectedPathsWarning(id, changed), "warning");
+          io.runtime.implStatus = "protected-paths-touched";
+          return { kind: "ok" };
+        }
+      }
       // The attempt ran clean end to end. If it also left the tree exactly as
       // it found it, the agent re-read the task, re-ran the gate and wrote
       // nothing — the review would receive the same tree it rejected and

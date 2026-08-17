@@ -93,7 +93,10 @@ test("interrupt during implementation counts as a failed attempt and the loop re
   assert.deepEqual(plan?.done, ["TASK-001", "TASK-002"]);
 });
 
-test("interrupt during review fails the attempt: implementation starts over", async () => {
+// An interrupted review judged nothing, so the implementation it would have
+// judged is still the one to judge: the reviewer is spawned again and the
+// working code is not re-implemented to get back to the same tree.
+test("interrupt during review spawns the reviewer again, not the implementation", async () => {
   const { root, specDir } = await createSpec();
   const config = await loadSpecsKitConfig(root);
   config.mode = "fast";
@@ -124,7 +127,7 @@ test("interrupt during review fails the attempt: implementation starts over", as
   const result = await engine.start({ specDir });
 
   assert.equal(result.reason, "completed");
-  assert.equal(calls.filter((c) => c === "TASK-001:implementation").length, 2);
+  assert.equal(calls.filter((c) => c === "TASK-001:implementation").length, 1);
   assert.equal(calls.filter((c) => c === "TASK-001:review").length, 2);
   const plan = await loadFixPlan(specDir);
   assert.deepEqual(plan?.done, ["TASK-001", "TASK-002"]);

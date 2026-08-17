@@ -50,6 +50,21 @@ Resolve, in order:
 
 If any required input is missing or ambiguous, ask the user via ask_user_question.
 
+## What this task may not change
+
+The spec's requirement document and everything under its `contracts/` folder
+state what this implementation is measured against, so they are read-only here:
+an attempt that rewrites one is refused by the loop, costs an attempt, and comes
+back naming the file. When the code cannot honour them — the requirement is
+impossible, contradictory, or the contract prescribes something that does not
+work — say so in the implementation summary and leave the document untouched.
+That is the channel that leads to a decision taken outside this session; editing
+the document until it agrees with the code closes the mismatch for every later
+reader without anyone deciding anything.
+
+Working documents (`decision-log.md`, the task file, the technical plan, README
+and architecture notes) stay writable as before.
+
 ## Action Routing
 
 The `--action` argument determines the workflow path:

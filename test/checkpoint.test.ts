@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { commitCheckpoint } from "../src/loop/checkpoint.ts";
@@ -58,4 +58,37 @@ test("commitCheckpoint on a non-git directory fails without throwing", { skip: !
 
   assert.equal(result.committed, false);
   assert.ok(typeof result.reason === "string" && result.reason.length > 0);
+});
+
+test("the loop's own artifacts stay out of the checkpoint", { skip: !gitAvailable }, async () => {
+  // A checkpoint is meant to capture the work. The state file, the phase logs
+  // and the generated graph are outputs of the run, and once swept in they
+  // travel with every later commit into whatever the branch becomes.
+  const dir = initRepo();
+  mkdirSync(path.join(dir, "graphify-out"), { recursive: true });
+  mkdirSync(path.join(dir, "docs/specs/001/_ralph_loop"), { recursive: true });
+  writeFileSync(path.join(dir, "src.txt"), "the work");
+  writeFileSync(path.join(dir, "graphify-out/graph.json"), "{}");
+  writeFileSync(path.join(dir, "docs/specs/001/_ralph_loop/fix_plan.json"), "{}");
+
+  const result = await commitCheckpoint(dir, "checkpoint: task", [
+    "graphify-out",
+    "docs/specs/001/_ralph_loop",
+  ]);
+
+  assert.equal(result.committed, true);
+  const tracked = spawnSync("git", ["ls-files"], { cwd: dir, encoding: "utf8" }).stdout.split("\n").filter(Boolean);
+  assert.deepEqual(tracked, ["src.txt"]);
+});
+
+test("without exclusions the checkpoint still takes the whole tree", { skip: !gitAvailable }, async () => {
+  const dir = initRepo();
+  mkdirSync(path.join(dir, "graphify-out"), { recursive: true });
+  writeFileSync(path.join(dir, "src.txt"), "the work");
+  writeFileSync(path.join(dir, "graphify-out/graph.json"), "{}");
+
+  assert.equal((await commitCheckpoint(dir, "checkpoint: task")).committed, true);
+
+  const tracked = spawnSync("git", ["ls-files"], { cwd: dir, encoding: "utf8" }).stdout.split("\n").filter(Boolean);
+  assert.deepEqual(tracked, ["graphify-out/graph.json", "src.txt"]);
 });

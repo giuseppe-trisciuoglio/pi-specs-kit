@@ -574,3 +574,35 @@ test("ensureConfigFile leaves an existing file untouched", async () => {
     assert.equal(await readFile(file, "utf8"), "specs_dir: docs/custom-specs\n");
   });
 });
+
+test("the spec artifacts guard defaults to on and reads tolerantly", async () => {
+  // The guard refuses an implementation attempt that rewrote what it is
+  // measured against, so its default has to be the strict one: a project that
+  // never heard of the key still gets the protection.
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, CONFIG_FILE_NAME);
+
+    await writeFile(file, "version: \"1\"\n");
+    assert.equal((await loadSpecsKitConfig(dir)).run.protectSpecArtifacts, true);
+
+    await writeFile(file, "run:\n  protect_spec_artifacts: false\n");
+    assert.equal((await loadSpecsKitConfig(dir)).run.protectSpecArtifacts, false);
+
+    for (const bad of ["'nope'", "3", "[]", "{on: true}"]) {
+      await writeFile(file, `run:\n  protect_spec_artifacts: ${bad}\n`);
+      assert.equal((await loadSpecsKitConfig(dir)).run.protectSpecArtifacts, true, bad);
+    }
+  });
+});
+
+test("the generated config documents the spec artifacts guard", async () => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, CONFIG_FILE_NAME);
+    await ensureConfigFile(file);
+    const doc = YAML.parse(await readFile(file, "utf8")) as {
+      run: { protect_spec_artifacts: boolean };
+    };
+
+    assert.equal(doc.run.protect_spec_artifacts, DEFAULT_RUN_CONFIG.protectSpecArtifacts);
+  });
+});

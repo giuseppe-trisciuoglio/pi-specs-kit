@@ -41,7 +41,8 @@ export type RunField =
   | "review_file_retry"
   | "max_spawns_per_task"
   | "max_spawns_per_run"
-  | "max_run_duration";
+  | "max_run_duration"
+  | "protect_spec_artifacts";
 
 export interface RunFieldUpdate {
   field: RunField;

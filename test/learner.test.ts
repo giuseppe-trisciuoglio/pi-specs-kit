@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { learningScore, MAX_LEARNINGS, mergeLearnings, parseLearnings } from "../src/loop/learner.ts";
+import {
+  learningScore,
+  MAX_LEARNINGS,
+  mergeLearnings,
+  parseLearnings,
+  parseNewLearnings,
+} from "../src/loop/learner.ts";
 
 test("parseLearnings accepts dash, star, bullet and numbered bullets", () => {
   const text = [
@@ -115,4 +121,18 @@ test("mergeLearnings keeps the default cap consistent with MAX_LEARNINGS", () =>
 
   assert.equal(merged.learnings.length, MAX_LEARNINGS);
   assert.ok(merged.learnings.includes("overflow learning"));
+});
+
+test("a citation is not stored as a new learning", () => {
+  // The bullet parser cannot tell a pointer from an insight: kept in, every
+  // citation stored a second copy of the entry it was pointing at, and every
+  // later prompt paid for both.
+  const text = [
+    "- config loaders must tolerate malformed values",
+    "- CONFIRMED: the config is read at first command, never at module load",
+    "* confirmed: lower case is a citation too",
+  ].join("\n");
+
+  assert.deepEqual(parseNewLearnings(text), ["config loaders must tolerate malformed values"]);
+  assert.equal(parseLearnings(text).length, 3, "the raw parser still sees every bullet");
 });

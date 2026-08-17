@@ -79,6 +79,18 @@ _Avoid_: esito review, report (è il file, non l'esito)
 Copia del report di review precedente, salvata come `tasks/<TASK>--review.attempt-N.md` prima che un retry sovrascriva il report canonico `<TASK>--review.md`. Preserva la cronologia dei verdetti (anche FAILED) per audit e debug; il file canonico resta sempre l'ultimo verdetto.
 _Avoid_: review backup, snapshot di review
 
+**Documenti di misura**:
+I documenti contro cui l'implementazione viene giudicata: la specifica funzionale della spec e i file sotto `contracts/`. Il loop ne confronta l'impronta prima e dopo ogni fase di implementazione (`run.protect_spec_artifacts`, attivo di default) e rifiuta il tentativo che ne ha riscritto uno, nominando i file. I documenti di lavoro (decision log, task file, piano tecnico) restano scrivibili.
+_Avoid_: file protetti (generico), read-only files
+
+**Conflitto di specifica**:
+Contraddizione fra ciò che un requisito, un criterio di accettazione o un contratto prescrive e ciò che l'implementazione fa. Il reviewer lo elenca in `spec_conflicts` nel frontmatter del report; una lista non vuota vale come rifiuto qualunque cosa dica `review_status`, perché descrivere il conflitto spetta alla review e decidere quanto costa spetta al loop.
+_Avoid_: tensione, chiarimento, nota di review
+
+**Verifica di chiusura del range**:
+Controllo programmatico eseguito quando il range si chiude, senza chiamate a modello: le citazioni della matrice di copertura devono puntare a file di test esistenti (e, quando nominano un test, a un nome presente nel file), e nessun suggerimento routed deve restare a carico di un task mai completato. Produce avvisi, non blocchi.
+_Avoid_: gate finale, validazione della matrice
+
 **Knowledge base**:
 Lista di file di contesto (da `specs-kit.yaml`) iniettata nel prompt di ogni fase.
 _Avoid_: context files, KB generico

@@ -22,6 +22,13 @@ export function projectLearningsPath(projectRoot: string, specsDir: string): str
 }
 
 /**
+ * Prefix a learner uses to point at an insight the project already recorded.
+ * It lives here, next to the memory it points into, so the reader of the
+ * memory can tell a citation from an insight without importing the spawner.
+ */
+export const CONFIRMED_PREFIX = "CONFIRMED:";
+
+/**
  * Parse bullet lines from free-form learner output. Accepts "-", "*", "•"
  * and numbered bullets; ignores headings, blank lines and prose.
  */
@@ -34,6 +41,19 @@ export function parseLearnings(text: string): string[] {
     if (value && !learnings.includes(value)) learnings.push(value);
   }
   return learnings;
+}
+
+/**
+ * The insights a learner actually added, with its citations removed.
+ *
+ * A citation is written as a bullet like everything else, and the bullet
+ * parser cannot tell one from a new insight. Kept in, every citation stored a
+ * second copy of the entry it was pointing at: the memory filled up with what
+ * the project had already learnt, worded as a pointer, and every later prompt
+ * paid for both copies.
+ */
+export function parseNewLearnings(text: string): string[] {
+  return parseLearnings(text).filter((learning) => !learning.toUpperCase().startsWith(CONFIRMED_PREFIX));
 }
 
 /**

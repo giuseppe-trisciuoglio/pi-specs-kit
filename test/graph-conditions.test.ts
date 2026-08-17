@@ -48,6 +48,7 @@ test("the registry contains exactly the declared routing predicates", () => {
     "impl_ok",
     "impl_post_hook_failed",
     "impl_pre_hook_failed",
+    "impl_protected_paths_touched",
     "impl_spawn_failed",
     "sync_not_wanted",
     "sync_wanted",

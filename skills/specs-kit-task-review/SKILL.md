@@ -158,9 +158,14 @@ If any required input is missing or ambiguous, ask the user via ask_user_questio
 5. **Update traceability-matrix.md**:
    - Read `docs/specs/[id]/traceability-matrix.md`
    - For this task (TASK-XXX), update the matrix:
-     - Fill in "Test Files" column with test file names created for this task
+     - Fill in "Test Files" column with test file names created for this task,
+       written as `path/to/file::name of the test` when a specific case proves
+       the row. The loop checks these citations when the range closes: a file
+       that is not there, or a name that is not in it, is reported as a claim
+       the matrix cannot back
      - Fill in "Code Files" column with source files created for this task
-     - Update "Status" to "Implemented" for REQ-IDs covered by this task
+     - Update "Status" to "Implemented" only for rows whose citation you have
+       actually read in the cited file; leave the rest "Pending"
    - Save updated matrix back to `docs/specs/[id]/traceability-matrix.md`
 
 6. **BOUNDED CONTEXT ADHERENCE CHECK **:
@@ -211,9 +216,22 @@ If any required input is missing or ambiguous, ask the user via ask_user_questio
      - If NOT marked `(derived)`: Flag as "Invented Entity — not in spec"
 
 7. **Check for spec contradictions**:
-   - If the implementation does something DIFFERENT from the spec:
-     - Check `decision-log.md` for a DEC entry justifying the deviation
-     - If NO DEC entry: flag as critical issue
+   - If the implementation does something DIFFERENT from the spec (a
+     requirement, an acceptance criterion or an interface contract):
+     - Record it in the `spec_conflicts` frontmatter list, one line per
+       conflict, naming the requirement and what the code does instead
+     - Check `decision-log.md` for a DEC entry justifying the deviation.
+       A DEC whose `Decided By` is the implementation agent of this same
+       task does **not** justify anything: the session that deviated wrote
+       it. Only a DEC decided outside the task (operator, earlier plan,
+       change-spec) closes the conflict
+     - Never resolve a contradiction by rewording the requirement, the
+       contract or the criterion: those documents are what the work is
+       measured against, and the loop refuses attempts that rewrite them
+   - A conflict is never a "clarification item", a "wording tension" or a
+     note in the body. Either the code changes, or the requirement changes
+     through a decision taken outside this session — and until then the
+     conflict stays in `spec_conflicts`, where the loop reads it
 
 ---
 
@@ -371,6 +389,14 @@ is the cheapest place to intervene.
    task still in the range will cover it. A deferred fix with no later owner is
    exactly the gap the review exists to catch.
 
+   Two things the loop decides, not you:
+   - a report with a non-empty `spec_conflicts` is treated as `FAILED`
+     whatever `review_status` says, so raising a contradiction and passing it
+     in the same breath is not available
+   - a `routed` entry aimed at a task that is not still pending inside the
+     range is refused and comes back as a rejection, so route only to a task
+     that will actually run
+
 2. **Generate review report** (`docs/specs/[id]/tasks/TASK-XXX--review.md`):
    Read the review template using this lookup order:
    1. `templates/task-review.md`
@@ -379,9 +405,15 @@ is the cheapest place to intervene.
 
    The file **must open with the YAML frontmatter block of the template**,
    before the first heading, carrying `review_status`, a one-line `summary`, an
-   `issues` list (`issues: []` when the review passes) and an optional `routed`
-   list. Every required fix listed in the body has a matching `issues` entry:
-   that list is what the next implementation pass is given to work from.
+   `issues` list (`issues: []` when the review passes), a `spec_conflicts` list
+   (`[]` when nothing contradicts the spec) and an optional `routed` list.
+   Every required fix listed in the body has a matching `issues` entry: that
+   list is what the next implementation pass is given to work from.
+
+   **Quote every value with double quotes.** The values here are prose and
+   prose contains colons; an unquoted `summary`, `issues` entry or routed
+   `text` carrying a colon followed by a space is not valid YAML, and the loop
+   then has to salvage the verdict line by line.
 
    `routed` carries fixes you defer to a later task, not this one: each entry is
    `{ to: "<task-id>", text: "<one-line fix>" }`, and `[]` when there is

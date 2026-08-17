@@ -8,12 +8,19 @@
 import type { FixPlan, LoopStep } from "../fixplan/fix-plan.ts";
 import type { TaskFile } from "../tasks/task-parser.ts";
 import { consumeRunNode, type RunNode } from "./graph/run-graph.ts";
+import { rangeCloseWarnings, type RangeCloseDeps } from "./range-close.ts";
 import type { RunState, TaskRunner } from "./task-runner.ts";
 
 export interface WalkDeps {
   stopping: () => "graceful" | "now" | null;
   notify: (message: string, type: "info" | "warning" | "error") => void;
   persist: (plan: FixPlan) => Promise<void>;
+  /**
+   * Where the closing checks read the spec's own claims. Absent means the
+   * walk was assembled without them and the range closes unchecked, which is
+   * how the loop behaved before they existed.
+   */
+  rangeClose?: RangeCloseDeps;
 }
 
 export interface WalkStart {
@@ -78,6 +85,14 @@ export async function walkSelection(
         }
         const p = plan.range_progress;
         deps.notify(`range completed: ${p.done_in_range}/${p.total_in_range} tasks (${p.percent}%)`, "info");
+        // The claims the range leaves behind are checked here, once, while the
+        // operator is still reading the close: a matrix citing tests that are
+        // not there, and review fixes handed to tasks that never ran.
+        if (deps.rangeClose) {
+          for (const warning of await rangeCloseWarnings(plan, deps.rangeClose)) {
+            deps.notify(warning, "warning");
+          }
+        }
         // A sync that ran without the codebase graph left the run partial:
         // say so once at the end so the operator knows graph-backed
         // validation was skipped and the docs sync may be incomplete.

@@ -1,8 +1,9 @@
 ---
 review_status: ${REVIEW_STATUS}
-summary: ${REVIEW_SUMMARY}
+summary: "${REVIEW_SUMMARY}"
 issues:
-  - ${ISSUE}
+  - "${ISSUE}"
+spec_conflicts: []
 routed: []
 ---
 
@@ -25,6 +26,16 @@ routed: []
 >
 > `summary` is a single line. Everything below is the detailed report a human
 > reads; it never changes the verdict.
+>
+> **Quote every value with double quotes.** These values are prose, prose
+> contains colons, and an unquoted colon followed by a space breaks the block.
+>
+> **`spec_conflicts`** lists requirements, criteria or contracts the
+> implementation contradicts, one line each, naming the requirement and what
+> the code does instead. Leave it `[]` when there are none. A non-empty list is
+> read as a rejection whatever `review_status` says: the conflict is described
+> here, and what it costs is not the reviewer's to decide. Never resolve one by
+> rewording the requirement or the contract.
 >
 > **`routed`** lists fixes you defer to a *later* task rather than to this one
 > (an optional suggestion that fits a known downstream task better). Each entry

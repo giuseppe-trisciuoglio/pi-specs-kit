@@ -8,7 +8,7 @@ import { loadSpecsKitConfig } from "../src/config/specs-kit-config.ts";
 import { emptyFixPlan, type FixPlan } from "../src/fixplan/fix-plan.ts";
 import { parseTaskFile, type TaskFile } from "../src/tasks/task-parser.ts";
 import type { PhaseExecutor, PhaseStepResult } from "../src/loop/phases.ts";
-import { runReviewStep, type ReviewStepDeps, type ReviewVerdict } from "../src/loop/review-runner.ts";
+import { reviewUnreadablePath, runReviewStep, type ReviewStepDeps, type ReviewVerdict } from "../src/loop/review-runner.ts";
 import { reviewAttemptArchivePath, reviewFilePath } from "../src/loop/review-report.ts";
 
 const tmpDirs: string[] = [];
@@ -159,16 +159,27 @@ test("a re-spawned reviewer is told what was wrong with its previous report", as
   }
 });
 
-test("an interrupted review hands a full review file budget to the next attempt", async () => {
-  const h = await harness((spawn) => (spawn === 2 ? abortedResult : okResult));
-  const first = await runReviewStep(h.deps, h.plan, TASK);
+test("an interrupted review is re-spawned rather than paid for with a task attempt", async () => {
+  // An interrupt says nothing about the implementation: it was never judged.
+  // Re-implementing working code to reach a second opinion costs two agent
+  // sessions to arrive where the loop already was, so the reviewer is spawned
+  // again inside the same bounded budget and the attempt counter stays put.
+  const h = await harness((spawn) => (spawn === 1 ? abortedResult : okResult));
+  h.plan.state.retry_count = 1;
+  const verdict = await runReviewStep(h.deps, h.plan, TASK);
 
-  assert.deepEqual(first, { kind: "attemptFailed" } satisfies ReviewVerdict);
-  assert.equal(h.plan.state.review_file_retry, 0);
+  assert.equal(verdict.kind, "reportUnusable", "the budget is spent on the missing report, not on the interrupt");
+  assert.equal(h.spawns(), 3, "one interrupted spawn plus the two the review file budget allows");
+  assert.equal(h.plan.state.retry_count, 1, "the attempt counter is untouched by an interrupt");
+});
 
-  const second = await runReviewStep(h.deps, h.plan, TASK);
-  assert.equal(second.kind, "reportUnusable");
-  assert.equal(h.spawns(), 5);
+test("interrupts beyond the review budget end the attempt", async () => {
+  const h = await harness(() => abortedResult);
+  const verdict = await runReviewStep(h.deps, h.plan, TASK);
+
+  assert.deepEqual(verdict, { kind: "attemptFailed" } satisfies ReviewVerdict);
+  assert.equal(h.spawns(), 3, "two retries on top of the first interrupted spawn");
+  assert.equal(h.plan.state.review_file_retry, 0, "the budget of the lost attempt is not carried over");
 });
 
 test("a prior verdict is archived before the canonical report is wiped", async () => {
@@ -255,4 +266,92 @@ test("a red post-hook gate after the review is recorded on the run", async () =>
 
   assert.equal(verdict.kind, "passed", "a red gate does not change the verdict the reviewer stated");
   assert.equal(plan.state.postHookGateFailed, "review", "the red gate is recorded for the closing notice");
+});
+
+/** Review step whose spawns write the given report contents, in order. */
+async function reportingHarness(
+  reports: string[],
+): Promise<{ deps: ReviewStepDeps; plan: FixPlan; specDir: string; prompts: (string | null)[] }> {
+  const { root, specDir } = await createSpec();
+  const config = await loadSpecsKitConfig(root);
+  config.run.reviewFileRetry = 2;
+  const plan = emptyFixPlan("001-spec", "docs/specs/001-spec");
+  const prompts: (string | null)[] = [];
+  let spawn = 0;
+  const executor = {
+    run: async (_phase: string, input: { reviewFormatError: string | null }): Promise<PhaseStepResult> => {
+      prompts.push(input.reviewFormatError);
+      const content = reports[spawn++];
+      if (content !== undefined) await writeFile(reviewFilePath(specDir, "TASK-001"), content, "utf8");
+      return okResult;
+    },
+  } as unknown as PhaseExecutor;
+  return {
+    plan,
+    specDir,
+    prompts,
+    deps: { config, specDir, executor, persist: async () => {}, notify: () => {}, stopping: () => null, signal: () => undefined },
+  };
+}
+
+test("a review that reports a contradicted requirement cannot also pass it", async () => {
+  // The reviewer describes the conflict; the loop decides what it costs.
+  // Left to the reviewer, the same session both raises the contradiction and
+  // absolves it, which is how a requirement ends a run as a note nobody acts on.
+  const h = await reportingHarness([
+    "---\nreview_status: PASSED\nsummary: all good\nissues: []\nrouted: []\nspec_conflicts:\n  - the guard reuses the stale tip the requirement refuses\n---\n\nbody\n",
+  ]);
+
+  const verdict = await runReviewStep(h.deps, h.plan, TASK);
+
+  assert.equal(verdict.kind, "failed", "a reported conflict outranks the verdict the reviewer wrote");
+  assert.match(verdict.kind === "failed" ? verdict.feedback : "", /stale tip/);
+  assert.match(verdict.kind === "failed" ? verdict.feedback : "", /never\s+reword the requirement/);
+});
+
+test("a fix routed to a task that will not run is refused, not deferred", async () => {
+  const h = await reportingHarness([
+    '---\nreview_status: PASSED\nsummary: ok\nissues: []\nrouted:\n  - to: TASK-404\n    text: "align the contract"\n---\n\nbody\n',
+  ]);
+
+  const verdict = await runReviewStep(h.deps, h.plan, TASK);
+
+  assert.equal(verdict.kind, "failed");
+  assert.match(verdict.kind === "failed" ? verdict.feedback : "", /TASK-404/);
+});
+
+test("a fix routed to a task still pending in the range is a legitimate deferral", async () => {
+  const h = await reportingHarness([
+    '---\nreview_status: PASSED\nsummary: ok\nissues: []\nrouted:\n  - to: TASK-007\n    text: "align the contract"\n---\n\nbody\n',
+  ]);
+  h.plan.tasks = [
+    { id: "TASK-001", file: "tasks/TASK-001.md", title: "one", lang: null, status: "pending" },
+    { id: "TASK-007", file: "tasks/TASK-007.md", title: "seven", lang: null, status: "pending" },
+  ];
+
+  const verdict = await runReviewStep(h.deps, h.plan, TASK);
+
+  assert.equal(verdict.kind, "passed");
+});
+
+test("an unreadable report is preserved and the next spawn is sent to repair it", async () => {
+  // The findings are the expensive half of a review. Deleting them made the
+  // retry review the task again from scratch to recover a verdict that had
+  // already been reached.
+  const unreadable = "---\nreview_status\n  broken: [\n---\n\nfindings worth keeping\n";
+  const h = await reportingHarness([
+    unreadable,
+    "---\nreview_status: PASSED\nsummary: ok\nissues: []\nrouted: []\n---\n\nbody\n",
+  ]);
+
+  const verdict = await runReviewStep(h.deps, h.plan, TASK);
+
+  assert.equal(verdict.kind, "passed");
+  assert.equal(h.prompts[0], null, "the first spawn has nothing to repair");
+  assert.match(h.prompts[1] ?? "", /--review\.unreadable\.md/, "the repair spawn is told where its findings are");
+  assert.equal(
+    existsSync(reviewUnreadablePath(h.specDir, "TASK-001")),
+    false,
+    "the salvage copy is dropped once a readable verdict exists",
+  );
 });

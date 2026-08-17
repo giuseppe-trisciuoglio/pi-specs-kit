@@ -212,6 +212,7 @@ run:
   max_spawns_per_task: 8
   max_spawns_per_run: 60
   max_run_duration: 6h
+  protect_spec_artifacts: true
 hooks:
   timeout: 240s
   implementation:
@@ -244,6 +245,28 @@ listed here, and several providers bill per token on every model they expose, so
 the panel stays an explicit choice. Edit it from `/specs-kit-config` →
 *Adversarial review panel*, where the order of the list decides which reviewer
 holds which critique angle.
+
+**What a task may not rewrite.** `run.protect_spec_artifacts` (on by default)
+refuses an implementation attempt that changed the spec's requirement document
+or any file under its `contracts/` folder: those state what the work is measured
+against, and an agent that can edit them closes any mismatch by moving the
+target. The attempt comes back naming the files, with the two ways out —
+change the code, or report the conflict for a decision taken outside the
+session. Working documents (decision log, task files, plan, README) stay
+writable. Turn the flag off for a run whose job is to revise those documents.
+
+**When a review contradicts the spec.** A review report may carry a
+`spec_conflicts` list. A non-empty list is read as a rejection whatever
+`review_status` says: the reviewer describes the contradiction, the loop decides
+what it costs. The same applies to a fix routed to a task that is not still
+pending inside the range — the deferral is refused and the fix comes back to the
+task at hand.
+
+**When the range closes**, the loop re-derives two claims it can check without a
+model: every coverage-matrix row marked implemented or verified must cite a test
+file that exists (and, when the citation names a test, a name that is in it), and
+no review fix may be left routed to a task that never completed. Both are
+warnings, printed once with the closing notices.
 
 ## Spending ceilings
 

@@ -65,6 +65,7 @@ const EDGE_DECLARATIONS: readonly TaskEdge[] = [
   { from: "implementation", to: "implementation", type: "pre-hook-failed", when: "impl_pre_hook_failed" },
   { from: "implementation", to: "implementation", type: "spawn-failed", when: "impl_spawn_failed" },
   { from: "implementation", to: "implementation", type: "post-hook-failed", when: "impl_post_hook_failed" },
+  { from: "implementation", to: "implementation", type: "protected-paths", when: "impl_protected_paths_touched" },
   { from: "implementation", to: "review", type: "advance", when: "impl_ok" },
 
   { from: "review", to: "review_gate", type: "advance", when: "always" },

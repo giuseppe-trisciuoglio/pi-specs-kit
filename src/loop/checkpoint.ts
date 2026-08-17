@@ -11,8 +11,16 @@ export interface CheckpointResult {
  * non-git directory, a clean tree or a git failure never throw, they just
  * report `committed: false`.
  */
-export async function commitCheckpoint(projectRoot: string, message: string): Promise<CheckpointResult> {
-  const add = await spawnProcess("git", ["add", "-A"], { cwd: projectRoot, timeoutMs: 30_000 });
+export async function commitCheckpoint(
+  projectRoot: string,
+  message: string,
+  excluded: readonly string[] = [],
+): Promise<CheckpointResult> {
+  // The commit takes the whole tree minus what the loop itself generated: a
+  // checkpoint is meant to capture the work, and an unignored state file or
+  // graph output would otherwise ride along into whatever the branch becomes.
+  const pathspec = ["--", ".", ...excluded.map((p) => `:(exclude)${p}`)];
+  const add = await spawnProcess("git", ["add", "-A", ...pathspec], { cwd: projectRoot, timeoutMs: 30_000 });
   if (add.exitCode !== 0) {
     return { committed: false, reason: add.stderr.trim() || "not a git repo" };
   }

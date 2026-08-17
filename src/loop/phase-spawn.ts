@@ -14,7 +14,7 @@ import type { PhaseHandle, PhaseMeter } from "../measure/phase-meter.ts";
 import { PhaseLogWriter } from "../util/log-writer.ts";
 import type { LoopBudget } from "./budget.ts";
 import type { HookResult } from "./hooks.ts";
-import { parseLearnings } from "./learner.ts";
+import { CONFIRMED_PREFIX, parseLearnings } from "./learner.ts";
 import type { SystemPromptOverrideText } from "./phase-context.ts";
 
 export interface LearnerResult {
@@ -23,8 +23,7 @@ export interface LearnerResult {
   text: string;
 }
 
-/** Prefix a learner uses to point at an insight the project already recorded. */
-export const CONFIRMED_PREFIX = "CONFIRMED:";
+export { CONFIRMED_PREFIX };
 
 /** How many existing insights one learner may cite as re-confirmed. */
 export const MAX_CONFIRMATIONS = 3;

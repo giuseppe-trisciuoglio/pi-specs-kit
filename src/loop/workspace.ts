@@ -13,22 +13,30 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { GRAPHIFY_GRAPH_REL } from "../prompt/graphify.ts";
 import { spawnProcess } from "../util/process.ts";
 
 /** Ceiling for each git call; a hung git must not stall the phase boundary. */
 export const FINGERPRINT_TIMEOUT_MS = 30_000;
 
 /**
- * Pathspecs excluded from the fingerprint, relative to the project root. The
- * loop writes its own state file and phase logs while the phase runs, so
- * counting them as work would make every attempt look productive.
+ * Pathspecs of what the loop itself generates, relative to the project root.
+ *
+ * Two callers, one list. The fingerprint leaves them out because the loop
+ * writes its state file and phase logs while the phase runs, so counting them
+ * as work would make every attempt look productive. The checkpoint leaves them
+ * out because they are outputs of the run, not the work the run produced:
+ * swept into the commit they end up in whatever the branch is proposed as.
  */
 export function loopArtifactExclusions(projectRoot: string, specDir: string): string[] {
+  // The codebase graph is re-extracted at every task entry, so it is a build
+  // artifact of the run wherever the project keeps it.
+  const exclusions = [path.posix.dirname(GRAPHIFY_GRAPH_REL.split(path.sep).join("/"))];
   const rel = path.relative(projectRoot, specDir);
   // A spec folder outside the project root has nothing to exclude: its writes
   // are not part of this tree in the first place.
-  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return [];
-  return [path.posix.join(rel.split(path.sep).join("/"), "_ralph_loop")];
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return exclusions;
+  return [...exclusions, path.posix.join(rel.split(path.sep).join("/"), "_ralph_loop")];
 }
 
 /**

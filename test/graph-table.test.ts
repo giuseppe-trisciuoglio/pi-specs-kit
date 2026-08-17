@@ -29,6 +29,7 @@ const EDGE_TYPE_VOCABULARY: readonly EdgeType[] = [
   "pre-hook-failed",
   "spawn-failed",
   "post-hook-failed",
+  "protected-paths",
   "mode-skip",
   "continue-on-failure",
   "halt-on-failure",

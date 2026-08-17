@@ -10,8 +10,9 @@
 import { computeRangeProgress, type FixPlan } from "../../fixplan/fix-plan.ts";
 import { updateTaskStatus, type TaskFile } from "../../tasks/task-parser.ts";
 import { graphifyGraphExists, graphifyGraphMissingWarning } from "../../prompt/graphify.ts";
-import { mergeLearnings, parseLearnings, loadProjectLearnings, saveProjectLearnings, MAX_PROJECT_LEARNINGS } from "../learner.ts";
+import { mergeLearnings, parseNewLearnings, loadProjectLearnings, saveProjectLearnings, MAX_PROJECT_LEARNINGS } from "../learner.ts";
 import { parseConfirmations, spawnFailed } from "../phases.ts";
+import { loopArtifactExclusions } from "../workspace.ts";
 import type { NodeAction, TaskNodeDeps, TaskNodeEnv } from "./types.ts";
 
 /** Collect the public API contracts from the already-completed dependency tasks. */
@@ -99,8 +100,14 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
       if (spawnFailed(lr.outcome)) {
         notify(`learner failed for ${id}, continuing`, "warning");
       } else {
-        const found = parseLearnings(lr.text);
+        const found = parseNewLearnings(lr.text);
         const confirmed = parseConfirmations(lr.text, known);
+        if (found.length === 0 && confirmed.length === 0) {
+          // The spawn ran and produced nothing usable. Silence here read as a
+          // task with nothing to teach, which is indistinguishable from a
+          // learner that answered with an empty message.
+          notify(`learner produced no learnings for ${id}, continuing`, "warning");
+        }
         if (found.length > 0 || confirmed.length > 0) {
           // A task the review had to reject paid for its insights: whatever it
           // learned encodes a rule the project actually enforces, so it starts
@@ -175,12 +182,17 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
       if (!plan.done.includes(id)) plan.done.push(id);
       plan.pending = plan.pending.filter((p) => p !== id);
       plan.range_progress = computeRangeProgress(plan);
+      // The plan's own view of the task moves with the done set, in both
+      // modes. Updating it only where the task file is rewritten left the two
+      // halves of the same document disagreeing — a completed range whose
+      // tasks all still read as pending — and every later reader had to know
+      // which half to believe.
+      const entry = plan.tasks.find((t) => t.id === id);
+      if (entry) entry.status = "reviewed";
       if (config.mode === "full") {
         const date = deps.now().toISOString().slice(0, 10);
         try {
           await updateTaskStatus(taskFile.path, "reviewed", { implementedDate: date, reviewedDate: date });
-          const entry = plan.tasks.find((t) => t.id === id);
-          if (entry) entry.status = "reviewed";
         } catch (err) {
           // The task file may have been moved or deleted by the agents. The work
           // is done either way: letting the error escape would abort the loop
@@ -200,6 +212,7 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
         const cp = await deps.commitCheckpoint(
           config.projectRoot,
           `checkpoint: ${id} attempt ${state.retry_count + 1}`,
+          loopArtifactExclusions(config.projectRoot, deps.specDir),
         );
         notify(
           cp.committed ? `checkpoint committed for ${id}` : `checkpoint skipped for ${id}: ${cp.reason ?? "git error"}`,

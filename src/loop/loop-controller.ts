@@ -12,6 +12,7 @@ import { updateActiveSpec } from "../config/config-writer.ts";
 import { loadSpecsKitConfig, type SpecsKitConfig } from "../config/specs-kit-config.ts";
 import type { RefreshOutcome } from "../fixplan/fix-plan.ts";
 import { refreshFixPlan } from "../fixplan/refresh.ts";
+import { trackedArtifactsWarning, trackedLoopArtifacts } from "./artifact-hygiene.ts";
 import { LoopEngine, type LoopEndReason, type LoopStartOptions } from "./engine.ts";
 import { idleStatus, type LoopStatus } from "./loop-status.ts";
 import { findGraphifySkill, graphifyMissingWarning } from "../prompt/graphify.ts";
@@ -45,6 +46,8 @@ export interface ControllerDeps {
   findGraphifySkill?: typeof findGraphifySkill;
   /** Queries the agent CLI model catalogue; defaults to `pi --list-models`. */
   listModels?: () => Promise<ListedModel[]>;
+  /** Lists the loop's own artifacts git already tracks; defaults to the real check. */
+  trackedLoopArtifacts?: (projectRoot: string, specDir: string) => Promise<string[]>;
 }
 
 /** Ring buffer capacity of log lines shown in the widget. */
@@ -68,11 +71,14 @@ export class LoopController {
   readonly #logLineListeners = new Set<(line: string) => void>();
   readonly #findGraphifySkill: typeof findGraphifySkill;
   readonly #listModels: () => Promise<ListedModel[]>;
+  readonly #trackedLoopArtifacts: (projectRoot: string, specDir: string) => Promise<string[]>;
 
   constructor(events: ControllerEvents = {}, deps: ControllerDeps = {}) {
     this.#events = events;
     this.#findGraphifySkill = deps.findGraphifySkill ?? findGraphifySkill;
     this.#listModels = deps.listModels ?? listModels;
+    this.#trackedLoopArtifacts =
+      deps.trackedLoopArtifacts ?? ((root, spec) => trackedLoopArtifacts(root, spec));
   }
 
   /** Load the yaml config of a project root into memory. */
@@ -145,6 +151,17 @@ export class LoopController {
           throw new Error(unknownModelsError(missing));
         }
       }
+    }
+
+    // What the loop generates is meant to stay out of the history it produces.
+    // Tracked artifacts cannot be excluded after the fact, so they are named
+    // now, while the operator can still ignore them.
+    const tracked = await this.#trackedLoopArtifacts(
+      config.projectRoot,
+      path.resolve(config.projectRoot, opts.specDir),
+    );
+    if (tracked.length > 0) {
+      this.#safely(() => this.#events.onNotify?.(trackedArtifactsWarning(tracked), "warning"));
     }
 
     let markStarted: () => void = () => {};

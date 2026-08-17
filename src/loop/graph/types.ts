@@ -14,6 +14,7 @@ import type { commitCheckpoint } from "../checkpoint.ts";
 import type { refreshCodebaseGraph } from "../codebase-graph.ts";
 import type { HookResult } from "../hooks.ts";
 import type { PhaseExecutor } from "../phases.ts";
+import type { snapshotProtectedPaths } from "../protected-paths.ts";
 import type { RoutedSuggestion } from "../review-report.ts";
 import type { workspaceFingerprint } from "../workspace.ts";
 import type { ConditionName } from "./conditions.ts";
@@ -37,6 +38,7 @@ export type EdgeType =
   | "pre-hook-failed"
   | "spawn-failed"
   | "post-hook-failed"
+  | "protected-paths"
   | "mode-skip"
   | "continue-on-failure"
   | "halt-on-failure";
@@ -68,7 +70,9 @@ export type ImplStatus =
   | "post-hook-failed"
   | "no-op-retry"
   /** The provider refused the spawn: no retry against the same config can succeed. */
-  | "environment-failed";
+  | "environment-failed"
+  /** The attempt rewrote a document the implementation is measured against. */
+  | "protected-paths-touched";
 
 /** Review verdict shapes that route; a stopped verdict never reaches routing
  * because it propagates as the action outcome. */
@@ -176,6 +180,12 @@ export interface TaskNodeDeps {
   workspaceFingerprint: typeof workspaceFingerprint;
   /** Re-extract the codebase graph the phases read; best-effort. */
   refreshCodebaseGraph: typeof refreshCodebaseGraph;
+  /**
+   * Content hashes of the documents a phase must not rewrite, read around the
+   * implementation. Absent means the real one: the check is part of the loop,
+   * not of a particular wiring.
+   */
+  snapshotProtectedPaths?: typeof snapshotProtectedPaths;
   now: () => Date;
 }
 
