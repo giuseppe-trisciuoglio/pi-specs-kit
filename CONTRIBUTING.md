@@ -35,9 +35,8 @@ and starts **nothing** at load time. Configuration is read lazily on the first
 command so `/reload` is always safe. Each loop phase is an ephemeral `pi`
 subprocess (the roles differ only by model and thinking level). The single
 source of truth for loop state is `<spec>/_ralph_loop/fix_plan.json`, rewritten
-atomically (tmp + rename) after every state transition. See
-[`docs/plan.md`](docs/plan.md) and [`CONTEXT.md`](CONTEXT.md) for the glossary
-and full design.
+atomically (tmp + rename) after every state transition. See [`docs/adr/`](docs/adr/) for the architectural decisions (ordered by
+number) and [`CONTEXT.md`](CONTEXT.md) for the glossary of domain terms.
 
 ## Coding conventions
 

@@ -6,11 +6,11 @@ version: "1"
 specs_dir: docs/specs
 mode: fast
 agents:
-  agent_model: kimi-coding/k3
-  reviewer_model: opencode-go/deepseek-v4-pro
+  agent_model: kimi-coding/k3-256k
+  reviewer_model: zai/glm-5.3
   cleaner_model: minimax/MiniMax-M3
   synchronizer_model: minimax/MiniMax-M3
-  learner_model: kimi-coding/k3-256k
+  learner_model: minimax/MiniMax-M3
   agent_thinking_level: minimal
   reviewer_thinking_level: medium
   cleaner_thinking_level: medium

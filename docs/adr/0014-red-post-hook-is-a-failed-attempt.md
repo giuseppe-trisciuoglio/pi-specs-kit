@@ -25,7 +25,8 @@ Decisioni registrate:
   senza esserci dichiarato) e viene reso dal prompt builder **nello stesso blocco `<hooks>`**, sotto
   una label che nomina il gate e il tentativo (`post hooks of the previous attempt (failed only):`),
   così il pre-hook di questo tentativo e il post-hook del precedente non si confondono. L'output
-  compare solo per gli hook falliti — la regola già in vigore per i pre-hook — e viene troncato con
+  compare solo per gli hook falliti — la regola di resa del blocco è comune a pre-hook e
+  post-hook ed è registrata come decisione autonoma in ADR-0022 — e viene troncato con
   lo stesso meccanismo.
 - **Le fasi senza retry registrano, non inventano.** Cleanup, sync e la sync di fine range non
   hanno alcun percorso di ritentativo: inventarne uno non è delegato. Per loro il minimo onesto è

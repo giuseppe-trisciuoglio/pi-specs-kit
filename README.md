@@ -2,58 +2,48 @@
 
 [![CI](https://github.com/giuseppe-trisciuoglio/pi-rules/actions/workflows/ci.yml/badge.svg)](https://github.com/giuseppe-trisciuoglio/pi-rules/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/@giuseppe.trisciuoglio/pi-specs-kit.svg)](https://www.npmjs.com/package/@giuseppe.trisciuoglio/pi-specs-kit)
-[![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![node](https://img.shields.io/badge/node-%E2%89%A524-green.svg)](https://nodejs.org)
+[![npm downloads](https://img.shields.io/npm/dm/@giuseppe.trisciuoglio/pi-specs-kit.svg)](https://www.npmjs.com/package/@giuseppe.trisciuoglio/pi-specs-kit)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](https://nodejs.org)
 [![pi-package](https://img.shields.io/badge/pi-package-purple.svg)](https://github.com/earendil-works/pi-coding-agent)
 
-> A native [pi](https://github.com/earendil-works/pi-coding-agent) extension that
-> runs the task loop of a specification straight from your interactive session.
-> For every task it drives the phases
-> **implementation → review → cleanup → sync** as ephemeral `pi` subprocesses,
-> with persisted state, spending ceilings, and safe resume after a kill.
+**pi-specs-kit** is a native [pi](https://github.com/earendil-works/pi-coding-agent) extension
+that runs the task loop of a specification straight from your interactive session.
+For every task it drives the phases **implementation → review → cleanup → learner →
+sync** as ephemeral `pi` subprocesses, with persisted state, spending ceilings and a
+safe resume after a kill — turning a folder of task files into an autonomous
+delivery pipeline you can watch and steer in plain English.
 
-`pi-specs-kit` turns a folder of task files into an autonomous delivery pipeline
-that an agent runs to completion: each task is implemented, reviewed against its
-spec, cleaned up, and synchronised — while you watch a live transcript, intervene
-through commands or natural language, and resume deterministically from where
-you left off.
+- **One agent, many phases.** Each phase is a fresh `pi` subprocess with a clean
+  context; roles differ only by model and thinking level, configurable per phase.
+- **Kill-safe by design.** State lives in an atomically rewritten `fix_plan.json`;
+  `--resume` restarts exactly where it stopped, `--force` resets it.
+- **Bounded spend.** `max_attempts`, `max_spawns_per_task`, `max_spawns_per_run` and
+  `max_run_duration` keep an agent that won't converge from burning tokens forever.
+- **Observable.** A live widget shows spec / task / phase / attempt / progress and
+  the last line of the agent stream; the attach view renders the running phase like
+  an interactive session (markdown, thinking blocks, tool rows, diffs).
+- **Drivable in plain English.** The same surface is exposed as LLM tools, so you
+  can say *"run the loop on spec 034 from task 5"*.
+- **Hot-reload safe.** Nothing starts at load time; configuration is read on the
+  first command, so `/reload` never breaks anything.
 
----
+## Quick start
 
-## Table of contents
+```bash
+pi install npm:@giuseppe.trisciuoglio/pi-specs-kit
+# or from git:
+pi install git:github.com/giuseppe-trisciuoglio/pi-rules
+# or project-local (share with your team):
+pi install -l npm:@giuseppe.trisciuoglio/pi-specs-kit
+# or try without installing:
+pi -e npm:@giuseppe.trisciuoglio/pi-specs-kit
+# or from a local checkout (development):
+pi -e /path/to/pi-specs-kit/src/index.ts
+```
 
-- [Highlights](#highlights)
-- [How it works](#how-it-works)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Quick start](#quick-start)
-- [Commands](#commands)
-- [Tools for the LLM](#tools-for-the-llm)
-- [Configuration](#configuration)
-- [Spending ceilings](#spending-ceilings)
-- [State, logs and measurements](#state-logs-and-measurements)
-- [Development](#development)
-- [Contributing](#contributing)
-- [License](#license)
-
-## Highlights
-
-- **One agent, many phases.** Each phase is a fresh `pi` subprocess with a
-  clean context; roles differ only by model and thinking level, configurable
-  per phase.
-- **Kill-safe by design.** State lives in an atomically-rewritten
-  `fix_plan.json`; `--resume` restarts exactly where it stopped, `--force`
-  resets it.
-- **Bounded spend.** Retry budgets plus whole-run ceilings
-  (`max_spawns_per_task`, `max_spawns_per_run`, `max_run_duration`) keep an
-  agent that won't converge from burning tokens forever.
-- **Observable.** A live widget shows spec/task/phase/attempt/progress; the
-  attach view renders the running phase exactly like an interactive session
-  (markdown, thinking blocks, tool rows, diffs).
-- **Drivable in plain English.** The same surface is exposed as LLM tools, so
-  you can say "run the loop on spec 034 from task 5".
-- **Hot-reload safe.** Nothing starts at load time; configuration is read on
-  the first command, so `/reload` never breaks anything.
+Requires [pi](https://github.com/earendil-works/pi-coding-agent) on your `PATH` and
+Node.js **≥ 24** (the extension runs TypeScript natively — there is no build step).
 
 ## How it works
 
@@ -71,94 +61,6 @@ When the loop finishes a task it updates its frontmatter to `reviewed` and
 recomputes progress. State transitions are persisted atomically, so a crash at
 any point leaves a snapshot you can resume from.
 
-## Requirements
-
-- [pi](https://github.com/earendil-works/pi-coding-agent) on your `PATH`.
-- Node.js **≥ 24** (the extension runs TypeScript natively; there is no build step).
-
-## Installation
-
-`pi-specs-kit` is a pi package. Pick whichever source you prefer.
-
-### From npm (recommended)
-
-```bash
-pi install npm:@giuseppe.trisciuoglio/pi-specs-kit
-```
-
-This registers the package in your pi settings and makes its commands, tools and
-bundled skills available in every session.
-
-### From git
-
-```bash
-pi install git:github.com/giuseppe-trisciuoglio/pi-rules
-```
-
-### Project-local (share with your team)
-
-Add it to `.pi/settings.json` instead of the global settings:
-
-```bash
-pi install -l npm:@giuseppe.trisciuoglio/pi-specs-kit
-```
-
-### Try without installing
-
-```bash
-pi -e npm:@giuseppe.trisciuoglio/pi-specs-kit
-```
-
-### From source (development)
-
-```bash
-git clone https://github.com/giuseppe-trisciuoglio/pi-rules.git
-cd pi-specs-kit
-npm ci
-pi -e ./src/index.ts
-```
-
-## Quick start
-
-1. **Create a spec** with the authoring chain (or point the extension at an
-   existing one):
-
-   ```text
-   /specs-kit-new          # brainstorm a new functional spec and set it active
-   ```
-
-2. **Configure models and run options** once:
-
-   ```text
-   /specs-kit-config       # searchable model + thinking picker, written to specs-kit.yaml
-   ```
-
-3. **Run the loop**:
-
-   ```text
-   /specs-kit-run          # opens the spec / range / phase pickers
-   ```
-
-   Or drive it in natural language:
-
-   ```text
-   Start the loop on spec 034 from task 5 through task 9.
-   ```
-
-4. **Watch and steer**:
-
-   ```text
-   /specs-kit-attach       # live transcript of the phase running now
-   /specs-kit-status       # phase, attempt, progress, last error, log path
-   /specs-kit-stop         # halt at end of phase (or --now for immediate)
-   ```
-
-While the loop runs, a widget above the editor shows spec, task, phase, attempt,
-progress, elapsed time and the last line of the agent stream. In the transcript,
-`q`/`Esc` closes the view (loop keeps running), `ctrl+o` toggles tool output,
-`ctrl+c` interrupts the current phase (counted as a failed attempt and retried
-within `max_attempts`).
-
 ## Commands
 
 | Command | Arguments | What it does |
@@ -166,7 +68,7 @@ within `max_attempts`).
 | `/specs-kit-run` | `[--spec p] [--from-task T] [--to-task T] [--phase f] [--resume] [--force]` | Starts the loop; with no arguments it opens the spec, range and phase pickers. |
 | `/specs-kit-stop` | `[--now]` | Stop at the end of the phase, or immediately with `--now`. |
 | `/specs-kit-status` | — | Current phase, attempt, progress, last error, log path. |
-| `/specs-kit-refresh` | `[--spec p]` | Regenerate the fix plan from the task files: a task turned reviewed is marked done, one sent back to any other status returns to the queue. |
+| `/specs-kit-refresh` | `[--spec p]` | Regenerate the fix plan from the task files: a task turned `reviewed` is marked done, one sent back to any other status returns to the queue. |
 | `/specs-kit-attach` | — | Fullscreen transcript of the phase running now. |
 | `/specs-kit-config` | — | Pick model (searchable list) and thinking level per role, edit the adversarial review panel, the phase hooks and the run options, written to the configuration. |
 | `/specs-kit-new` | — | Brainstorm a new functional specification and set it active on completion. |
@@ -178,16 +80,24 @@ Only **one loop per session** is allowed, whether started from a command or a to
 ## Tools for the LLM
 
 The same surface is exposed as tools so the loop can be driven in natural
-language: `specs_kit_loop_start`, `specs_kit_loop_stop`, `specs_kit_loop_status`,
-`specs_kit_refresh`, `specs_kit_set_active_spec`. The tools do not wait for the
-loop to finish — they return the initial state immediately and progress arrives
-through the widget and notifications.
+language:
+
+| Tool | What it does |
+|------|--------------|
+| `specs_kit_loop_start` | Start the loop on a spec / range / phase; with `resume` from the persisted state. |
+| `specs_kit_loop_stop` | Ask the running loop to stop, graceful or `--now`. |
+| `specs_kit_loop_status` | Current spec, task, phase, attempt, progress and last error. |
+| `specs_kit_refresh` | Reconcile the fix plan of a spec with its task files on disk. |
+| `specs_kit_set_active_spec` | Persist the active spec in the project configuration. |
+
+Tools return the initial state immediately and never wait for the loop to
+finish — progress surfaces through the widget and notifications.
 
 ## Configuration
 
-The `specs-kit.yaml` file in the project root (format compatible with the
-existing one in use) defines the active spec, the models per role, run flags,
-hooks, knowledge base and system-prompt overrides. Unknown fields are ignored.
+`specs-kit.yaml` (format compatible with the existing one in use) lives in the
+project root and defines the active spec, the models per role, run flags, hooks,
+knowledge base and system-prompt overrides. Unknown fields are ignored.
 
 The file is **optional** — without it every value falls back to its default —
 but `/specs-kit-new` creates it with the defaults written out when the project
@@ -295,6 +205,41 @@ cannot afford the next task either.
   append-only ledger is `<specs_dir>/measurements.jsonl`, fed by a write-ahead
   buffer in `~/.pi/agent/specs-kit/`. Measurement I/O is best-effort and never
   fails the loop.
+
+## Authoring workflow
+
+The package ships a chain of bundled skills that takes a feature idea from a
+brainstorm to a trackable task list:
+
+```
+specs-kit-brainstorm            # docs/specs/[id]/YYYY-MM-DD--feature-name.md
+specs-kit-spec-check            # resolve [NEEDS CLARIFICATION] markers
+specs-kit-technical-plan        # architectural decisions, stack, phases
+specs-kit-spec-to-tasks         # docs/specs/[id]/.../data-model.md, contracts/, tasks
+specs-kit-adversarial-review    # stress-test spec + tasks with a panel of models
+specs-kit-task-implementation   # /skill:specs-kit-task-implementation --task=T001
+specs-kit-task-review           # validate the task against its spec
+specs-kit-code-cleanup          # cosmetic hygiene before completion
+specs-kit-sync                  # reconcile spec ↔ test ↔ code
+```
+
+The loop itself only consumes the **tasks** folder produced by
+`specs-kit-spec-to-tasks`. Everything upstream is optional and can be skipped
+when the project already has its own authoring chain.
+
+## Known limitations
+
+- **One loop per session.** Starting a second one returns an error — the loop's
+  state and widget assume exclusive ownership of the spec/range.
+- **Bash subprocess required.** The loop spawns `pi` as a child process; running
+  it from a session where `pi` is not on `PATH` fails before the first phase.
+- **Ephemeral mode only.** The implementation phase always runs `pi --ephemeral`
+  so each attempt starts from a clean context. A non-ephemeral run with
+  conversation history is not supported.
+- **Range boundaries are inclusive and contiguous.** A range with a gap between
+  `from_task` and `to_task` is rejected before the first phase; out-of-range
+  fixes from a reviewer are sent back to the task at hand (see "When a review
+  contradicts the spec").
 
 ## Development
 

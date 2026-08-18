@@ -1,6 +1,6 @@
 # Namespace the forked skills as specs-kit-* to win on name collisions
 
-The resources_discover spike (see plan.md §11) verified that pi loads the default
+The resources_discover spike verified that pi loads the default
 skill locations (`~/.pi/agent/skills`, `~/.agents/skills`) **before** the
 skillPaths an extension contributes, and resolves name collisions with "first
 found wins". A user who already has the devkit `specs-*` skills installed globally
