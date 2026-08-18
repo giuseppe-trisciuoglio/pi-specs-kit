@@ -1,101 +1,91 @@
-# Istruzioni per agenti su pi-specs-kit
+# Agent instructions for pi-specs-kit
 
-Estensione pi in TypeScript: esegue il loop dei task di una spec orchestrando sottoprocessi `pi`. Prima di modificare
-qualcosa, leggi `CONTEXT.md` (glossario e termini da evitare) e l'elenco degli ADR (`docs/adr/`, ordinati per numero)
-per le decisioni di architettura. Il glossario dei termini di dominio è la sola guida canonica del vocabolario.
+TypeScript pi extension: runs a spec's task loop by orchestrating `pi` subprocesses. Before changing
+anything, read `CONTEXT.md` (glossary and terms to avoid) and the ADR list (`docs/adr/`, ordered by number)
+for architecture decisions. The domain glossary is the only canonical guide to the vocabulary.
 
-## Comandi
+## Commands
 
 ```bash
-npm test          # unit + e2e, Node 24 esegue TypeScript nativamente
+npm test          # unit + e2e, Node 24 runs TypeScript natively
 npm run typecheck # tsc --noEmit
-npm run lint      # eslint . (flat config, AST-level; i tipi sono di tsc)
-./sync-skills.sh  # risincronizza ./skills/ verso ~/.agents/skills (solo skill del progetto;
-                  # --dry-run per anteprima, --pull per direzione inversa)
+npm run lint      # eslint . (flat config, AST-level; types belong to tsc)
+./sync-skills.sh  # re-syncs ./skills/ to ~/.agents/skills (project skills only;
+                  # --dry-run for a preview, --pull for the reverse direction)
 ```
 
-Nessuno step di build: non aggiungere bundler o transpiler. La pubblicazione npm è guidata dalle GitHub Release
-(`.github/workflows/publish.yml`): alla pubblicazione di una release `vX.Y.Z` il workflow verifica che il tag
-corrisponda alla `version` di `package.json`, gira i tre gate e pubblica su npm. 
+No build step: do not add bundlers or transpilers. npm publishing is driven by GitHub Releases
+(`.github/workflows/publish.yml`): when a `vX.Y.Z` release is published, the workflow verifies that the tag
+matches the `version` in `package.json`, runs the three gates, and publishes to npm.
 
-## Vincoli di codice
+## Code constraints
 
-- **Hot reload first.** La factory in `src/index.ts` registra solo comandi, tool ed eventi: niente risorse avviate al
-  caricamento, config letta al primo comando. Ogni modifica deve sopravvivere a `/reload`.
-- **Un file, una responsabilità**, indicativamente sotto le 250 righe. Se un file cresce oltre, estrai un modulo.
-- **Dipendenze runtime**: solo `yaml` e i pacchetti forniti da pi (`typebox`, i tipi dell'SDK). Non aggiungerne altre.
-- I moduli importabili dai test non devono dipendere dai pacchetti forniti da pi a runtime: gli import di tipo si
-  cancellano, quelli di valore no. Se una funzione pura serve a un test, tienila fuori dai moduli che importano
-  `typebox` o l'SDK (vedi `src/ui/run-args.ts`).
-- **Solo `pi` come agente.** I ruoli differiscono unicamente per modello e thinking level; il nome agente nella
-  configurazione è ignorato.
-- **Un loop per sessione**, sia da comando sia da tool.
+- **Hot reload first.** The factory in `src/index.ts` only registers commands, tools, and events: no
+  resources started at load time, config read on first command. Every change must survive `/reload`.
+- **One file, one responsibility**, roughly under 250 lines. If a file grows beyond that, extract a module.
+- **Runtime dependencies**: only `yaml` and the packages provided by pi (`typebox`, the SDK types). Do not
+  add others.
+- Modules imported by tests must not depend on packages provided by pi at runtime: type imports get
+  erased, value imports do not. If a pure function is needed by a test, keep it out of modules that import
+  `typebox` or the SDK (see `src/ui/run-args.ts`).
+- **Only `pi` as the agent.** Roles differ solely by model and thinking level; the agent name in the
+  configuration is ignored.
+- **One loop per session**, whether started from a command or a tool.
 
-## Commenti e stringhe
+## Comments and strings
 
-- I commenti spiegano il perché in linguaggio naturale. Niente riferimenti a identificatori di specifiche, codici
-  use-case, sezioni numerate, label di fase di analisi o path di documentazione di progetto.
-- Non citare in codice, commenti, test, log, README o metadata di pacchetto il progetto da cui deriva la semantica del
-  loop: la compatibilità dei formati si dichiara a parole ("compatibile con il formato esistente").
-- Messaggi utente (notifiche, output dei comandi, errori mostrati) in inglese, prefissati con `[specs-kit]`; commenti e
-  identificatori in inglese.
+- Comments explain the why in natural language. No references to specification identifiers, use-case
+  codes, numbered analysis sections, analysis phase labels, or project documentation paths.
+- Do not mention, in code, comments, tests, logs, README, or package metadata, the project the loop
+  semantics derive from: format compatibility is stated in words ("compatible with the existing format").
+- User-facing messages (notifications, command output, shown errors) in English, prefixed with
+  `[specs-kit]`; comments and identifiers in English.
 
-## Stato e persistenza
+## State and persistence
 
-`<spec>/_ralph_loop/fix_plan.json` è la sola fonte di verità del loop. Ogni transizione di stato lo riscrive in modo
-atomico (tmp + rename) prima di proseguire, così un kill in qualsiasi punto lascia uno snapshot ripartibile con
-`--resume`. Se aggiungi un campo, mantieni la lettura tollerante ai campi assenti e non rompere la forma esistente del
-documento.
+`<spec>/_ralph_loop/fix_plan.json` is the single source of truth for the loop. Every state transition
+rewrites it atomically (tmp + rename) before proceeding, so a kill at any point leaves a snapshot that can
+be restarted with `--resume`. If you add a field, keep reading tolerant of missing fields and do not break
+the existing shape of the document.
 
-Le misure (token e durate) non stanno nel fix plan: il registro append-only è
-`<specs_dir>/measurements.jsonl` (versionato), alimentato dal buffer write-ahead
-`~/.pi/agent/specs-kit/measurements-wal.jsonl` (moduli
-`src/measure/`). Ogni I/O di misura è best-effort: mai far fallire il loop per un errore del registro.
+Measurements (tokens and durations) do not live in the fix plan: the append-only log is
+`<specs_dir>/measurements.jsonl` (versioned), fed by the write-ahead buffer
+`~/.pi/agent/specs-kit/measurements-wal.jsonl` (`src/measure/` modules). Every measurement I/O is
+best-effort: never let the loop fail because of a logging error.
 
-Un tentativo di implementazione ripetuto che lascia l'albero identico non è progresso: `src/loop/workspace.ts`
-calcola l'impronta del worktree (indice git usa e getta, il vero staging non viene toccato) prima e dopo la fase, e
-solo sui retry. Impronte uguali su un tentativo pulito chiudono il task prima di rispawnare la review. Best-effort:
-fuori da un repo git l'impronta è `null` e la guardia resta inerte. Decisione documentata in `docs/adr/0015`.
+A repeated implementation attempt that leaves the tree unchanged is not progress: `src/loop/workspace.ts`
+computes the worktree fingerprint (throwaway git index, real staging is never touched) before and after the
+phase, and only on retries. Identical fingerprints on a clean attempt close the task before respawning the
+review. Best-effort: outside a git repo the fingerprint is `null` and the guard stays inert. Decision
+documented in `docs/adr/0015`.
 
-## Dipendenze esterne
+## External dependencies
 
-- **graphify è la sola fonte del grafo del codebase.** Il grafo della conoscenza vive in un unico file,
-  `graphify-out/graph.json` (prodotto dalla skill esterna graphify), letto direttamente da ogni consumer. Non esiste un
-  `knowledge-graph.json` per-spec proiettato: graph.json è l'unico file di grafo. L'estensione non indicizza mai il
-  codebase. graphify non è bundled:
-  va installata a parte (`~/.agents/skills/graphify` o
-  `~/.pi/agent/skills/graphify`); la fase sync la rinfresca (`/graphify --update`)
-  prima di consumarla.
-- **Check a runtime.** `LoopController.start` verifica la presenza di graphify prima di avviare il loop e, se manca,
-  emette un warning `[specs-kit]`
-  (best-effort: il loop prosegue, ma le feature che leggono il grafo restano indisponibili). Il resolver è iniettabile
-  (`ControllerDeps`).
-- **Refresh per task.** L'ingresso di ogni task ri-estrae la metà di codice del grafo con `graphify update`
-  (`src/loop/codebase-graph.ts`): nessuna chiamata a modello, ~3s. Serve perché il sync — l'unica fase che lo
-  ricostruisce — in fast mode gira una volta per range, mentre tutte le fasi lo leggono. La metà doc/paper/image resta
-  al sync. Best-effort e iniettabile (`TaskNodeDeps.refreshCodebaseGraph`): senza stub i test dipenderebbero dal
-  binario. Decisione documentata in `docs/adr/0017`.
-- **Pre-flight modelli.** `LoopController.start` confronta i modelli configurati per i cinque ruoli con il catalogo
-  di `pi --list-models` (`src/loop/model-check.ts`): un modello assente fa rifiutare l'avvio nominando ruoli e modelli;
-  un catalogo non ottenibile produce solo un warning e il loop parte. La funzione di interrogazione è iniettabile
-  (`ControllerDeps.listModels`). Decisione documentata in `docs/adr/0013`.
-- Decisione documentata in `docs/adr/0009`.
+- **graphify is the single source of the codebase graph.** The knowledge graph lives in one file,
+  `graphify-out/graph.json` (produced by the external graphify skill), read directly by every consumer.
+  There is no per-spec projected `knowledge-graph.json`: graph.json is the only graph file. The extension
+  never indexes the codebase. graphify is not bundled: it must be installed separately
+  (`~/.agents/skills/graphify` or `~/.pi/agent/skills/graphify`); the sync phase refreshes it
+  (`/graphify --update`) before consuming it.
+- **Runtime check.** `LoopController.start` verifies that graphify is present before starting the loop and,
+  if missing, emits a `[specs-kit]` warning (best-effort: the loop proceeds, but features that read the
+  graph remain unavailable). The resolver is injectable (`ControllerDeps`).
+- **Per-task refresh.** Entering each task re-extracts the code half of the graph with `graphify update`
+  (`src/loop/codebase-graph.ts`): no model calls, ~3s. This is needed because sync — the only phase that
+  rebuilds it — in fast mode runs once per range, while all phases read it. The doc/paper/image half stays
+  with sync. Best-effort and injectable (`TaskNodeDeps.refreshCodebaseGraph`): without a stub, tests would
+  depend on the binary. Decision documented in `docs/adr/0017`.
+- **Model pre-flight.** `LoopController.start` compares the models configured for the five roles against the
+  `pi --list-models` catalog (`src/loop/model-check.ts`): a missing model refuses startup naming roles and
+  models; an unobtainable catalog only produces a warning and the loop starts. The lookup function is
+  injectable (`ControllerDeps.listModels`). Decision documented in `docs/adr/0013`.
+- Decision documented in `docs/adr/0009`.
 
-## Test
+## Testing
 
-- Unit con `node:test` per parser, fix plan, configurazione, prompt builder, state machine e hook: il motore accetta
-  dipendenze iniettabili (`spawnPhase`, `runHooks`, `commitCheckpoint`), usale al posto di mock globali.
-- L'e2e in `e2e/` mette un agente finto sul PATH e verifica il loop completo, retry, halt e resume. Se cambi il testo
-  dei prompt di fase, aggiorna i marker che l'agente finto e i test usano per riconoscere la fase.
-- Test prima del cablaggio UI.
-
-## NotebookLM
-
-Hai accesso attraverso il tool da riga di commando `nlm` che ti consente di effettuare delle query e ricevere risposte
-in un ambiente controllato. Il tool è utile per fare ricerche su fonti selezionate e per ottenere risposte più accurate
-e contestualizzate.
-
-Ci sono due notebooklm che puoi utilizzare:
-
-1. `2109b364-abe6-4aaf-9818-1bf8b08bb46a` - The 2026 Guide to AI Coding Agents and SDLC Context
-2. `1c3312fc-90f1-4ebc-988e-32ff1e83086c` - Personale | SDD & Harness Engineering
+- Unit tests with `node:test` for parsers, fix plan, configuration, prompt builder, state machine, and
+  hooks: the engine accepts injectable dependencies (`spawnPhase`, `runHooks`, `commitCheckpoint`), use
+  them instead of global mocks.
+- The e2e in `e2e/` puts a fake agent on the PATH and verifies the full loop, retry, halt, and resume. If
+  you change phase prompt text, update the markers the fake agent and the tests use to recognize the phase.
+- Test before UI wiring.
