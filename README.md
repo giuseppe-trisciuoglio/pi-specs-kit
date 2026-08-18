@@ -5,9 +5,9 @@
 [![npm downloads](https://img.shields.io/npm/dm/@giuseppe.trisciuoglio/pi-specs-kit.svg)](https://www.npmjs.com/package/@giuseppe.trisciuoglio/pi-specs-kit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](https://nodejs.org)
-[![pi-package](https://img.shields.io/badge/pi-package-purple.svg)](https://github.com/earendil-works/pi-coding-agent)
+[![pi-package](https://img.shields.io/badge/pi-package-purple.svg)](https://github.com/earendil-works/pi)
 
-**pi-specs-kit** is a native [pi](https://github.com/earendil-works/pi-coding-agent) extension
+**pi-specs-kit** is a native [pi](https://github.com/earendil-works/pi) extension
 that runs the task loop of a specification straight from your interactive session.
 For every task it drives the phases **implementation → review → cleanup → learner →
 sync** as ephemeral `pi` subprocesses, with persisted state, spending ceilings and a
@@ -42,7 +42,7 @@ pi -e npm:@giuseppe.trisciuoglio/pi-specs-kit
 pi -e /path/to/pi-specs-kit/src/index.ts
 ```
 
-Requires [pi](https://github.com/earendil-works/pi-coding-agent) on your `PATH` and
+Requires [pi](https://github.com/earendil-works/pi) on your `PATH` and
 Node.js **≥ 24** (the extension runs TypeScript natively — there is no build step).
 
 ## How it works
