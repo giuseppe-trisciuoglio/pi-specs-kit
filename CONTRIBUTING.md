@@ -10,7 +10,7 @@ conventions the project enforces, and the release process.
 
 - **Node.js ≥ 24** (the project runs TypeScript natively; there is no build step).
 - **npm** (ships with Node).
-- A working [pi](https://github.com/earendil-works/pi-coding-agent) install is
+- A working [pi](https://github.com/earendil-works/pi) install is
   only needed for manual/exploratory runs; tests use a fake agent binary.
 
 ## Getting started

@@ -25,7 +25,7 @@ notified.
 
 ## Trust model
 
-`pi-specs-kit` is a [pi](https://github.com/earendil-works/pi-coding-agent)
+`pi-specs-kit` is a [pi](https://github.com/earendil-works/pi)
 extension. Extensions run with the full permissions of the user that launches
 pi and can execute arbitrary code (it spawns `pi` subprocesses and runs
 configurable shell hooks). Treat it like any other tool that can run commands

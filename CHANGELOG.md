@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2025-08-18
+
 ### Changed
 
 - Pre-hook output in the phase prompt is now shown only for hooks that
@@ -19,12 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   truncation. This is a deliberate change in what the agent reads, pinned
   by dedicated tests rather than hidden inside a cleanup pass.
 
-## [1.0.0] - 2025-08-10
-
 ### Added
 
 - Native TypeScript reimplementation of the spec task loop for
-  [pi](https://github.com/earendil-works/pi-coding-agent), orchestrating
+  [pi](https://github.com/earendil-works/pi), orchestrating
   `pi` subprocesses for each phase.
 - Phase pipeline **implementation → review → cleanup → learner → sync** with
   configurable retry budgets and spending ceilings (`max_attempts`,
