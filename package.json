@@ -5,13 +5,13 @@
   "type": "module",
   "license": "MIT",
   "author": "Giuseppe Trisciuoglio",
-  "homepage": "https://github.com/giuseppe-trisciuoglio/pi-rules#readme",
+  "homepage": "https://github.com/giuseppe-trisciuoglio/pi-specs-kit#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/giuseppe-trisciuoglio/pi-rules.git"
+    "url": "git+https://github.com/giuseppe-trisciuoglio/pi-specs-kit.git"
   },
   "bugs": {
-    "url": "https://github.com/giuseppe-trisciuoglio/pi-rules/issues"
+    "url": "https://github.com/giuseppe-trisciuoglio/pi-specs-kit/issues"
   },
   "keywords": [
     "pi-package",
