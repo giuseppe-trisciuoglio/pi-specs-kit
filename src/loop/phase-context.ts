@@ -163,6 +163,7 @@ export class PhaseContext {
       reviewFeedback: "reviewFeedback" in input ? input.reviewFeedback : null,
       postHookFailures: "postHookFailures" in input ? input.postHookFailures : undefined,
       reviewFormatError: "reviewFormatError" in input ? input.reviewFormatError : null,
+      priorAttemptArchives: "priorAttemptArchives" in input ? input.priorAttemptArchives : undefined,
       upstreamProvides: "upstreamProvides" in input ? input.upstreamProvides : undefined,
       routedSuggestions: "routedSuggestions" in input ? input.routedSuggestions : undefined,
       projectLearnings,

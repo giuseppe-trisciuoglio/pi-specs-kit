@@ -20,6 +20,7 @@ import type { TaskFile } from "../tasks/task-parser.ts";
 import { classifyPhaseFailure, environmentFailureMessage } from "./phases.ts";
 import { routedWithoutOwner, unownedRoutedFeedback } from "./routed-suggestions.ts";
 import {
+  listReviewAttemptArchives,
   parseReviewReport,
   readReviewReport,
   reviewAttemptArchivePath,
@@ -118,10 +119,14 @@ export async function runReviewStep(
     if (deps.stopping()) return { kind: "stopped" };
     // The plan still flows in for the state counters (persist writes the
     // whole document), but the prompt channel is the declared input only.
+    // The archives of earlier attempts are listed after the rotation above
+    // made room for the one it just wrote, so the freshest disk state is
+    // what the reviewer is told about.
     const rev = await executor.run("review", {
       task: taskFile,
       learnings: plan.learnings,
       reviewFormatError: formatError,
+      priorAttemptArchives: await listReviewAttemptArchives(specDir, id),
       specId: plan.spec_id,
       attempt: state.retry_count + 1,
       signal: deps.signal(),

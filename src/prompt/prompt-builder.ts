@@ -36,6 +36,9 @@ export interface PromptContext {
   reviewFeedback?: string | null;
   /** What was wrong with the previous review report, set on review re-spawns. */
   reviewFormatError?: string | null;
+  /** Archived reports of this task's earlier attempts, set when a retry
+   * exists: where earlier verdicts live, not what they concluded. */
+  priorAttemptArchives?: string[];
   /** Public API contracts from upstream tasks that are already done. */
   upstreamProvides?: string[];
   /** Fixes reviewers routed to this task from earlier completed tasks. */
@@ -74,6 +77,9 @@ function phaseInstructions(phase: PhaseName, taskId: string, reconcile: boolean)
         "Modify the code in the workspace to fully implement the task above.",
         "Keep changes focused on the task and verify them with the project's build and tests.",
         ...TEST_SCOPE_RULE,
+        "Learnings about the project are collected by the loop after the task passes review:",
+        "never write them to the project learnings file yourself — anything appended there",
+        "reaches the prompts of the phases that follow, so the loop reverts it.",
         "The phase ends when the implementation is complete in the workspace.",
       ].join("\n");
     case "review":
@@ -225,6 +231,26 @@ export function buildPhasePrompt(ctx: PromptContext): string {
   // Why the previous review report was rejected, present only on re-spawns.
   if (ctx.reviewFormatError && ctx.reviewFormatError.trim()) {
     blocks.push(`<review_format_error>\n${ctx.reviewFormatError.trim()}\n</review_format_error>`);
+  }
+
+  // Where the verdicts of earlier attempts are archived, present only once a
+  // retry exists. Deliberately paths and nothing else: handing over the
+  // conclusions would anchor the fresh evaluation to them, while leaving the
+  // reviewer to rediscover the archives by chance wastes the exploration the
+  // pointer already pays for. The one question a retry makes urgent — was what
+  // the previous review blocked actually fixed — is named so it is not
+  // answered by luck.
+  if (ctx.priorAttemptArchives && ctx.priorAttemptArchives.length > 0) {
+    blocks.push(
+      [
+        "<prior_review_attempts>",
+        "Earlier attempts of this task were reviewed and retried. Their verdicts are archived:",
+        ...ctx.priorAttemptArchives.map((p) => `- ${p}`),
+        "This is a fresh, independent evaluation: consult an archive when useful, and in",
+        "particular verify what the retry was asked to fix.",
+        "</prior_review_attempts>",
+      ].join("\n"),
+    );
   }
 
   // Contracts from upstream tasks the current task depends on.

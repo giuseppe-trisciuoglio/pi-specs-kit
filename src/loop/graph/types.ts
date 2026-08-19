@@ -13,6 +13,10 @@ import type { LoopBudget } from "../budget.ts";
 import type { commitCheckpoint } from "../checkpoint.ts";
 import type { refreshCodebaseGraph } from "../codebase-graph.ts";
 import type { HookResult } from "../hooks.ts";
+import type {
+  captureLearningsGuard,
+  enforceLearningsGuard,
+} from "../learnings-guard.ts";
 import type { PhaseExecutor } from "../phases.ts";
 import type { snapshotProtectedPaths } from "../protected-paths.ts";
 import type { RoutedSuggestion } from "../review-report.ts";
@@ -186,6 +190,11 @@ export interface TaskNodeDeps {
    * not of a particular wiring.
    */
   snapshotProtectedPaths?: typeof snapshotProtectedPaths;
+  /** Snapshot of the project learnings file before the implementation; the
+   * default is the real one, the same best-effort contract as above. */
+  captureLearningsGuard?: typeof captureLearningsGuard;
+  /** Revert of the learnings file when the implementation rewrote it. */
+  enforceLearningsGuard?: typeof enforceLearningsGuard;
   now: () => Date;
 }
 

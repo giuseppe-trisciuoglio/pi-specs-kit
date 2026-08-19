@@ -8,6 +8,11 @@
 
 import path from "node:path";
 import { graphRefreshFailedWarning } from "../codebase-graph.ts";
+import {
+  captureLearningsGuard,
+  enforceLearningsGuard,
+  learningsGuardWarning,
+} from "../learnings-guard.ts";
 import { classifyPhaseFailure, environmentFailureMessage } from "../phases.ts";
 import {
   changedProtectedPaths,
@@ -42,6 +47,8 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
   const fingerprintExclusions = loopArtifactExclusions(config.projectRoot, specDir);
   const protect = config.run.protectSpecArtifacts;
   const snapshot = deps.snapshotProtectedPaths ?? snapshotProtectedPaths;
+  const captureLearnings = deps.captureLearningsGuard ?? captureLearningsGuard;
+  const enforceLearnings = deps.enforceLearningsGuard ?? enforceLearningsGuard;
 
   return {
     enter_task: async (io) => {
@@ -98,6 +105,10 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
       // where a mismatch between code and requirement is most tempting to
       // resolve by editing the requirement.
       const protectedBefore = protect ? await snapshot(specDir) : null;
+      // The learnings file feeds every prompt the loop builds; capturing it
+      // here costs one read and lets the phase boundary below discard what an
+      // agent appended mid-task instead of publishing it to the next spawns.
+      const learningsBefore = await captureLearnings(config.projectRoot, config.specsDir);
       const impl = await executor.run("implementation", {
         task: taskFile,
         learnings: plan.learnings,
@@ -125,6 +136,13 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         await persist();
         io.runtime.implStatus = "pre-hook-failed";
         return { kind: "ok" };
+      }
+      // Checked before every other outcome: whichever way this attempt ends,
+      // the next spawn must not be handed a memory the agent wrote itself.
+      // A phase whose pre-hooks failed never reached the agent, so it is
+      // skipped above and cannot have written anything.
+      if (await enforceLearnings(learningsBefore)) {
+        notify(learningsGuardWarning(id), "warning");
       }
       const failure = classifyPhaseFailure(impl.outcome);
       if (failure?.environment) {

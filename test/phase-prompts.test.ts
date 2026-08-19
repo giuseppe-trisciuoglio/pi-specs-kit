@@ -150,6 +150,7 @@ async function expectedPrompt(h: Harness, phase: PhaseName, input: PhaseInput): 
     postHookFailures: "postHookFailures" in input ? input.postHookFailures : undefined,
     reviewFeedback: "reviewFeedback" in input ? input.reviewFeedback : null,
     reviewFormatError: "reviewFormatError" in input ? input.reviewFormatError : null,
+    priorAttemptArchives: "priorAttemptArchives" in input ? input.priorAttemptArchives : undefined,
     upstreamProvides: "upstreamProvides" in input ? input.upstreamProvides : undefined,
     routedSuggestions: "routedSuggestions" in input ? input.routedSuggestions : undefined,
     projectLearnings: projectLearnings.length > 0 ? projectLearnings : undefined,
@@ -285,7 +286,7 @@ test("a failing post hook is exposed and feeds the retry prompt, labeled against
 
 test("review on first spawn has no format error and no routed suggestions", async () => {
   const h = await harness();
-  const input: ReviewPhaseInput = { ...baseInput(h), reviewFormatError: null };
+  const input: ReviewPhaseInput = { ...baseInput(h), reviewFormatError: null, priorAttemptArchives: [] };
 
   const prompt = await capturePrompt(h, () => h.executor.run("review", input));
   assert.equal(prompt, await expectedPrompt(h, "review", input));
@@ -294,18 +295,39 @@ test("review on first spawn has no format error and no routed suggestions", asyn
   assert.ok(!prompt.includes("<review_format_error>"), "nothing to correct on the first spawn");
   assert.ok(!prompt.includes("<routed_suggestions>"), "the reviewer never receives routed fixes");
   assert.ok(!prompt.includes("<review_feedback>"), "the reviewer never receives its own feedback");
+  assert.ok(!prompt.includes("<prior_review_attempts>"), "no retry has happened yet");
 });
 
 test("review re-spawn is told what was wrong with the previous report", async () => {
   const h = await harness();
   const formatError = "The review report for TASK-001 is missing or invalid: frontmatter with review_status required.";
-  const input: ReviewPhaseInput = { ...baseInput(h), reviewFormatError: formatError };
+  const input: ReviewPhaseInput = { ...baseInput(h), reviewFormatError: formatError, priorAttemptArchives: [] };
 
   const prompt = await capturePrompt(h, () => h.executor.run("review", input));
   assert.equal(prompt, await expectedPrompt(h, "review", input));
 
   assert.ok(prompt.includes(`<review_format_error>\n${formatError}\n</review_format_error>`));
   assert.ok(!prompt.includes("<routed_suggestions>"), "the reviewer never receives routed fixes");
+});
+
+test("a retried review is handed where the earlier verdicts are archived, not what they say", async () => {
+  const h = await harness();
+  const archives = ["tasks/TASK-001--review.attempt-1.md", "tasks/TASK-001--review.attempt-2.md"];
+  const input: ReviewPhaseInput = { ...baseInput(h, 3), reviewFormatError: null, priorAttemptArchives: archives };
+
+  const prompt = await capturePrompt(h, () => h.executor.run("review", input));
+  assert.equal(prompt, await expectedPrompt(h, "review", input));
+
+  const block = [
+    "<prior_review_attempts>",
+    "Earlier attempts of this task were reviewed and retried. Their verdicts are archived:",
+    ...archives.map((a) => `- ${a}`),
+    "This is a fresh, independent evaluation: consult an archive when useful, and in",
+    "particular verify what the retry was asked to fix.",
+    "</prior_review_attempts>",
+  ].join("\n");
+  assert.ok(prompt.includes(block), "the pointer is delivered as paths alone, nothing from the verdicts");
+  assert.ok(!prompt.includes("<review_feedback>"), "the reviewer still never receives its own feedback");
 });
 
 test("cleanup prompt carries contracts and routed fixes but never review feedback", async () => {

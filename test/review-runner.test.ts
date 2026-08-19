@@ -51,7 +51,7 @@ interface Harness {
   deps: ReviewStepDeps;
   plan: FixPlan;
   /** Declared input of every review spawn, in order. */
-  prompts: { reviewFormatError: string | null }[];
+  prompts: { reviewFormatError: string | null; priorAttemptArchives: string[] }[];
   /** Spawns performed so far, across every review step call. */
   spawns: () => number;
 }
@@ -64,9 +64,12 @@ async function harness(script: (spawn: number) => PhaseStepResult): Promise<Harn
   const plan = emptyFixPlan("001-spec", "docs/specs/001-spec");
 
   let spawns = 0;
-  const prompts: { reviewFormatError: string | null }[] = [];
+  const prompts: { reviewFormatError: string | null; priorAttemptArchives: string[] }[] = [];
   const executor = {
-    run: async (_phase: string, input: { reviewFormatError: string | null }): Promise<PhaseStepResult> => {
+    run: async (
+      _phase: string,
+      input: { reviewFormatError: string | null; priorAttemptArchives: string[] },
+    ): Promise<PhaseStepResult> => {
       prompts.push(input);
       return script(++spawns);
     },
@@ -153,10 +156,32 @@ test("a re-spawned reviewer is told what was wrong with its previous report", as
 
   assert.equal(h.spawns(), 3);
   assert.equal(h.prompts[0].reviewFormatError ?? null, null, "the first spawn has nothing to correct");
+  assert.deepEqual(h.prompts[0].priorAttemptArchives, [], "no earlier attempt exists yet");
   for (const opts of h.prompts.slice(1)) {
     assert.match(opts.reviewFormatError ?? "", /review_status/);
     assert.match(opts.reviewFormatError ?? "", /TASK-001/);
   }
+});
+
+test("a retried review is handed the archive of the earlier attempt", async () => {
+  // After a rejected verdict the report is archived on disk, and the reviewer
+  // of the next attempt is told where it lives: the path is a fact, while the
+  // findings stay out of the prompt so the fresh evaluation stays fresh.
+  const h = await harness(() => okResult);
+  await writeFile(
+    reviewFilePath(h.deps.specDir, "TASK-001"),
+    '---\nreview_status: FAILED\nsummary: "broken"\nissues: []\nrouted: []\n---\n\nbody\n',
+    "utf8",
+  );
+  h.plan.state.retry_count = 1;
+
+  await runReviewStep(h.deps, h.plan, TASK);
+
+  assert.ok(
+    existsSync(reviewAttemptArchivePath(h.deps.specDir, "TASK-001", 1)),
+    "the rejected verdict is archived before the new spawn reads the disk",
+  );
+  assert.deepEqual(h.prompts[0].priorAttemptArchives, ["tasks/TASK-001--review.attempt-1.md"]);
 });
 
 test("an interrupted review is re-spawned rather than paid for with a task attempt", async () => {
