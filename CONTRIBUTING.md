@@ -16,7 +16,7 @@ conventions the project enforces, and the release process.
 ## Getting started
 
 ```bash
-git clone https://github.com/giuseppe-trisciuoglio/pi-rules.git
+git clone https://github.com/giuseppe-trisciuoglio/pi-specs-kit.git
 cd pi-specs-kit
 npm ci
 npm run typecheck   # tsc --noEmit (static analysis / types)
@@ -150,8 +150,8 @@ The `version` in `package.json` and the release tag must match exactly — the
 workflow fails the run otherwise.
 
 > The npm package is `@giuseppe.trisciuoglio/pi-specs-kit`, hosted in the
-> [`giuseppe-trisciuoglio/pi-rules`](https://github.com/giuseppe-trisciuoglio/pi-rules)
-> repository (package name and repository name intentionally differ).
+> [`giuseppe-trisciuoglio/pi-specs-kit`](https://github.com/giuseppe-trisciuoglio/pi-specs-kit)
+> repository.
 
 ## Code of conduct
 

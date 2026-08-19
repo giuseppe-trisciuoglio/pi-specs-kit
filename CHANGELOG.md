@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0] - 2025-08-18
+## [1.0.0] - TBD
 
 ### Changed
 
@@ -55,5 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolution uses `node_modules` via declared dev dependencies so typecheck is
   reproducible on any machine and in CI.
 
-[Unreleased]: https://github.com/giuseppe-trisciuoglio/pi-rules/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/giuseppe-trisciuoglio/pi-rules/releases/tag/v1.0.0
+### Fixed
+
+- Corrected the repository URL in `README.md`, `CONTRIBUTING.md`,
+  `CHANGELOG.md`, and `package.json`: metadata and install instructions
+  pointed at the `pi-rules` repository instead of `pi-specs-kit`.
+
+[Unreleased]: https://github.com/giuseppe-trisciuoglio/pi-specs-kit/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/giuseppe-trisciuoglio/pi-specs-kit/releases/tag/v1.0.0
