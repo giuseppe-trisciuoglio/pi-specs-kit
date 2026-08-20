@@ -123,6 +123,54 @@ test("mergeLearnings keeps the default cap consistent with MAX_LEARNINGS", () =>
   assert.ok(merged.learnings.includes("overflow learning"));
 });
 
+test("the character budget evicts even when the entry count fits", () => {
+  // Ten short bullets and one paragraph: the count is under the cap, the
+  // budget is not, and the paragraph is the coldest thing in the list.
+  const short = Array.from({ length: 10 }, (_, i) => `short rule ${i}`);
+  const merged = mergeLearnings({
+    existing: [...short, "x".repeat(5000)],
+    stats: [
+      ...short.map(() => ({ hits: 3, fromRejection: false, lastSeen: 9 })),
+      { hits: 1, fromRejection: false, lastSeen: 1 },
+    ],
+    incoming: [],
+    iteration: 9,
+    maxChars: 400,
+  });
+
+  assert.deepEqual(merged.learnings, short);
+});
+
+test("an outsized bullet loses its own place, not the places behind it", () => {
+  // Warmest first would spend the whole budget on the paragraph and drop three
+  // warm short rules; it is passed over instead.
+  const merged = mergeLearnings({
+    existing: ["y".repeat(300), "rule a", "rule b"],
+    stats: [
+      { hits: 5, fromRejection: false, lastSeen: 9 },
+      { hits: 2, fromRejection: false, lastSeen: 9 },
+      { hits: 2, fromRejection: false, lastSeen: 9 },
+    ],
+    incoming: [],
+    iteration: 9,
+    maxChars: 40,
+  });
+
+  assert.deepEqual(merged.learnings, ["rule a", "rule b"]);
+});
+
+test("the warmest entry is admitted whatever its size", () => {
+  // The budget bounds the list, it never empties it.
+  const merged = mergeLearnings({
+    existing: ["z".repeat(900)],
+    incoming: [],
+    iteration: 1,
+    maxChars: 40,
+  });
+
+  assert.equal(merged.learnings.length, 1);
+});
+
 test("a citation is not stored as a new learning", () => {
   // The bullet parser cannot tell a pointer from an insight: kept in, every
   // citation stored a second copy of the entry it was pointing at, and every
