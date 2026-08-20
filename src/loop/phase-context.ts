@@ -9,6 +9,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { PhaseName, RoleName, SpecsKitConfig } from "../config/specs-kit-config.ts";
 import type { PhaseHandle, PhaseMeter } from "../measure/phase-meter.ts";
+import { inlinesSpecDocs, loadSpecDocs, type ContextFileSet } from "../prompt/context-files.ts";
 import { buildPhasePrompt } from "../prompt/prompt-builder.ts";
 import { resolvePhaseSkill, type ResolvedSkill } from "../prompt/skill-resolver.ts";
 import { loadProjectLearnings } from "./learner.ts";
@@ -152,6 +153,18 @@ export class PhaseContext {
       // Project learnings are optional.
     }
 
+    // Review and sync read the spec folder; handing them the documents costs
+    // one prompt instead of one turn per file. Best-effort like the learnings:
+    // an unreadable folder leaves the phase to discover it the old way.
+    let contextFiles: ContextFileSet | undefined;
+    if (inlinesSpecDocs(phase)) {
+      try {
+        contextFiles = await loadSpecDocs(this.#deps.specDir);
+      } catch {
+        contextFiles = undefined;
+      }
+    }
+
     const prompt = buildPhasePrompt({
       config,
       specDir: this.#deps.specDir,
@@ -167,6 +180,7 @@ export class PhaseContext {
       upstreamProvides: "upstreamProvides" in input ? input.upstreamProvides : undefined,
       routedSuggestions: "routedSuggestions" in input ? input.routedSuggestions : undefined,
       projectLearnings,
+      contextFiles,
     });
     return { prompt, systemPromptOverride };
   }

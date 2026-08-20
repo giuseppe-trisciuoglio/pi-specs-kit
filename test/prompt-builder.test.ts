@@ -132,6 +132,36 @@ test("knowledge_base block omitted when no files configured", () => {
   assert.ok(!prompt.includes("knowledge_base"));
 });
 
+test("context files are inlined with their absolute path, truncation flagged", () => {
+  const prompt = buildPhasePrompt(
+    makeCtx({
+      contextFiles: {
+        files: [
+          { path: "/proj/docs/specs/001/spec.md", content: "# Spec\n\nWhat it does.", truncated: false },
+          { path: "/proj/docs/specs/001/notes.md", content: "head only", truncated: true },
+        ],
+        omitted: ["/proj/docs/specs/001/huge.md"],
+      },
+    }),
+  );
+
+  assert.ok(prompt.includes('<file path="/proj/docs/specs/001/spec.md">\n# Spec\n\nWhat it does.\n</file>'));
+  assert.ok(prompt.includes('<file path="/proj/docs/specs/001/notes.md" truncated="true">'));
+  assert.ok(prompt.includes("Not inlined, read these only if the task needs them:\n- /proj/docs/specs/001/huge.md"));
+});
+
+test("context files block omitted when there is nothing to inline", () => {
+  const prompt = buildPhasePrompt(makeCtx({ contextFiles: { files: [], omitted: [] } }));
+  assert.ok(!prompt.includes("<context_files>"));
+});
+
+test("every phase is asked to batch its independent reads", () => {
+  for (const phase of ["implementation", "review", "cleanup", "sync"] as const) {
+    const prompt = buildPhasePrompt(makeCtx({ phase }));
+    assert.ok(prompt.includes("Group independent reads into a single turn"), `${phase} carries the batching rule`);
+  }
+});
+
 test("memory block lists fix plan learnings as bullets", () => {
   const prompt = buildPhasePrompt(makeCtx({ learnings: ["Prefer early returns.", "Keep prompts small."] }));
   assert.ok(prompt.includes("<memory>\n- Prefer early returns.\n- Keep prompts small.\n</memory>"));

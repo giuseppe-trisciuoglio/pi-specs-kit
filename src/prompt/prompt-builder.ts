@@ -10,6 +10,7 @@ import type { PhaseName, SpecsKitConfig } from "../config/specs-kit-config.ts";
 import type { HookResult } from "../loop/hooks.ts";
 import type { RoutedSuggestion } from "../loop/review-report.ts";
 import type { TaskFile } from "../tasks/task-parser.ts";
+import type { ContextFileSet } from "./context-files.ts";
 import type { ResolvedSkill } from "./skill-resolver.ts";
 
 export interface PreHookResult {
@@ -45,6 +46,8 @@ export interface PromptContext {
   routedSuggestions?: RoutedSuggestion[];
   /** Project-level learnings accumulated across specs. */
   projectLearnings?: string[];
+  /** Spec documents inlined for the phases that read the spec folder. */
+  contextFiles?: ContextFileSet;
 }
 
 /** Cap for a single hook output in the prompt, in characters. */
@@ -67,6 +70,20 @@ const TEST_SCOPE_RULE: readonly string[] = [
   "not need an answer after every edit.",
   "Run the full suite once at the end, when every affected test is green: that pass is",
   "the regression check, and the phase is not finished without it.",
+];
+
+/**
+ * Batching rule, appended to every phase. A turn costs the whole conversation
+ * prefix, not just its answer, so a phase that opens twelve files one per turn
+ * pays the prefix twelve times to learn what one turn could have asked for.
+ * Scoped to reads that do not depend on each other: a lookup whose target the
+ * previous answer decides cannot be batched, and asking for it would only
+ * trade round trips for guesses.
+ */
+const BATCHING_RULE: readonly string[] = [
+  "Group independent reads into a single turn: when you already know which files or",
+  "searches you need, request them together instead of one per turn. Only a lookup",
+  "whose target depends on the result of the previous one belongs in a turn of its own.",
 ];
 
 /** Static exit contract per phase (the learner never goes through here). */
@@ -183,6 +200,28 @@ export function buildPhasePrompt(ctx: PromptContext): string {
     blocks.push(`<knowledge_base>\n${files.join("\n")}\n</knowledge_base>`);
   }
 
+  // Documents of the spec, inlined for the phases that would otherwise open
+  // them one per turn. What did not fit is named, so the difference between
+  // "this is all there is" and "there is more, go read it" stays visible.
+  const contextFiles = ctx.contextFiles;
+  if (contextFiles && (contextFiles.files.length > 0 || contextFiles.omitted.length > 0)) {
+    const lines = [
+      "Documents of this spec, already read for you. Do not open them again unless you",
+      "need what a truncated one left out, or you are about to edit one that arrived",
+      "truncated: what is here is the head of the file, not the file.",
+    ];
+    for (const file of contextFiles.files) {
+      lines.push(`<file path="${file.path}"${file.truncated ? ' truncated="true"' : ""}>`);
+      lines.push(file.content);
+      lines.push("</file>");
+    }
+    if (contextFiles.omitted.length > 0) {
+      lines.push("Not inlined, read these only if the task needs them:");
+      for (const p of contextFiles.omitted) lines.push(`- ${p}`);
+    }
+    blocks.push(`<context_files>\n${lines.join("\n")}\n</context_files>`);
+  }
+
   // Learnings accumulated by the loop, as a bullet list.
   const learnings = ctx.learnings ?? [];
   if (learnings.length > 0) {
@@ -288,9 +327,11 @@ export function buildPhasePrompt(ctx: PromptContext): string {
   }
 
   const hasMemory = learnings.length > 0 || projectLearnings.length > 0;
-  blocks.push(
-    `<phase_instructions>\n${phaseInstructions(phase, fm.id, ctx.config.run.reconcileContext && hasMemory)}\n</phase_instructions>`,
-  );
+  const instructions = [
+    phaseInstructions(phase, fm.id, ctx.config.run.reconcileContext && hasMemory),
+    ...BATCHING_RULE,
+  ].join("\n");
+  blocks.push(`<phase_instructions>\n${instructions}\n</phase_instructions>`);
 
   return `${blocks.join("\n\n")}\n`;
 }

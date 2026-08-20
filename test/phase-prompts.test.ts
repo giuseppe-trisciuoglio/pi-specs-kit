@@ -35,6 +35,7 @@ import type {
 import { loadProjectLearnings } from "../src/loop/learner.ts";
 import type { PhaseRunOutcome, PhaseSpawnOptions } from "../src/agent/spawner.ts";
 import { buildPhasePrompt } from "../src/prompt/prompt-builder.ts";
+import { inlinesSpecDocs, loadSpecDocs } from "../src/prompt/context-files.ts";
 import { resolvePhaseSkill } from "../src/prompt/skill-resolver.ts";
 
 const tmpDirs: string[] = [];
@@ -100,6 +101,8 @@ async function harness(opts: { preHooks?: HookResult[]; postHooks?: HookResult[]
   const specDir = path.join(root, "docs/specs/001-spec");
   await mkdir(path.join(specDir, "tasks"), { recursive: true });
   await writeFile(path.join(root, "docs/specs/learnings.md"), "# Project Learnings\n\n- keep modules small\n", "utf8");
+  // A document of the spec folder: what review and sync receive inlined.
+  await writeFile(path.join(specDir, "spec.md"), "# Spec\n\nThe feature, described.\n", "utf8");
 
   const config = await loadSpecsKitConfig(root);
   config.run.noLogFiles = true;
@@ -139,6 +142,7 @@ function baseInput(h: Harness, attempt = 1): PhaseSpawnInput {
 async function expectedPrompt(h: Harness, phase: PhaseName, input: PhaseInput): Promise<string> {
   const skill = await resolvePhaseSkill(phase);
   const projectLearnings = await loadProjectLearnings(h.config.projectRoot, h.config.specsDir);
+  const contextFiles = inlinesSpecDocs(phase) ? await loadSpecDocs(h.specDir) : undefined;
   return buildPhasePrompt({
     config: h.config,
     specDir: h.specDir,
@@ -154,6 +158,7 @@ async function expectedPrompt(h: Harness, phase: PhaseName, input: PhaseInput): 
     upstreamProvides: "upstreamProvides" in input ? input.upstreamProvides : undefined,
     routedSuggestions: "routedSuggestions" in input ? input.routedSuggestions : undefined,
     projectLearnings: projectLearnings.length > 0 ? projectLearnings : undefined,
+    contextFiles,
   });
 }
 
@@ -187,6 +192,25 @@ test("implementation on retry carries review feedback, upstream contracts and ro
   assert.ok(prompt.includes("<memory>\n- always validate input\n</memory>"));
   assert.ok(prompt.includes("<project_learnings>\n- keep modules small\n</project_learnings>"));
   assert.ok(!prompt.includes("<review_format_error>"), "implementation never sees the review format channel");
+});
+
+test("only the phases that read the spec folder receive its documents", async () => {
+  const h = await harness();
+  const impl: ImplementationPhaseInput = {
+    ...baseInput(h),
+    reviewFeedback: null,
+    postHookFailures: null,
+    upstreamProvides: [],
+    routedSuggestions: [],
+    firstAttempt: true,
+  };
+  const implPrompt = await capturePrompt(h, () => h.executor.run("implementation", impl));
+  assert.ok(!implPrompt.includes("<context_files>"), "implementation reads code the task picks, not a fixed set");
+
+  const sync: SyncPhaseInput = { ...baseInput(h), upstreamProvides: [], routedSuggestions: [] };
+  const syncPrompt = await capturePrompt(h, () => h.executor.run("sync", sync));
+  assert.ok(syncPrompt.includes("<context_files>"));
+  assert.ok(syncPrompt.includes(`<file path="${path.join(h.specDir, "spec.md")}">`));
 });
 
 test("implementation on the first attempt has no feedback block at all", async () => {
@@ -296,6 +320,7 @@ test("review on first spawn has no format error and no routed suggestions", asyn
   assert.ok(!prompt.includes("<routed_suggestions>"), "the reviewer never receives routed fixes");
   assert.ok(!prompt.includes("<review_feedback>"), "the reviewer never receives its own feedback");
   assert.ok(!prompt.includes("<prior_review_attempts>"), "no retry has happened yet");
+  assert.ok(prompt.includes("The feature, described."), "the spec documents arrive read, not to be discovered");
 });
 
 test("review re-spawn is told what was wrong with the previous report", async () => {
