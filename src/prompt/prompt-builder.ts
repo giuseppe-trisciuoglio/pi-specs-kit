@@ -189,6 +189,15 @@ export function buildPhasePrompt(ctx: PromptContext): string {
     blocks.push(`<memory>\n${learnings.map((l) => `- ${l}`).join("\n")}\n</memory>`);
   }
 
+  // The two memory channels are fed by the same learner output, so the project
+  // file usually repeats what the spec memory already carries. Both blocks kept
+  // every shared insight twice in a prompt that is resent at every turn. The
+  // channels stay distinct — the project file is what a spec with an empty
+  // memory inherits — they just stop printing each other. Matching is
+  // case-insensitive, the same identity mergeLearnings uses to reheat an entry.
+  const spare = new Set(learnings.map((l) => l.toLowerCase()));
+  const projectLearnings = (ctx.projectLearnings ?? []).filter((l) => !spare.has(l.toLowerCase()));
+
   // Pre-hook outcomes. Command and status are shown for every hook — that
   // certifies the gate ran and what verdict it returned. Output enters the
   // prompt only for failed hooks, where it carries the bounded context the
@@ -271,14 +280,14 @@ export function buildPhasePrompt(ctx: PromptContext): string {
     );
   }
 
-  // Project-level learnings accumulated across specs.
-  if (ctx.projectLearnings && ctx.projectLearnings.length > 0) {
+  // Project-level learnings accumulated across specs, minus what <memory> said.
+  if (projectLearnings.length > 0) {
     blocks.push(
-      `<project_learnings>\n${ctx.projectLearnings.map((l) => `- ${l}`).join("\n")}\n</project_learnings>`,
+      `<project_learnings>\n${projectLearnings.map((l) => `- ${l}`).join("\n")}\n</project_learnings>`,
     );
   }
 
-  const hasMemory = (ctx.learnings?.length ?? 0) > 0 || (ctx.projectLearnings?.length ?? 0) > 0;
+  const hasMemory = learnings.length > 0 || projectLearnings.length > 0;
   blocks.push(
     `<phase_instructions>\n${phaseInstructions(phase, fm.id, ctx.config.run.reconcileContext && hasMemory)}\n</phase_instructions>`,
   );

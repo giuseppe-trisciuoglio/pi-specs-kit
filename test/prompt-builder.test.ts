@@ -142,6 +142,24 @@ test("memory block omitted without learnings", () => {
   assert.ok(!prompt.includes("<memory>"));
 });
 
+test("project learnings drop what memory already carries", () => {
+  const prompt = buildPhasePrompt(
+    makeCtx({
+      learnings: ["Prefer early returns."],
+      projectLearnings: ["prefer early returns.", "Keep modules small."],
+    }),
+  );
+  assert.ok(prompt.includes("<memory>\n- Prefer early returns.\n</memory>"));
+  assert.ok(prompt.includes("<project_learnings>\n- Keep modules small.\n</project_learnings>"));
+});
+
+test("project learnings block omitted when memory already carries all of it", () => {
+  const prompt = buildPhasePrompt(
+    makeCtx({ learnings: ["Prefer early returns."], projectLearnings: ["Prefer early returns."] }),
+  );
+  assert.ok(!prompt.includes("<project_learnings>"));
+});
+
 test("hooks block reports command, status and bounded output", () => {
   const long = "x".repeat(7000);
   const prompt = buildPhasePrompt(
