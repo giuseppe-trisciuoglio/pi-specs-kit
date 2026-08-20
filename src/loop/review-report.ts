@@ -17,7 +17,7 @@
  * the agent having to dig through earlier reviews by hand.
  */
 
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
 import { recoverFrontmatter } from "./review-report-recovery.ts";
@@ -66,6 +66,33 @@ export function reviewFilePath(specDir: string, taskId: string): string {
  */
 export function reviewAttemptArchivePath(specDir: string, taskId: string, attempt: number): string {
   return path.join(specDir, "tasks", `${taskId}--review.attempt-${attempt}.md`);
+}
+
+/** Numeric order of an archive name within its task, unreadable names last. */
+function archiveAttemptOf(name: string, prefix: string): number {
+  const n = Number.parseInt(name.slice(prefix.length, name.length - ".md".length), 10);
+  return Number.isFinite(n) ? n : Number.MAX_SAFE_INTEGER;
+}
+
+/**
+ * Archived reports of a task's earlier attempts, oldest first, relative to
+ * the spec folder. The listing trusts the disk over any counter: an archive
+ * a hand removed is simply not there, and one a hand added is listed like
+ * any other.
+ */
+export async function listReviewAttemptArchives(specDir: string, taskId: string): Promise<string[]> {
+  const dir = path.join(specDir, "tasks");
+  const prefix = `${taskId}--review.attempt-`;
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((name) => name.startsWith(prefix) && name.endsWith(".md"))
+    .sort((a, b) => archiveAttemptOf(a, prefix) - archiveAttemptOf(b, prefix))
+    .map((name) => path.join("tasks", name));
 }
 
 /** Coerce a raw frontmatter `routed` value into a typed list, tolerating junk. */

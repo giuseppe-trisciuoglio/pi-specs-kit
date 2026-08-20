@@ -46,6 +46,11 @@ export interface ImplementationPhaseInput extends PhaseSpawnInput {
 export interface ReviewPhaseInput extends PhaseSpawnInput {
   /** Why the previous report was rejected, null on the first spawn. */
   reviewFormatError: string | null;
+  /** Archived reports of this task's earlier attempts, relative to the spec
+   * folder, oldest first; empty until a retry exists. Where earlier verdicts
+   * live is a fact the loop lists from disk; what they concluded stays
+   * undelivered so the fresh evaluation judges for itself. */
+  priorAttemptArchives: string[];
 }
 
 export interface CleanupPhaseInput extends PhaseSpawnInput {

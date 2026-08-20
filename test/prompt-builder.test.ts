@@ -98,15 +98,15 @@ test("task block keeps absolute file when the task lives outside the spec dir", 
   assert.doesNotMatch(prompt, /lang=/);
 });
 
-test("resolved skill yields skill_content and absolute skill_path", () => {
-  const prompt = buildPhasePrompt(makeCtx({ skill: makeSkill() }));
+test("skillContent on inlines the skill next to its path", () => {
+  const config = makeConfig({ run: { ...DEFAULT_RUN_CONFIG, skillContent: true } });
+  const prompt = buildPhasePrompt(makeCtx({ config, skill: makeSkill() }));
   assert.ok(prompt.includes("<skill_content>\n# Implementation skill\n\nFollow the workflow.\n</skill_content>"));
   assert.ok(prompt.includes("<skill_path>/proj/skills/specs-kit-task-implementation</skill_path>"));
 });
 
-test("skillContent false keeps only skill_path", () => {
-  const config = makeConfig({ run: { ...DEFAULT_RUN_CONFIG, skillContent: false } });
-  const prompt = buildPhasePrompt(makeCtx({ config, skill: makeSkill() }));
+test("a resolved skill yields only its path by default", () => {
+  const prompt = buildPhasePrompt(makeCtx({ skill: makeSkill() }));
   assert.ok(!prompt.includes("<skill_content>"));
   assert.ok(prompt.includes("<skill_path>/proj/skills/specs-kit-task-implementation</skill_path>"));
 });
@@ -132,6 +132,36 @@ test("knowledge_base block omitted when no files configured", () => {
   assert.ok(!prompt.includes("knowledge_base"));
 });
 
+test("context files are inlined with their absolute path, truncation flagged", () => {
+  const prompt = buildPhasePrompt(
+    makeCtx({
+      contextFiles: {
+        files: [
+          { path: "/proj/docs/specs/001/spec.md", content: "# Spec\n\nWhat it does.", truncated: false },
+          { path: "/proj/docs/specs/001/notes.md", content: "head only", truncated: true },
+        ],
+        omitted: ["/proj/docs/specs/001/huge.md"],
+      },
+    }),
+  );
+
+  assert.ok(prompt.includes('<file path="/proj/docs/specs/001/spec.md">\n# Spec\n\nWhat it does.\n</file>'));
+  assert.ok(prompt.includes('<file path="/proj/docs/specs/001/notes.md" truncated="true">'));
+  assert.ok(prompt.includes("Not inlined, read these only if the task needs them:\n- /proj/docs/specs/001/huge.md"));
+});
+
+test("context files block omitted when there is nothing to inline", () => {
+  const prompt = buildPhasePrompt(makeCtx({ contextFiles: { files: [], omitted: [] } }));
+  assert.ok(!prompt.includes("<context_files>"));
+});
+
+test("every phase is asked to batch its independent reads", () => {
+  for (const phase of ["implementation", "review", "cleanup", "sync"] as const) {
+    const prompt = buildPhasePrompt(makeCtx({ phase }));
+    assert.ok(prompt.includes("Group independent reads into a single turn"), `${phase} carries the batching rule`);
+  }
+});
+
 test("memory block lists fix plan learnings as bullets", () => {
   const prompt = buildPhasePrompt(makeCtx({ learnings: ["Prefer early returns.", "Keep prompts small."] }));
   assert.ok(prompt.includes("<memory>\n- Prefer early returns.\n- Keep prompts small.\n</memory>"));
@@ -140,6 +170,24 @@ test("memory block lists fix plan learnings as bullets", () => {
 test("memory block omitted without learnings", () => {
   const prompt = buildPhasePrompt(makeCtx({ learnings: [] }));
   assert.ok(!prompt.includes("<memory>"));
+});
+
+test("project learnings drop what memory already carries", () => {
+  const prompt = buildPhasePrompt(
+    makeCtx({
+      learnings: ["Prefer early returns."],
+      projectLearnings: ["prefer early returns.", "Keep modules small."],
+    }),
+  );
+  assert.ok(prompt.includes("<memory>\n- Prefer early returns.\n</memory>"));
+  assert.ok(prompt.includes("<project_learnings>\n- Keep modules small.\n</project_learnings>"));
+});
+
+test("project learnings block omitted when memory already carries all of it", () => {
+  const prompt = buildPhasePrompt(
+    makeCtx({ learnings: ["Prefer early returns."], projectLearnings: ["Prefer early returns."] }),
+  );
+  assert.ok(!prompt.includes("<project_learnings>"));
 });
 
 test("hooks block reports command, status and bounded output", () => {

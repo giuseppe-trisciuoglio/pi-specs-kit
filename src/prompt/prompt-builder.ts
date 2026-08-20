@@ -10,6 +10,7 @@ import type { PhaseName, SpecsKitConfig } from "../config/specs-kit-config.ts";
 import type { HookResult } from "../loop/hooks.ts";
 import type { RoutedSuggestion } from "../loop/review-report.ts";
 import type { TaskFile } from "../tasks/task-parser.ts";
+import type { ContextFileSet } from "./context-files.ts";
 import type { ResolvedSkill } from "./skill-resolver.ts";
 
 export interface PreHookResult {
@@ -36,12 +37,17 @@ export interface PromptContext {
   reviewFeedback?: string | null;
   /** What was wrong with the previous review report, set on review re-spawns. */
   reviewFormatError?: string | null;
+  /** Archived reports of this task's earlier attempts, set when a retry
+   * exists: where earlier verdicts live, not what they concluded. */
+  priorAttemptArchives?: string[];
   /** Public API contracts from upstream tasks that are already done. */
   upstreamProvides?: string[];
   /** Fixes reviewers routed to this task from earlier completed tasks. */
   routedSuggestions?: RoutedSuggestion[];
   /** Project-level learnings accumulated across specs. */
   projectLearnings?: string[];
+  /** Spec documents inlined for the phases that read the spec folder. */
+  contextFiles?: ContextFileSet;
 }
 
 /** Cap for a single hook output in the prompt, in characters. */
@@ -66,6 +72,20 @@ const TEST_SCOPE_RULE: readonly string[] = [
   "the regression check, and the phase is not finished without it.",
 ];
 
+/**
+ * Batching rule, appended to every phase. A turn costs the whole conversation
+ * prefix, not just its answer, so a phase that opens twelve files one per turn
+ * pays the prefix twelve times to learn what one turn could have asked for.
+ * Scoped to reads that do not depend on each other: a lookup whose target the
+ * previous answer decides cannot be batched, and asking for it would only
+ * trade round trips for guesses.
+ */
+const BATCHING_RULE: readonly string[] = [
+  "Group independent reads into a single turn: when you already know which files or",
+  "searches you need, request them together instead of one per turn. Only a lookup",
+  "whose target depends on the result of the previous one belongs in a turn of its own.",
+];
+
 /** Static exit contract per phase (the learner never goes through here). */
 function phaseInstructions(phase: PhaseName, taskId: string, reconcile: boolean): string {
   switch (phase) {
@@ -74,6 +94,9 @@ function phaseInstructions(phase: PhaseName, taskId: string, reconcile: boolean)
         "Modify the code in the workspace to fully implement the task above.",
         "Keep changes focused on the task and verify them with the project's build and tests.",
         ...TEST_SCOPE_RULE,
+        "Learnings about the project are collected by the loop after the task passes review:",
+        "never write them to the project learnings file yourself — anything appended there",
+        "reaches the prompts of the phases that follow, so the loop reverts it.",
         "The phase ends when the implementation is complete in the workspace.",
       ].join("\n");
     case "review":
@@ -177,11 +200,40 @@ export function buildPhasePrompt(ctx: PromptContext): string {
     blocks.push(`<knowledge_base>\n${files.join("\n")}\n</knowledge_base>`);
   }
 
+  // Documents of the spec, inlined for the phases that would otherwise open
+  // them one per turn. What did not fit is named, so the difference between
+  // "this is all there is" and "there is more, go read it" stays visible.
+  const contextFiles = ctx.contextFiles;
+  if (contextFiles && (contextFiles.files.length > 0 || contextFiles.omitted.length > 0)) {
+    const lines = [
+      "Documents of this spec, already read for you. Do not open them again unless you",
+      "need what a truncated one left out, or you are about to edit one that arrived",
+      "truncated: what is here is the head of the file, not the file.",
+    ];
+    for (const file of contextFiles.files) {
+      lines.push(`<file path="${file.path}"${file.truncated ? ' truncated="true"' : ""}>`, file.content, "</file>");
+    }
+    if (contextFiles.omitted.length > 0) {
+      lines.push("Not inlined, read these only if the task needs them:");
+      for (const p of contextFiles.omitted) lines.push(`- ${p}`);
+    }
+    blocks.push(`<context_files>\n${lines.join("\n")}\n</context_files>`);
+  }
+
   // Learnings accumulated by the loop, as a bullet list.
   const learnings = ctx.learnings ?? [];
   if (learnings.length > 0) {
     blocks.push(`<memory>\n${learnings.map((l) => `- ${l}`).join("\n")}\n</memory>`);
   }
+
+  // The two memory channels are fed by the same learner output, so the project
+  // file usually repeats what the spec memory already carries. Both blocks kept
+  // every shared insight twice in a prompt that is resent at every turn. The
+  // channels stay distinct — the project file is what a spec with an empty
+  // memory inherits — they just stop printing each other. Matching is
+  // case-insensitive, the same identity mergeLearnings uses to reheat an entry.
+  const spare = new Set(learnings.map((l) => l.toLowerCase()));
+  const projectLearnings = (ctx.projectLearnings ?? []).filter((l) => !spare.has(l.toLowerCase()));
 
   // Pre-hook outcomes. Command and status are shown for every hook — that
   // certifies the gate ran and what verdict it returned. Output enters the
@@ -227,6 +279,26 @@ export function buildPhasePrompt(ctx: PromptContext): string {
     blocks.push(`<review_format_error>\n${ctx.reviewFormatError.trim()}\n</review_format_error>`);
   }
 
+  // Where the verdicts of earlier attempts are archived, present only once a
+  // retry exists. Deliberately paths and nothing else: handing over the
+  // conclusions would anchor the fresh evaluation to them, while leaving the
+  // reviewer to rediscover the archives by chance wastes the exploration the
+  // pointer already pays for. The one question a retry makes urgent — was what
+  // the previous review blocked actually fixed — is named so it is not
+  // answered by luck.
+  if (ctx.priorAttemptArchives && ctx.priorAttemptArchives.length > 0) {
+    blocks.push(
+      [
+        "<prior_review_attempts>",
+        "Earlier attempts of this task were reviewed and retried. Their verdicts are archived:",
+        ...ctx.priorAttemptArchives.map((p) => `- ${p}`),
+        "This is a fresh, independent evaluation: consult an archive when useful, and in",
+        "particular verify what the retry was asked to fix.",
+        "</prior_review_attempts>",
+      ].join("\n"),
+    );
+  }
+
   // Contracts from upstream tasks the current task depends on.
   if (ctx.upstreamProvides && ctx.upstreamProvides.length > 0) {
     blocks.push(
@@ -245,17 +317,19 @@ export function buildPhasePrompt(ctx: PromptContext): string {
     );
   }
 
-  // Project-level learnings accumulated across specs.
-  if (ctx.projectLearnings && ctx.projectLearnings.length > 0) {
+  // Project-level learnings accumulated across specs, minus what <memory> said.
+  if (projectLearnings.length > 0) {
     blocks.push(
-      `<project_learnings>\n${ctx.projectLearnings.map((l) => `- ${l}`).join("\n")}\n</project_learnings>`,
+      `<project_learnings>\n${projectLearnings.map((l) => "- " + l).join("\n")}\n</project_learnings>`,
     );
   }
 
-  const hasMemory = (ctx.learnings?.length ?? 0) > 0 || (ctx.projectLearnings?.length ?? 0) > 0;
-  blocks.push(
-    `<phase_instructions>\n${phaseInstructions(phase, fm.id, ctx.config.run.reconcileContext && hasMemory)}\n</phase_instructions>`,
-  );
+  const hasMemory = learnings.length > 0 || projectLearnings.length > 0;
+  const instructions = [
+    phaseInstructions(phase, fm.id, ctx.config.run.reconcileContext && hasMemory),
+    ...BATCHING_RULE,
+  ].join("\n");
+  blocks.push(`<phase_instructions>\n${instructions}\n</phase_instructions>`);
 
   return `${blocks.join("\n\n")}\n`;
 }

@@ -24,7 +24,7 @@ run:
   debug_stream: true
   no_log_files: false
   show_prompt: true
-  skill_content: true
+  skill_content: false
   verbose: false
   continue_on_failure: false
   resume: false
@@ -32,11 +32,13 @@ run:
   max_spawns_per_task: 8
   max_spawns_per_run: 60
   max_run_duration: 6h
+  reconcile_context: false
 adversarial_review:
   panel:
     - model: zai/glm-5.3
     - model: opencode-go/deepseek-v4-pro
     - model: minimax/MiniMax-M3
+    - model: auto
 git:
   baseBranch: main
 hooks:

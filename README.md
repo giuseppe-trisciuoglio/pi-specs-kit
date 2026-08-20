@@ -1,6 +1,6 @@
 # pi-specs-kit
 
-[![CI](https://github.com/giuseppe-trisciuoglio/pi-rules/actions/workflows/ci.yml/badge.svg)](https://github.com/giuseppe-trisciuoglio/pi-rules/actions/workflows/ci.yml)
+[![CI](https://github.com/giuseppe-trisciuoglio/pi-specs-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/giuseppe-trisciuoglio/pi-specs-kit/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/@giuseppe.trisciuoglio/pi-specs-kit.svg)](https://www.npmjs.com/package/@giuseppe.trisciuoglio/pi-specs-kit)
 [![npm downloads](https://img.shields.io/npm/dm/@giuseppe.trisciuoglio/pi-specs-kit.svg)](https://www.npmjs.com/package/@giuseppe.trisciuoglio/pi-specs-kit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
@@ -33,7 +33,7 @@ delivery pipeline you can watch and steer in plain English.
 ```bash
 pi install npm:@giuseppe.trisciuoglio/pi-specs-kit
 # or from git:
-pi install git:github.com/giuseppe-trisciuoglio/pi-rules
+pi install git:github.com/giuseppe-trisciuoglio/pi-specs-kit
 # or project-local (share with your team):
 pi install -l npm:@giuseppe.trisciuoglio/pi-specs-kit
 # or try without installing:
@@ -117,7 +117,7 @@ run:
   max_attempts: 5
   timeout: 60m
   no_commit: true
-  skill_content: true
+  skill_content: false
   continue_on_failure: false
   max_spawns_per_task: 8
   max_spawns_per_run: 60

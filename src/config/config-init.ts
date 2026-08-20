@@ -52,6 +52,10 @@ export function defaultConfigYaml(): string {
       max_spawns_per_task: run.maxSpawnsPerTask,
       max_spawns_per_run: run.maxSpawnsPerRun,
       max_run_duration: formatDurationMs(run.maxRunDurationMs),
+      // Lets sync correct a source-of-truth context document that a
+      // consolidated learning contradicts. Editing the project's own
+      // instructions is a trust-boundary change, so it stays opt-in.
+      reconcile_context: run.reconcileContext,
       // Refuses an attempt that rewrote the spec's requirement document or one
       // of its contracts: what the work is measured against is not the work's
       // to edit.

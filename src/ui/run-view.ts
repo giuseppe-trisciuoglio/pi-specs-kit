@@ -32,9 +32,15 @@ const FIELDS: readonly RunFieldDef[] = [
   { field: "no_log_files", kind: "boolean", label: "disable log files", display: (r) => String(r.noLogFiles) },
   { field: "show_prompt", kind: "boolean", label: "show phase prompt", display: (r) => String(r.showPrompt) },
   { field: "skill_content", kind: "boolean", label: "inline skill content", display: (r) => String(r.skillContent) },
+  { field: "verbose", kind: "boolean", label: "verbose output", display: (r) => String(r.verbose) },
+  { field: "continue_on_failure", kind: "boolean", label: "continue after a failed task", display: (r) => String(r.continueOnFailure) },
+  { field: "resume", kind: "boolean", label: "resume from persisted state", display: (r) => String(r.resume) },
+  { field: "review_file_retry", kind: "number", label: "review file re-spawns", display: (r) => String(r.reviewFileRetry) },
   { field: "max_spawns_per_task", kind: "number", label: "max agent sessions per task", display: (r) => String(r.maxSpawnsPerTask) },
   { field: "max_spawns_per_run", kind: "number", label: "max agent sessions per run", display: (r) => String(r.maxSpawnsPerRun) },
   { field: "max_run_duration", kind: "duration", label: "max run duration", display: (r) => formatDurationMs(r.maxRunDurationMs) },
+  { field: "reconcile_context", kind: "boolean", label: "sync may fix context docs", display: (r) => String(r.reconcileContext) },
+  { field: "protect_spec_artifacts", kind: "boolean", label: "guard spec artifacts", display: (r) => String(r.protectSpecArtifacts) },
 ];
 
 /** Persist a single field after confirmation; returns the freshest config. */

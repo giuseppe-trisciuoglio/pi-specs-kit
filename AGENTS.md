@@ -53,6 +53,12 @@ Measurements (tokens and durations) do not live in the fix plan: the append-only
 `~/.pi/agent/specs-kit/measurements-wal.jsonl` (`src/measure/` modules). Every measurement I/O is
 best-effort: never let the loop fail because of a logging error.
 
+Two channels the loop owns outright. The review prompt of a retry lists where the earlier verdicts
+are archived — paths, never findings (decision documented in `docs/adr/0023`). And the project
+learnings file is reverted when an implementation writes to it mid-task: the executor rereads it at
+every spawn, so an agent append would publish to the phases that follow (decision documented in
+`docs/adr/0024`).
+
 A repeated implementation attempt that leaves the tree unchanged is not progress: `src/loop/workspace.ts`
 computes the worktree fingerprint (throwaway git index, real staging is never touched) before and after the
 phase, and only on retries. Identical fingerprints on a clean attempt close the task before respawning the

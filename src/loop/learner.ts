@@ -8,10 +8,35 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-/** Upper bound of learnings kept in the fix plan; oldest entries rotate out. */
-export const MAX_LEARNINGS = 50;
+/**
+ * Upper bound of learnings kept in the fix plan; the coldest entries rotate
+ * out. Fifteen, not fifty: memory is resent whole at every turn of every
+ * phase, so its cost is the list times the turns of the whole run, and a run
+ * that filled the old cap paid for a memory nobody could still act on. The
+ * scoring already sorts the list by what the project keeps re-teaching, which
+ * is what makes a short cap safe — what survives is the warm head.
+ */
+export const MAX_LEARNINGS = 15;
 
-/** Maximum learnings kept in the project-level file (compacted by the learner). */
+/**
+ * Second bound on the same list, in characters. The count cap assumes bullets
+ * are roughly the same size; one learner that answers with a paragraph breaks
+ * that assumption and a single entry eats the room of five useful ones. Held
+ * against the rendered bullet, so what is bounded is what the prompt pays for.
+ */
+export const MAX_LEARNINGS_CHARS = 6000;
+
+/** What one learning costs in the prompt: the text plus its "- " bullet. */
+function bulletCost(learning: string): number {
+  return learning.length + 3;
+}
+
+/**
+ * Maximum learnings kept in the project-level file (compacted by the learner).
+ * Higher than the per-spec cap because this file is what a spec starting with
+ * an empty memory inherits; the character budget above applies to it too, so
+ * the count is the looser of the two bounds, not the only one.
+ */
 export const MAX_PROJECT_LEARNINGS = 30;
 
 /** File name relative to the specs directory. */
@@ -109,6 +134,8 @@ export interface MergeInput {
   iteration: number;
   fromRejection?: boolean;
   max?: number;
+  /** Character budget for the whole list, bullets included. */
+  maxChars?: number;
 }
 
 export interface MergeResult {
@@ -119,11 +146,12 @@ export interface MergeResult {
 /**
  * Merge a learner's output into the memory. Exact repeats and cited insights
  * reheat the entry that is already there instead of adding a second copy;
- * genuinely new insights are appended. When the result overflows the cap the
- * coldest entries go, not the oldest.
+ * genuinely new insights are appended. When the result overflows either bound
+ * — the entry count or the character budget — the coldest entries go, not the
+ * oldest.
  */
 export function mergeLearnings(input: MergeInput): MergeResult {
-  const { existing, incoming, iteration, max = MAX_LEARNINGS } = input;
+  const { existing, incoming, iteration, max = MAX_LEARNINGS, maxChars = MAX_LEARNINGS_CHARS } = input;
   const learnings = [...existing];
   // A plan written before stats existed reads as neutral rather than failing.
   const stats: LearningStat[] = learnings.map((_, i) => input.stats?.[i] ?? neutralStat(iteration));
@@ -144,14 +172,32 @@ export function mergeLearnings(input: MergeInput): MergeResult {
     stats.push({ hits: 1, fromRejection: input.fromRejection ?? false, lastSeen: iteration });
   }
 
-  if (learnings.length <= max) return { learnings, stats };
-  // Evict the coldest. Ties break on age, so equal scores keep the newer entry
-  // and the order of what survives is left untouched.
-  const keep = learnings
+  const total = learnings.reduce((sum, l) => sum + bulletCost(l), 0);
+  if (learnings.length <= max && total <= maxChars) return { learnings, stats };
+
+  // Evict the coldest against both bounds. Ties break on age, so equal scores
+  // keep the newer entry and the order of what survives is left untouched.
+  // An entry that does not fit the remaining budget is passed over rather than
+  // ending the pass: a single outsized bullet loses its own place, not the
+  // places of the warm short ones behind it — and that holds however warm the
+  // outsized one is, because the budget exists precisely to stop one paragraph
+  // from spending the room of five usable rules. Only when nothing fits at all
+  // does the warmest entry go in regardless: the budget bounds the memory, it
+  // never empties it.
+  const byWarmth = learnings
     .map((_, i) => i)
-    .sort((a, b) => learningScore(stats[b], iteration) - learningScore(stats[a], iteration) || b - a)
-    .slice(0, max)
-    .sort((a, b) => a - b);
+    .sort((a, b) => learningScore(stats[b], iteration) - learningScore(stats[a], iteration) || b - a);
+  const keep: number[] = [];
+  let spent = 0;
+  for (const i of byWarmth) {
+    if (keep.length >= max) break;
+    const cost = bulletCost(learnings[i]);
+    if (spent + cost > maxChars) continue;
+    keep.push(i);
+    spent += cost;
+  }
+  if (keep.length === 0) keep.push(byWarmth[0]);
+  keep.sort((a, b) => a - b);
   return { learnings: keep.map((i) => learnings[i]), stats: keep.map((i) => stats[i]) };
 }
 

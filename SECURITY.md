@@ -13,7 +13,7 @@ Only the latest released version of `pi-specs-kit` receives security fixes.
 Please **do not** open a public GitHub issue for security problems.
 
 Report vulnerabilities privately by emailing
-**giuseppe.trisciuoglio+github@gmail.com** with:
+**giuseppe.trisciuoglio@gmail.com** with:
 
 - a description of the issue and its impact;
 - the minimal steps or proof of concept to reproduce it;
