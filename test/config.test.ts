@@ -49,7 +49,7 @@ run:
   debug_stream: false
   no_log_files: true
   show_prompt: false
-  skill_content: false
+  skill_content: true
   verbose: true
   continue_on_failure: true
   resume: true
@@ -122,6 +122,7 @@ test("full yaml maps every field", async () => {
     assert.equal(config.run.noCommit, false);
     assert.equal(config.run.yolo, false);
     assert.equal(config.run.resume, true);
+    assert.equal(config.run.skillContent, true);
     assert.equal(config.run.reviewFileRetry, 9);
     assert.equal(config.run.fromTask, "02");
     assert.equal(config.run.toTask, "05");

@@ -98,15 +98,15 @@ test("task block keeps absolute file when the task lives outside the spec dir", 
   assert.doesNotMatch(prompt, /lang=/);
 });
 
-test("resolved skill yields skill_content and absolute skill_path", () => {
-  const prompt = buildPhasePrompt(makeCtx({ skill: makeSkill() }));
+test("skillContent on inlines the skill next to its path", () => {
+  const config = makeConfig({ run: { ...DEFAULT_RUN_CONFIG, skillContent: true } });
+  const prompt = buildPhasePrompt(makeCtx({ config, skill: makeSkill() }));
   assert.ok(prompt.includes("<skill_content>\n# Implementation skill\n\nFollow the workflow.\n</skill_content>"));
   assert.ok(prompt.includes("<skill_path>/proj/skills/specs-kit-task-implementation</skill_path>"));
 });
 
-test("skillContent false keeps only skill_path", () => {
-  const config = makeConfig({ run: { ...DEFAULT_RUN_CONFIG, skillContent: false } });
-  const prompt = buildPhasePrompt(makeCtx({ config, skill: makeSkill() }));
+test("a resolved skill yields only its path by default", () => {
+  const prompt = buildPhasePrompt(makeCtx({ skill: makeSkill() }));
   assert.ok(!prompt.includes("<skill_content>"));
   assert.ok(prompt.includes("<skill_path>/proj/skills/specs-kit-task-implementation</skill_path>"));
 });

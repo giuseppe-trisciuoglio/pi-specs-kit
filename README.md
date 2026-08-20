@@ -117,7 +117,7 @@ run:
   max_attempts: 5
   timeout: 60m
   no_commit: true
-  skill_content: true
+  skill_content: false
   continue_on_failure: false
   max_spawns_per_task: 8
   max_spawns_per_run: 60

@@ -36,7 +36,12 @@ export interface RunConfig {
   debugStream: boolean;
   noLogFiles: boolean;
   showPrompt: boolean;
-  /** Inline the phase skill content in the prompt instead of only its path. */
+  /**
+   * Inline the phase skill content in the prompt instead of only its path.
+   * Off by default: the prompt always carries the skill directory, so an agent
+   * that needs the procedure reads it once, while inlining pays for the whole
+   * file at every turn of every phase.
+   */
   skillContent: boolean;
   verbose: boolean;
   continueOnFailure: boolean;
@@ -155,7 +160,7 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
   debugStream: true,
   noLogFiles: false,
   showPrompt: true,
-  skillContent: true,
+  skillContent: false,
   verbose: false,
   continueOnFailure: false,
   resume: false,

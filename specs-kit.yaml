@@ -24,7 +24,7 @@ run:
   debug_stream: true
   no_log_files: false
   show_prompt: true
-  skill_content: true
+  skill_content: false
   verbose: false
   continue_on_failure: false
   resume: false
