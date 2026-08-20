@@ -211,9 +211,7 @@ export function buildPhasePrompt(ctx: PromptContext): string {
       "truncated: what is here is the head of the file, not the file.",
     ];
     for (const file of contextFiles.files) {
-      lines.push(`<file path="${file.path}"${file.truncated ? ' truncated="true"' : ""}>`);
-      lines.push(file.content);
-      lines.push("</file>");
+      lines.push(`<file path="${file.path}"${file.truncated ? ' truncated="true"' : ""}>`, file.content, "</file>");
     }
     if (contextFiles.omitted.length > 0) {
       lines.push("Not inlined, read these only if the task needs them:");
@@ -322,7 +320,7 @@ export function buildPhasePrompt(ctx: PromptContext): string {
   // Project-level learnings accumulated across specs, minus what <memory> said.
   if (projectLearnings.length > 0) {
     blocks.push(
-      `<project_learnings>\n${projectLearnings.map((l) => `- ${l}`).join("\n")}\n</project_learnings>`,
+      `<project_learnings>\n${projectLearnings.map((l) => "- " + l).join("\n")}\n</project_learnings>`,
     );
   }
 

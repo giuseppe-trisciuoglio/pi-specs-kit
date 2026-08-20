@@ -198,7 +198,7 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
       // absent, so the attempt is taken at face value.
       if (before !== null) {
         const after = await deps.workspaceFingerprint(config.projectRoot, fingerprintExclusions);
-        if (after !== null && after === before) {
+        if (after === before) {
           state.review_file_error = "implementation retry left the workspace unchanged, no progress";
           await persist();
           notify(`implementation retry for ${id} changed nothing, task abandoned`, "warning");
