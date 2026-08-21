@@ -38,7 +38,7 @@ export interface BudgetSnapshot {
 }
 
 export class LoopBudget {
-  readonly #limits: BudgetLimits;
+  #limits: BudgetLimits;
   readonly #now: () => number;
   readonly #startedAt: number;
   #runSpawns = 0;
@@ -49,6 +49,15 @@ export class LoopBudget {
     this.#limits = limits;
     this.#now = now;
     this.#startedAt = now();
+  }
+
+  /**
+   * Re-apply the ceilings after a mid-run configuration reload. Counters and
+   * the start timestamp carry over: only the limits change, never what the
+   * run already spent.
+   */
+  reconfigure(limits: BudgetLimits): void {
+    this.#limits = limits;
   }
 
   /** Open the per-task allowance; the run-level counters keep accumulating. */

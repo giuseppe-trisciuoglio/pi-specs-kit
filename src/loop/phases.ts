@@ -31,6 +31,12 @@ export interface PhaseExecutorDeps {
   budget: LoopBudget;
   spawnPhase: (opts: PhaseSpawnOptions) => Promise<PhaseRunOutcome>;
   runHooks: typeof runPhaseHooks;
+  /**
+   * Re-read the configuration file before a phase begins, so an operator
+   * edit applies from this phase on. Optional: tests that pin the config
+   * object directly have nothing to reload.
+   */
+  refreshConfig?: () => Promise<void>;
   onNotify: (message: string, type: "info" | "warning" | "error") => void;
   /** Forwarded for every stream event, with its formatted log line. */
   onStream: (event: PiStreamEvent, formatted: string | null) => void;
@@ -117,6 +123,10 @@ export class PhaseExecutor {
     const { config } = this.#deps;
     const role = PHASE_ROLE[phase];
     const task = input.task;
+    // The reload precedes everything the phase reads — hooks, prompt inputs,
+    // role, timeout — so one phase is consistent within a single load. It
+    // stays out of the measurement: it is loop housekeeping, not phase work.
+    await this.#deps.refreshConfig?.();
     // The node declares how the world is, not what to do: the blocking
     // policy lives here. Inputs that cannot declare an attempt kind (review
     // re-spawns, the end-of-range sync) block on a failing pre-hook, exactly

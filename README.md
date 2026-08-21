@@ -147,6 +147,13 @@ model used interactively, so pin `<role>_model` for reproducible runs (the loop
 warns once per role). `/specs-kit-config` rewrites these fields surgically (with
 a `.bak` backup on the first write of each session).
 
+**Editing the configuration while a loop runs** takes effect at the next phase:
+the loop re-reads the file before every phase, so a model fix, a repaired hook
+or a raised budget applies to the phase about to start, not to the next run. A
+file that does not parse mid-edit keeps the last loaded values with a warning;
+a missing file changes nothing. The anchors resolved at start — the selected
+spec, the task range, the resume point — stay start-time knobs.
+
 **The adversarial review panel** is a separate, ordered list under
 `adversarial_review.panel`: the models the pre-implementation review runs as
 independent reviewers, each with an optional `thinking` level. It is empty by

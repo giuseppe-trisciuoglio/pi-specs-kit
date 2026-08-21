@@ -76,3 +76,28 @@ test("the wall-clock ceiling is checked before a spawn, not after", () => {
   assert.equal(err.scope, "duration");
   assert.equal(budget.snapshot().runSpawns, 2, "the refused spawn is not charged");
 });
+
+test("reconfigure applies new ceilings while what the run spent carries over", () => {
+  const time = clock();
+  const budget = new LoopBudget({ maxSpawnsPerTask: 5, maxSpawnsPerRun: 5, maxRunDurationMs: 60_000 }, time.now);
+  budget.startTask("TASK-001");
+  budget.consume();
+  budget.consume();
+
+  // Tightening mid-run: the spawns already charged count against the new
+  // ceiling, so a limit below the current consumption refuses at once.
+  budget.reconfigure({ maxSpawnsPerTask: 5, maxSpawnsPerRun: 2, maxRunDurationMs: 60_000 });
+  const err = refusal(() => budget.consume());
+  assert.equal(err.scope, "run");
+
+  // Loosening mid-run: a ceiling the operator raises lets the run continue.
+  budget.reconfigure({ maxSpawnsPerTask: 5, maxSpawnsPerRun: 10, maxRunDurationMs: 60_000 });
+  budget.consume();
+  assert.equal(budget.snapshot().runSpawns, 3, "the counter was never reset by the reconfigure");
+
+  // The duration ceiling too follows the new limits, measured from the
+  // original start, not from the reconfigure.
+  budget.reconfigure({ maxSpawnsPerTask: 5, maxSpawnsPerRun: 10, maxRunDurationMs: 5_000 });
+  time.advance(6_000);
+  assert.equal(refusal(() => budget.consume()).scope, "duration");
+});
