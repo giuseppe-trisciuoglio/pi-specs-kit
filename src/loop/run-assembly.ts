@@ -18,6 +18,7 @@ import { walPath } from "../measure/wal.ts";
 import { LoopBudget } from "./budget.ts";
 import type { commitCheckpoint } from "./checkpoint.ts";
 import type { refreshCodebaseGraph } from "./codebase-graph.ts";
+import { ConfigReloader } from "./config-reload.ts";
 import type { workspaceFingerprint } from "./workspace.ts";
 import { declareFinalSyncNode, type RunNode } from "./graph/run-graph.ts";
 import type { TaskNodeDeps } from "./graph/types.ts";
@@ -38,6 +39,8 @@ export interface RunAssemblyDeps {
   commitCheckpoint: typeof commitCheckpoint;
   workspaceFingerprint: typeof workspaceFingerprint;
   refreshCodebaseGraph: typeof refreshCodebaseGraph;
+  /** Config loader for the per-phase reload, already defaulted by the engine. */
+  reloadConfig: (projectRoot: string, configPath?: string) => Promise<SpecsKitConfig | null>;
   /** Phase measurement; null means "build the real one now". */
   meter: PhaseMeter | null;
   now: () => Date;
@@ -84,6 +87,19 @@ export function assembleRun(deps: RunAssemblyDeps): AssembledRun {
     maxRunDurationMs: config.run.maxRunDurationMs,
   });
 
+  // The reload swaps the run options in place, so the ceilings have to be
+  // re-applied explicitly: the budget copied them into its own limits.
+  const reloader = new ConfigReloader(config, {
+    load: deps.reloadConfig,
+    notify: (m, t) => deps.notify(m, t),
+    onReloaded: (cfg) =>
+      budget.reconfigure({
+        maxSpawnsPerTask: cfg.run.maxSpawnsPerTask,
+        maxSpawnsPerRun: cfg.run.maxSpawnsPerRun,
+        maxRunDurationMs: cfg.run.maxRunDurationMs,
+      }),
+  });
+
   const meter =
     deps.meter ??
     new PhaseMeter({
@@ -99,6 +115,7 @@ export function assembleRun(deps: RunAssemblyDeps): AssembledRun {
     budget,
     spawnPhase: deps.spawnPhase,
     runHooks: deps.runHooks,
+    refreshConfig: () => reloader.refresh(),
     meter,
     onNotify: (m, t) => deps.notify(m, t),
     onStream: (event, formatted) => {

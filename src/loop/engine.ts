@@ -8,6 +8,7 @@
 
 import path from "node:path";
 import type { PhaseName, SpecsKitConfig } from "../config/specs-kit-config.ts";
+import { loadConfigIfPresent } from "./config-reload.ts";
 import { saveFixPlan, type FixPlan } from "../fixplan/fix-plan.ts";
 import { runAgentPhase, type PhaseRunOutcome, type PhaseSpawnOptions } from "../agent/spawner.ts";
 import type { PiStreamEvent } from "../agent/json-stream.ts";
@@ -48,6 +49,8 @@ export interface EngineDeps {
   commitCheckpoint?: typeof commitCheckpoint;
   workspaceFingerprint?: typeof workspaceFingerprint;
   refreshCodebaseGraph?: typeof refreshCodebaseGraph;
+  /** Config loader for the per-phase reload; defaults to the real loader. */
+  reloadConfig?: (projectRoot: string, configPath?: string) => Promise<SpecsKitConfig | null>;
   /** Phase measurement; defaults to the real ledger/write-ahead writer. */
   meter?: PhaseMeter;
   now?: () => Date;
@@ -64,6 +67,7 @@ interface ResolvedDeps {
   commitCheckpoint: typeof commitCheckpoint;
   workspaceFingerprint: typeof workspaceFingerprint;
   refreshCodebaseGraph: typeof refreshCodebaseGraph;
+  reloadConfig: (projectRoot: string, configPath?: string) => Promise<SpecsKitConfig | null>;
   /** Null means "build the real one at run start", keeping the constructor inert. */
   meter: PhaseMeter | null;
   now: () => Date;
@@ -86,6 +90,7 @@ export class LoopEngine {
       commitCheckpoint: deps.commitCheckpoint ?? commitCheckpoint,
       workspaceFingerprint: deps.workspaceFingerprint ?? workspaceFingerprint,
       refreshCodebaseGraph: deps.refreshCodebaseGraph ?? refreshCodebaseGraph,
+      reloadConfig: deps.reloadConfig ?? loadConfigIfPresent,
       meter: deps.meter ?? null,
       now: deps.now ?? (() => new Date()),
     };
@@ -197,6 +202,7 @@ export class LoopEngine {
       commitCheckpoint: this.#deps.commitCheckpoint,
       workspaceFingerprint: this.#deps.workspaceFingerprint,
       refreshCodebaseGraph: this.#deps.refreshCodebaseGraph,
+      reloadConfig: this.#deps.reloadConfig,
       meter: this.#deps.meter,
       now: this.#deps.now,
       notify: (m, t) => this.#notify(m, t),

@@ -65,6 +65,13 @@ phase, and only on retries. Identical fingerprints on a clean attempt close the 
 review. Best-effort: outside a git repo the fingerprint is `null` and the guard stays inert. Decision
 documented in `docs/adr/0015`.
 
+The configuration is not a start-time snapshot: the loop re-reads `specs-kit.yaml` before every phase
+(`src/loop/config-reload.ts`), swapping the behavioral values into the one config object every module holds,
+so no read site can go stale. The structural anchors (root paths, specs dir, active spec) stay frozen at the
+start values; a file that does not parse keeps the last loaded values with a warning, a missing file is a
+silent no-op (never a swap to the all-default config). The run ceilings follow the file through
+`LoopBudget.reconfigure`; counters and the start timestamp carry over. Decision documented in `docs/adr/0026`.
+
 ## External dependencies
 
 - **graphify is the single source of the codebase graph.** The knowledge graph lives in one file,
