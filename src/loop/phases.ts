@@ -14,6 +14,8 @@ import type { PhaseMeter } from "../measure/phase-meter.ts";
 import type { LoopBudget } from "./budget.ts";
 import type { HookResult } from "./hooks.ts";
 import { runPhaseHooks } from "./hooks.ts";
+import { classifyPhaseFailure, DEFAULT_ENVIRONMENT_STREAK, EnvironmentStreakError } from "./phase-failure.ts";
+import type { ListedModel } from "./model-check.ts";
 import type {
   CleanupPhaseInput,
   ImplementationPhaseInput,
@@ -46,6 +48,13 @@ export interface PhaseExecutorDeps {
   onPhaseStart: () => void;
   /** Called with a formatted log line from hooks or the agent stream. */
   onLogLine: (line: string) => void;
+  /**
+   * How many consecutive environmental phase failures halt the run.
+   * Injectable so tests can pin a small threshold.
+   */
+  environmentStreakLimit?: number;
+  /** Catalogue lookup for the escalation diagnosis; defaults to the real one. */
+  listModels?: () => Promise<ListedModel[]>;
   /** Phase measurement; absent in tests that do not care about the ledger. */
   meter?: PhaseMeter;
 }
@@ -78,6 +87,8 @@ export class PhaseExecutor {
   readonly #deps: PhaseExecutorDeps;
   readonly #context: PhaseContext;
   readonly #spawner: PhaseSpawner;
+  /** Consecutive environmental failures seen so far; a delivered phase clears it. */
+  #environmentStreak: string[] = [];
 
   constructor(deps: PhaseExecutorDeps) {
     this.#deps = deps;
@@ -100,6 +111,7 @@ export class PhaseExecutor {
       meter: deps.meter,
       warnAutoModel: (role) => this.#context.warnAutoModel(role),
       beginMeter: (spec, task, phase, attempt, role) => this.#context.beginMeter(spec, task, phase, attempt, role),
+      listModels: deps.listModels,
     });
   }
 
@@ -154,6 +166,7 @@ export class PhaseExecutor {
         false,
         meterHandle,
       );
+      this.#trackEnvironmentStreak(phase, task.frontmatter.id, outcome);
       const postResults = await this.#deps.runHooks(config.hooks, phase, "post", config.projectRoot, {
         onStdoutLine: (line) => this.#deps.onLogLine(`[post-${phase}] ${line}`),
         onStderrLine: (line) => this.#deps.onLogLine(`[post-${phase}] ! ${line}`),
@@ -169,6 +182,26 @@ export class PhaseExecutor {
       };
     } finally {
       if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
+    }
+  }
+
+  /**
+   * Count consecutive environmental failures across phases and tasks. The
+   * task-level routing already stops the task that found the outage; this is
+   * the run-level answer to the same outage, so the range does not walk on
+   * rediscovering it task after task. A delivered phase resets the count: a
+   * flaky minute never stops a healthy run.
+   */
+  #trackEnvironmentStreak(phase: string, taskId: string, outcome: PhaseRunOutcome | null): void {
+    const failure = classifyPhaseFailure(outcome);
+    if (!failure || (!failure.environment && failure.kind !== "no-output")) {
+      this.#environmentStreak = [];
+      return;
+    }
+    this.#environmentStreak.push(`${phase} for ${taskId}: ${failure.kind} — ${failure.detail}`);
+    const limit = this.#deps.environmentStreakLimit ?? DEFAULT_ENVIRONMENT_STREAK;
+    if (this.#environmentStreak.length >= limit) {
+      throw new EnvironmentStreakError([...this.#environmentStreak]);
     }
   }
 

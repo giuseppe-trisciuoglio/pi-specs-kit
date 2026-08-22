@@ -25,6 +25,12 @@ export interface RoleConfig {
   model: string;
   /** Thinking level flag value; undefined means "agent CLI default". */
   thinkingLevel?: string;
+  /**
+   * Second model a phase is spawned on, once, when the primary comes back
+   * refused or silent. Absent means no escalation: the usual routing applies
+   * after the first failure.
+   */
+  fallbackModel?: string;
 }
 
 export interface RunConfig {
@@ -317,6 +323,7 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
     config.roles[role] = {
       model: text(agents[`${role}_model`]) ?? "auto",
       thinkingLevel: text(agents[`${role}_thinking_level`]),
+      fallbackModel: text(agents[`${role}_fallback_model`]),
     };
   }
 

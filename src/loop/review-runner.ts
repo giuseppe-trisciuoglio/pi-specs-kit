@@ -114,7 +114,9 @@ export async function runReviewStep(
   for (;;) {
     const preserved = await rotatePriorReview(specDir, id, state.retry_count);
     if (preserved !== null && formatError !== null) {
-      formatError = reviewFormatReminder(id, path.relative(config.projectRoot, preserved));
+      formatError = reviewFormatReminder(id, {
+        preservedPath: path.relative(config.projectRoot, preserved),
+      });
     }
     if (deps.stopping()) return { kind: "stopped" };
     // The plan still flows in for the state counters (persist writes the
@@ -198,7 +200,7 @@ export async function runReviewStep(
         await persist();
         return { kind: "reportUnusable", detail };
       }
-      formatError = reviewFormatReminder(id);
+      formatError = reviewFormatReminder(id, { missing: true });
       await persist();
       notify(`review file missing for ${id}, new spawn ${state.review_file_retry}/${config.run.reviewFileRetry}`, "warning");
       continue;

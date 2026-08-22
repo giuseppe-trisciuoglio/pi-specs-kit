@@ -23,6 +23,8 @@ export interface RoleUpdate {
   model?: string;
   /** New thinking level; null removes the field, undefined leaves it alone. */
   thinkingLevel?: string | null;
+  /** New escalation model; null removes the field, undefined leaves it alone. */
+  fallbackModel?: string | null;
 }
 
 /** Scalar keys under the run: section that the config view can edit. */
@@ -145,6 +147,11 @@ export async function updateRoleConfig(
       agents.delete(`${role}_thinking_level`);
     } else if (update.thinkingLevel !== undefined) {
       agents.set(`${role}_thinking_level`, update.thinkingLevel);
+    }
+    if (update.fallbackModel === null) {
+      agents.delete(`${role}_fallback_model`);
+    } else if (update.fallbackModel !== undefined) {
+      agents.set(`${role}_fallback_model`, update.fallbackModel);
     }
   });
 }
