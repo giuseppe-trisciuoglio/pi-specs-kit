@@ -147,28 +147,31 @@ export function reviewFormatReminder(
   taskId: string,
   opts: { preservedPath?: string; missing?: boolean } = {},
 ): string {
-  const lines = opts.preservedPath
-    ? [
-        `The previous review of ${taskId} wrote a report the loop could not read:`,
-        `the file did not start with a usable YAML frontmatter block. The report`,
-        `is preserved at ${opts.preservedPath}. Do not review the task again:`,
-        "read that file, keep its findings and its verdict exactly as they are,",
-        "and write it back to the report path with a frontmatter block in the",
-        "shape below.",
-      ]
-    : opts.missing
-      ? [
-          `The previous review of ${taskId} produced no file at all:`,
-          `tasks/${taskId}--review.md does not exist. Produce the review now and`,
-          "write the report to that exact path (relative to the spec folder),",
-          "starting with exactly these lines and nothing before them:",
-        ]
-      : [
-          `The previous review of ${taskId} left no readable verdict: the file`,
-          `tasks/${taskId}--review.md was missing, or it did not start with a YAML`,
-          "frontmatter block holding review_status. Write it again, starting with",
-          "exactly these lines and nothing before them:",
-        ];
+  let lines: string[];
+  if (opts.preservedPath) {
+    lines = [
+      `The previous review of ${taskId} wrote a report the loop could not read:`,
+      `the file did not start with a usable YAML frontmatter block. The report`,
+      `is preserved at ${opts.preservedPath}. Do not review the task again:`,
+      "read that file, keep its findings and its verdict exactly as they are,",
+      "and write it back to the report path with a frontmatter block in the",
+      "shape below.",
+    ];
+  } else if (opts.missing) {
+    lines = [
+      `The previous review of ${taskId} produced no file at all:`,
+      `tasks/${taskId}--review.md does not exist. Produce the review now and`,
+      "write the report to that exact path (relative to the spec folder),",
+      "starting with exactly these lines and nothing before them:",
+    ];
+  } else {
+    lines = [
+      `The previous review of ${taskId} left no readable verdict: the file`,
+      `tasks/${taskId}--review.md was missing, or it did not start with a YAML`,
+      "frontmatter block holding review_status. Write it again, starting with",
+      "exactly these lines and nothing before them:",
+    ];
+  }
   lines.push(
     "",
     "---",
