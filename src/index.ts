@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { PhaseName } from "./config/specs-kit-config.ts";
+import type { PhaseName, SpecsKitConfig } from "./config/specs-kit-config.ts";
 import type { LoopStartOptions, LoopStatus } from "./loop/engine.ts";
 import { registerAuthoringCommands } from "./authoring/authoring-commands.ts";
 import { ledgerPath } from "./measure/ledger.ts";
@@ -13,7 +13,7 @@ import { openAttachView } from "./ui/attach-view.ts";
 import { openConfigView } from "./ui/config-view.ts";
 import { PHASE_CHOICES, pickPhase, pickSpec, pickTaskRange } from "./ui/pickers.ts";
 import { report } from "./ui/report.ts";
-import { parseRunArgs } from "./ui/run-args.ts";
+import { parseRunArgs, type RunArgs } from "./ui/run-args.ts";
 import { updateLoopWidget, type WidgetStatus } from "./ui/widget.ts";
 
 /** Multi-line status report for /specs-kit-status. */
@@ -101,6 +101,66 @@ export default function specsKitExtension(pi: ExtensionAPI): void {
     return controller.config ?? controller.loadConfig(ctx.cwd);
   };
 
+  /** Resolve the spec to run over: the arguments first, the active spec next,
+   * an interactive pick last. Null when nothing was chosen. */
+  const resolveSpec = async (
+    ctx: ExtensionCommandContext,
+    config: SpecsKitConfig,
+    opts: RunArgs,
+  ): Promise<string | null> => {
+    const spec = opts.spec ?? config.spec;
+    if (spec) return spec;
+    if (!ctx.hasUI) {
+      report(ctx, "[specs-kit] Specify the spec: /specs-kit-run --spec <path>");
+      return null;
+    }
+    const picked = await pickSpec(controller, ctx, { onlyWithTasks: true, active: config.spec });
+    if (!picked) {
+      report(ctx, "[specs-kit] Start cancelled.");
+      return null;
+    }
+    return picked;
+  };
+
+  /** The interactive task range, asked only when a UI can show it and the
+   * arguments did not pin one already. Null on cancel. */
+  const resolveTaskRange = async (
+    ctx: ExtensionCommandContext,
+    spec: string,
+    opts: RunArgs,
+  ): Promise<{ fromTask?: string; toTask?: string } | null> => {
+    if (!ctx.hasUI || opts.fromTask || opts.toTask) return {};
+    const range = await pickTaskRange(controller, spec, ctx);
+    if (!range) {
+      report(ctx, "[specs-kit] Start cancelled.");
+      return null;
+    }
+    return range;
+  };
+
+  /** The start phase: validated from the arguments when present, asked
+   * interactively otherwise. Null on cancel or invalid input; undefined
+   * means no phase choice and the default applies. */
+  const resolveStartPhase = async (
+    ctx: ExtensionCommandContext,
+    opts: RunArgs,
+  ): Promise<PhaseName | null | undefined> => {
+    if (opts.phase) {
+      if (!(PHASE_CHOICES as readonly string[]).includes(opts.phase)) {
+        report(ctx, `[specs-kit] Invalid phase "${opts.phase}"; allowed values: ${PHASE_CHOICES.join(", ")}.`);
+        return null;
+      }
+      return opts.phase as PhaseName;
+    }
+    if (!ctx.hasUI) return undefined;
+    const picked = await pickPhase(ctx);
+    if (!picked) {
+      report(ctx, "[specs-kit] Start cancelled.");
+      return null;
+    }
+    return picked;
+  };
+
   pi.registerCommand("specs-kit-run", {
     description: "Start the loop over the tasks of a spec",
     handler: async (args, ctx) => {
@@ -111,49 +171,18 @@ export default function specsKitExtension(pi: ExtensionAPI): void {
         report(ctx, "[specs-kit] A loop is already running; use /specs-kit-stop to stop it.");
         return;
       }
-
       const opts = parseRunArgs(args);
-      let spec = opts.spec ?? config.spec;
-      if (!spec) {
-        if (!ctx.hasUI) {
-          report(ctx, "[specs-kit] Specify the spec: /specs-kit-run --spec <path>");
-          return;
-        }
-        spec = await pickSpec(controller, ctx, { onlyWithTasks: true, active: config.spec });
-        if (!spec) {
-          report(ctx, "[specs-kit] Start cancelled.");
-          return;
-        }
-      }
 
-      let fromTask = opts.fromTask;
-      let toTask = opts.toTask;
-      if (ctx.hasUI && !fromTask && !toTask) {
-        const range = await pickTaskRange(controller, spec, ctx);
-        if (!range) {
-          report(ctx, "[specs-kit] Start cancelled.");
-          return;
-        }
-        fromTask = range.fromTask;
-        toTask = range.toTask;
-      }
-
-      let phase: PhaseName | undefined;
-      if (opts.phase) {
-        if (!(PHASE_CHOICES as readonly string[]).includes(opts.phase)) {
-          report(ctx, `[specs-kit] Invalid phase "${opts.phase}"; allowed values: ${PHASE_CHOICES.join(", ")}.`);
-          return;
-        }
-        phase = opts.phase as PhaseName;
-      } else if (ctx.hasUI) {
-        phase = await pickPhase(ctx);
-        if (!phase) {
-          report(ctx, "[specs-kit] Start cancelled.");
-          return;
-        }
-      }
+      const spec = await resolveSpec(ctx, config, opts);
+      if (!spec) return;
+      const range = await resolveTaskRange(ctx, spec, opts);
+      if (!range) return;
+      const phase = await resolveStartPhase(ctx, opts);
+      if (phase === null) return;
 
       const startOpts: LoopStartOptions = { specDir: spec };
+      const fromTask = range.fromTask ?? opts.fromTask;
+      const toTask = range.toTask ?? opts.toTask;
       if (fromTask) startOpts.fromTask = fromTask;
       if (toTask) startOpts.toTask = toTask;
       if (phase) startOpts.phase = phase;

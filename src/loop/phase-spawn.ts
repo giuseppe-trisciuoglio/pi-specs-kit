@@ -7,10 +7,12 @@
 import path from "node:path";
 import type { PiStreamEvent } from "../agent/json-stream.ts";
 import { assistantText, formatStreamEvent } from "../agent/stream-format.ts";
+import { classifyPhaseFailure } from "./phase-failure.ts";
 import type { PhaseRunOutcome, PhaseSpawnOptions } from "../agent/spawner.ts";
 import type { RoleName, SpecsKitConfig } from "../config/specs-kit-config.ts";
 import type { TaskFile } from "../tasks/task-parser.ts";
 import type { PhaseHandle, PhaseMeter } from "../measure/phase-meter.ts";
+import type { ListedModel } from "./model-check.ts";
 import { PhaseLogWriter } from "../util/log-writer.ts";
 import type { LoopBudget } from "./budget.ts";
 import type { HookResult } from "./hooks.ts";
@@ -75,13 +77,21 @@ export function parseConfirmations(text: string, known: readonly string[]): stri
   const byLower = new Map(known.map((k) => [k.toLowerCase(), k]));
   const cited: string[] = [];
   for (const line of text.split("\n")) {
-    const match = new RegExp(`^\\s*(?:[-*]\\s*)?${CONFIRMED_PREFIX}\\s*(.+?)\\s*$`).exec(line);
+    const match = new RegExp(String.raw`^\s*(?:[-*]\s*)?${CONFIRMED_PREFIX}\s*(.+?)\s*$`).exec(line);
     if (!match) continue;
     const hit = byLower.get(match[1].replace(/^["'`]|["'`]$/g, "").toLowerCase());
     if (hit && !cited.includes(hit)) cited.push(hit);
     if (cited.length === MAX_CONFIRMATIONS) break;
   }
   return cited;
+}
+
+/** Identity and prompt of one spawn: what is being run, as opposed to how. */
+export interface PhaseSpawnRequest {
+  taskId: string;
+  label: string;
+  role: RoleName;
+  prompt: string;
 }
 
 export interface PhaseSpawnerDeps {
@@ -102,6 +112,8 @@ export interface PhaseSpawnerDeps {
   onLogLine: (line: string) => void;
   /** Phase measurement; absent in tests that do not care about the ledger. */
   meter?: PhaseMeter;
+  /** Catalogue lookup for the escalation diagnosis; injectable for tests. */
+  listModels?: () => Promise<ListedModel[]>;
   warnAutoModel: (role: RoleName) => void;
   beginMeter: (spec: string, task: string, phase: string, attempt: number, role: RoleName) => PhaseHandle | null;
 }
@@ -115,15 +127,72 @@ export class PhaseSpawner {
   }
 
   async spawn(
-    taskId: string,
-    label: string,
-    role: RoleName,
-    prompt: string,
+    request: PhaseSpawnRequest,
     systemPromptOverride: SystemPromptOverrideText | undefined,
     signal: AbortSignal | undefined,
     captureText: boolean,
     meterHandle: PhaseHandle | null = null,
   ): Promise<LearnerResult> {
+    const { taskId, label, role } = request;
+    const roleConfig = this.#deps.config.roles[role];
+    if (!roleConfig.model || roleConfig.model === "auto") this.#deps.warnAutoModel(role);
+    const first = await this.#spawnOnce(
+      request, roleConfig.model, systemPromptOverride, signal, captureText, meterHandle,
+    );
+    const failure = classifyPhaseFailure(first.outcome);
+    if (!failure) return first;
+    // A refusal or a silent spawn is evidence about the environment, not
+    // about the prompt. When the role declares a second model, exactly one
+    // spawn goes to it before the usual routing takes over — a ladder of
+    // fallbacks would spend the run budget proving the same outage per task.
+    const fallback = this.#escalationModel(role, roleConfig.model);
+    if (fallback === null) return first;
+    this.#deps.onNotify(await this.#escalationNotice(taskId, label, failure, roleConfig.model, fallback), "warning");
+    const second = await this.#spawnOnce(
+      request, fallback, systemPromptOverride, signal, captureText, meterHandle,
+    );
+    return classifyPhaseFailure(second.outcome) === null ? second : first;
+  }
+
+  /** The role's escalation model, when it differs from the one just tried. */
+  #escalationModel(role: RoleName, attempted: string | undefined): string | null {
+    const fallback = this.#deps.config.roles[role].fallbackModel;
+    if (!fallback || fallback === attempted) return null;
+    return fallback;
+  }
+
+  /**
+   * One-line reason for the escalation. On a silent spawn it also asks the
+   * catalogue whether the primary model still exists: a model removed
+   * mid-run and a provider outage produce the same silence, and the check is
+   * one CLI call that tells them apart.
+   */
+  async #escalationNotice(
+    taskId: string,
+    phase: string,
+    failure: NonNullable<ReturnType<typeof classifyPhaseFailure>>,
+    primary: string | undefined,
+    fallback: string,
+  ): Promise<string> {
+    let diagnosis = failure.detail;
+    if (failure.kind === "no-output" && primary && primary !== "auto") {
+      const listed = await this.#deps.listModels?.().catch(() => [] as ListedModel[]);
+      if (listed && listed.length > 0 && !listed.some((m) => `${m.provider}/${m.model}` === primary)) {
+        diagnosis += `; the model ${primary} is not in the agent CLI catalogue any more`;
+      }
+    }
+    return `${phase} for ${taskId} failed (${failure.kind}: ${diagnosis}); spawning once more on the fallback model ${fallback}`;
+  }
+
+  async #spawnOnce(
+    request: PhaseSpawnRequest,
+    model: string | undefined,
+    systemPromptOverride: SystemPromptOverrideText | undefined,
+    signal: AbortSignal | undefined,
+    captureText: boolean,
+    meterHandle: PhaseHandle | null,
+  ): Promise<LearnerResult> {
+    const { taskId, label, role, prompt } = request;
     const { config } = this.#deps;
     // Every phase reaches the agent through here, so charging the budget at
     // this single point is what makes the ceilings inescapable. It throws
@@ -137,13 +206,11 @@ export class PhaseSpawner {
     this.#deps.onPhaseStart();
     if (config.run.showPrompt) writer.writeLine(`$ prompt\n${prompt}`);
     let text = "";
-    const roleConfig = config.roles[role];
-    if (!roleConfig.model || roleConfig.model === "auto") this.#deps.warnAutoModel(role);
     try {
       const outcome = await this.#deps.spawnPhase({
         prompt,
-        model: roleConfig.model,
-        thinkingLevel: roleConfig.thinkingLevel,
+        model,
+        thinkingLevel: config.roles[role].thinkingLevel,
         appendSystemPrompt: systemPromptOverride?.mode === "append" ? systemPromptOverride.content : undefined,
         systemPrompt: systemPromptOverride?.mode === "replace" ? systemPromptOverride.content : undefined,
         cwd: config.projectRoot,
@@ -160,6 +227,10 @@ export class PhaseSpawner {
         },
         onStderrLine: (line) => writer.writeLine(`! stderr: ${line}`),
       });
+      // Written before the caller decides anything: an outcome that came back
+      // refused or silent has no usage row to speak for it, so the raw facts
+      // land in the ledger whatever happens next.
+      if (meterHandle) this.#deps.meter?.recordSpawn(meterHandle, outcome);
       return { outcome, text };
     } finally {
       await writer.close();
@@ -170,12 +241,18 @@ export class PhaseSpawner {
   async runLearner(
     task: TaskFile,
     known: readonly string[] = [],
-    opts: { signal?: AbortSignal } = {},
+    opts?: { signal?: AbortSignal },
   ): Promise<LearnerResult> {
     const spec = path.basename(this.#deps.specDir);
     const meterHandle = this.#deps.beginMeter(spec, task.frontmatter.id, "learner", 1, "learner");
     try {
-      return await this.spawn(task.frontmatter.id, "learner", "learner", buildLearnerPrompt(task, known), undefined, opts.signal, true, meterHandle);
+      return await this.spawn(
+        { taskId: task.frontmatter.id, label: "learner", role: "learner", prompt: buildLearnerPrompt(task, known) },
+        undefined,
+        opts?.signal,
+        true,
+        meterHandle,
+      );
     } finally {
       if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
     }
@@ -185,7 +262,7 @@ export class PhaseSpawner {
    * Spawn the learner to compact the project-level learnings: deduplicate,
    * merge related entries, and drop outdated insights. Returns the cleaned list.
    */
-  async compactLearnings(learnings: string[], opts: { signal?: AbortSignal } = {}): Promise<string[]> {
+  async compactLearnings(learnings: string[], opts?: { signal?: AbortSignal }): Promise<string[]> {
     const prompt = [
       "Review the following accumulated project learnings. Clean up the list:",
       "- Remove entries that are outdated or no longer relevant.",
@@ -198,12 +275,9 @@ export class PhaseSpawner {
     const meterHandle = this.#deps.beginMeter(path.basename(this.#deps.specDir), "learnings", "compact", 1, "learner");
     try {
       const { text } = await this.spawn(
-        "learnings",
-        "compact",
-        "learner",
-        prompt,
+        { taskId: "learnings", label: "compact", role: "learner", prompt },
         undefined,
-        opts.signal,
+        opts?.signal,
         true,
         meterHandle,
       );

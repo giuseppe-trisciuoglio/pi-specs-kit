@@ -78,11 +78,21 @@ test("spec conflicts are read from both the list and the inline form", () => {
 
 test("the reminder names the rule that breaks and the file to repair", () => {
   const bare = reviewFormatReminder("TASK-002");
-  const repair = reviewFormatReminder("TASK-002", "docs/specs/001/tasks/TASK-002--review.unreadable.md");
+  const repair = reviewFormatReminder("TASK-002", {
+    preservedPath: "docs/specs/001/tasks/TASK-002--review.unreadable.md",
+  });
+  const missing = reviewFormatReminder("TASK-002", { missing: true });
 
   assert.match(bare, /review_status/);
   assert.match(bare, /colon/, "the reminder must name what actually breaks the block");
   assert.doesNotMatch(bare, /preserved/);
   assert.match(repair, /TASK-002--review\.unreadable\.md/);
-  assert.match(repair, /Do not review the\ntask again/, "a repair spawn rewrites the block, it does not re-review");
+  assert.match(repair, /Do not review the task again/, "a repair spawn rewrites the block, it does not re-review");
+  // A missing report and an unreadable one are different failures: the missing
+  // case has nothing to repair, so it says plainly that no file was produced.
+  assert.match(missing, /produced no file at all/);
+  assert.doesNotMatch(missing, /preserved/);
+  for (const text of [bare, repair, missing]) {
+    assert.match(text, /review_status: "PASSED"/, "the skeleton quotes every value, status included");
+  }
 });

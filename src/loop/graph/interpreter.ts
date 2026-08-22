@@ -55,6 +55,18 @@ function buildRoutingContext(runtime: TaskRuntime, facts: RoutingFacts, feedback
   };
 }
 
+/** The first outgoing edge of `current` whose condition holds, or null when
+ * none does: an unmatched node is a graph defect, not a routing choice. */
+function matchEdge(graph: TaskGraph, current: TaskNodeId, ctx: RoutingContext): TaskNodeId | null {
+  for (const edge of graph.edges) {
+    if (edge.from !== current) continue;
+    const predicate = CONDITIONS[edge.when];
+    if (!predicate) throw new Error(`edge ${edge.from} → ${edge.to} names unregistered condition "${edge.when}"`);
+    if (predicate(ctx)) return edge.to;
+  }
+  return null;
+}
+
 export async function interpretTaskGraph(graph: TaskGraph, input: InterpretInput): Promise<TaskOutcome> {
   const { runtime, facts } = input;
   const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
@@ -76,16 +88,7 @@ export async function interpretTaskGraph(graph: TaskGraph, input: InterpretInput
     if (outcome.kind === "stopped") return "stopped";
 
     const ctx = buildRoutingContext(runtime, facts, feedbackOnEntry);
-    let next: TaskNodeId | null = null;
-    for (const edge of graph.edges) {
-      if (edge.from !== current) continue;
-      const predicate = CONDITIONS[edge.when];
-      if (!predicate) throw new Error(`edge ${edge.from} → ${edge.to} names unregistered condition "${edge.when}"`);
-      if (predicate(ctx)) {
-        next = edge.to;
-        break;
-      }
-    }
+    const next = matchEdge(graph, current, ctx);
     if (next === null) throw new Error(`no outgoing edge of "${current}" matched`);
     current = next;
   }

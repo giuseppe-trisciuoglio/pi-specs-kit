@@ -113,3 +113,32 @@ test("the operator message names the cause, quotes the provider and says a retry
   assert.match(message, /fails identically/);
   assert.match(message, /change the model for this role/);
 });
+
+test("an error message without an error stop reason is still a failure", () => {
+  // The shape that walked past the old guard: the provider refuses before the
+  // first token, the closing message carries the refusal, and the stop reason
+  // stays unset. Evidence, not taxonomy, decides.
+  const failure = classifyPhaseFailure(outcome({ errorMessage: REAL_429 }));
+
+  assert.equal(failure?.kind, "quota");
+  assert.equal(failure?.environment, true);
+});
+
+test("a termination signal counts as a failure whatever the exit code says", () => {
+  const failure = classifyPhaseFailure(outcome({ signal: "SIGTERM", exitCode: 0 }));
+
+  assert.equal(failure?.kind, "agent-error");
+  assert.match(failure!.detail, /SIGTERM/);
+});
+
+test("a clean exit with an empty stream is its own kind of failure", () => {
+  // A phase whose contract is a written artifact cannot have delivered when
+  // no assistant message ever arrived — this is the eight-blind-spawns case.
+  const silent = classifyPhaseFailure(outcome({ assistantMessages: 0 }));
+  assert.equal(silent?.kind, "no-output");
+  assert.equal(silent?.environment, false);
+
+  // An outcome that does not carry the count says nothing about silence.
+  const uncounted = classifyPhaseFailure(outcome({ assistantMessages: undefined }));
+  assert.equal(uncounted, null);
+});

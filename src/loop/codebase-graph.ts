@@ -39,7 +39,7 @@ function summarize(stdout: string): string {
   const rebuilt = /Rebuilt:[^\n]*/.exec(stdout);
   if (rebuilt) return rebuilt[0].trim();
   const lines = stdout.trim().split("\n").filter((l) => l.trim() !== "");
-  return lines.length > 0 ? lines[lines.length - 1].trim() : "";
+  return lines.at(-1)?.trim() ?? "";
 }
 
 /**

@@ -128,7 +128,7 @@ export function emptyFixPlan(specId: string, specFolder: string): FixPlan {
 }
 
 function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.map((item) => String(item)) : [];
+  return Array.isArray(value) ? value.map(String) : [];
 }
 
 /**
@@ -155,9 +155,9 @@ export async function loadFixPlan(specDir: string): Promise<FixPlan | null> {
     superseded: data.superseded === null || data.superseded === undefined ? null : stringArray(data.superseded),
     optional: data.optional === null || data.optional === undefined ? null : stringArray(data.optional),
     learnings: stringArray(data.learnings),
-    task_range: { ...base.task_range, ...(data.task_range ?? {}) },
-    range_progress: { ...base.range_progress, ...(data.range_progress ?? {}) },
-    state: { ...base.state, ...(data.state ?? {}) },
+    task_range: { ...base.task_range, ...data.task_range },
+    range_progress: { ...base.range_progress, ...data.range_progress },
+    state: { ...base.state, ...data.state },
   };
 }
 

@@ -125,7 +125,7 @@ export async function openPanelConfig(ctx: ExtensionCommandContext, controller: 
 
   for (;;) {
     const panel = config.reviewPanel;
-    const labels = panel.map(reviewerLabel);
+    const labels = panel.map((reviewer, index) => reviewerLabel(reviewer, index));
     const options = [...labels];
     if (panel.length < MAX_PANEL_REVIEWERS) options.push(ADD);
     options.push(DONE);

@@ -28,6 +28,7 @@ import {
   reviewFilePath,
   reviewFormatReminder,
 } from "./review-report.ts";
+import type { ReviewReport } from "./review-report.ts";
 import type { TaskRunnerDeps } from "./task-runner.ts";
 
 /**
@@ -92,6 +93,134 @@ async function rotatePriorReview(specDir: string, taskId: string, retryCount: nu
 }
 
 /**
+ * A red pre-hook gate before the reviewer ran leaves nothing to read, and
+ * the review file budget belongs to the attempt: it resets here, or the next
+ * one would start mid-budget and get fewer spawns than configured.
+ */
+async function onPreHookFailure(deps: ReviewStepDeps, plan: FixPlan, id: string): Promise<ReviewVerdict> {
+  plan.state.review_file_retry = 0;
+  deps.notify(`pre-review hook failed (${id})`, "warning");
+  await deps.persist(plan);
+  return { kind: "attemptFailed" };
+}
+
+/**
+ * A phase interrupt says nothing about the implementation: it was never
+ * judged. Re-implementing working code to reach a second opinion costs two
+ * agent sessions to get back where the loop already was, so the reviewer is
+ * spawned again inside the same bounded budget instead. Returns null when
+ * the budget still has room, meaning the caller must spawn again.
+ */
+async function onInterruptedReview(
+  deps: ReviewStepDeps,
+  plan: FixPlan,
+  id: string,
+): Promise<ReviewVerdict | null> {
+  const { config, notify } = deps;
+  const state = plan.state;
+  state.review_file_retry++;
+  if (state.review_file_retry > config.run.reviewFileRetry) {
+    state.review_file_retry = 0;
+    notify(`review interrupted for ${id} beyond its retries, attempt failed`, "warning");
+    await deps.persist(plan);
+    return { kind: "attemptFailed" };
+  }
+  await deps.persist(plan);
+  notify(
+    `review interrupted for ${id}, new spawn ${state.review_file_retry}/${config.run.reviewFileRetry}`,
+    "warning",
+  );
+  return null;
+}
+
+/**
+ * A subprocess that failed left no verdict to read, and reading the absent
+ * report as "the reviewer forgot to write it" would spend the whole review
+ * budget re-spawning an agent that cannot even start. This is an
+ * environment failure — a rejected model, an expired key or a rate limit
+ * fails identically on every spawn — so no re-implementation can fix it:
+ * the only useful answer is to stop the task and say so, without spending
+ * an attempt on it.
+ */
+async function onSpawnFailure(
+  deps: ReviewStepDeps,
+  plan: FixPlan,
+  id: string,
+  failure: NonNullable<ReturnType<typeof classifyPhaseFailure>>,
+): Promise<ReviewVerdict> {
+  const { notify } = deps;
+  plan.state.review_file_retry = 0;
+  await deps.persist(plan);
+  // A refused spawn is reported as an error, not a warning: it names a
+  // provider or a configuration the operator has to change, and it read as
+  // one more failed attempt when it shared the severity of a lost round.
+  if (failure.environment) {
+    notify(environmentFailureMessage("review", id, failure), "error");
+  } else {
+    notify(`review did not run for ${id} (${failure.detail}), task abandoned`, "warning");
+  }
+  return { kind: "reportUnusable", detail: `review ${failure.kind}: ${failure.detail}` };
+}
+
+/**
+ * The review file is missing or unreadable after a spawn that reported ok:
+ * spend the bounded review file retries before giving the attempt up.
+ * Returns the format error the next spawn must carry when the budget still
+ * has room, or the verdict when it does not.
+ */
+async function onReportMissing(
+  deps: ReviewStepDeps,
+  plan: FixPlan,
+  id: string,
+): Promise<string | ReviewVerdict> {
+  const { config, notify } = deps;
+  const state = plan.state;
+  state.review_file_retry++;
+  if (state.review_file_retry > config.run.reviewFileRetry) {
+    const detail = `review file missing or invalid after ${config.run.reviewFileRetry} new attempts`;
+    state.review_file_error = detail;
+    state.review_file_retry = 0;
+    notify(`review file absent for ${id}, task abandoned`, "warning");
+    await deps.persist(plan);
+    return { kind: "reportUnusable", detail };
+  }
+  const formatError = reviewFormatReminder(id, { missing: true });
+  await deps.persist(plan);
+  notify(`review file missing for ${id}, new spawn ${state.review_file_retry}/${config.run.reviewFileRetry}`, "warning");
+  return formatError;
+}
+
+/**
+ * Judge the report the loop just read: a requirement conflict cannot be
+ * waved through by the same session that raised it, a routed fix without a
+ * remaining owner has to be done now, and only then does the verdict count.
+ */
+function judgeReport(deps: ReviewStepDeps, plan: FixPlan, id: string, report: ReviewReport): ReviewVerdict {
+  const { notify } = deps;
+  // A review that reports a requirement contradicted by the implementation
+  // cannot also wave it through: the reviewer describes the conflict, the
+  // loop decides what it costs. Without this the same session both raises
+  // the contradiction and absolves it, which is how one leaves a run as a
+  // note in a report nobody acts on.
+  if (report.specConflicts.length > 0) {
+    const first = report.specConflicts[0];
+    notify(`review of ${id} reports ${report.specConflicts.length} requirement conflict(s): ${first}`, "warning");
+    return { kind: "failed", feedback: reviewFeedback(report) };
+  }
+  // A deferral to a task that will not run is not a deferral: the fix would
+  // be recorded and never made. The implementation is asked to do it now,
+  // which is the only owner still available.
+  const unowned = routedWithoutOwner(report.routed, plan, id);
+  if (unowned.length > 0) {
+    notify(`review of ${id} routed ${unowned.length} fix(es) to a task that will not run`, "warning");
+    return { kind: "failed", feedback: unownedRoutedFeedback(unowned) };
+  }
+  if (report.status === "PASSED") return { kind: "passed" };
+  notify(`review rejected for ${id}: ${report.summary || "see the report"}`, "warning");
+  return { kind: "failed", feedback: reviewFeedback(report) };
+}
+
+/**
  * Review step: spawn the reviewer until a valid report appears. A missing
  * or invalid report costs a review file retry (bounded); exhausting those
  * costs a full attempt. The stale report is rotated before every spawn so
@@ -103,7 +232,6 @@ export async function runReviewStep(
   taskFile: TaskFile,
 ): Promise<ReviewVerdict> {
   const { config, specDir, executor, notify } = deps;
-  const persist = (): Promise<void> => deps.persist(plan);
   const state = plan.state;
   const id = taskFile.frontmatter.id;
 
@@ -114,7 +242,9 @@ export async function runReviewStep(
   for (;;) {
     const preserved = await rotatePriorReview(specDir, id, state.retry_count);
     if (preserved !== null && formatError !== null) {
-      formatError = reviewFormatReminder(id, path.relative(config.projectRoot, preserved));
+      formatError = reviewFormatReminder(id, {
+        preservedPath: path.relative(config.projectRoot, preserved),
+      });
     }
     if (deps.stopping()) return { kind: "stopped" };
     // The plan still flows in for the state counters (persist writes the
@@ -132,55 +262,14 @@ export async function runReviewStep(
       signal: deps.signal(),
     });
     if (deps.stopping() === "now") return { kind: "stopped" };
-    // The review file budget belongs to the attempt: whenever the attempt ends
-    // here the counter goes back to zero, or the next one would start
-    // mid-budget and get fewer spawns than configured.
-    if (!rev.preHooksOk) {
-      state.review_file_retry = 0;
-      notify(`pre-review hook failed (${id})`, "warning");
-      await persist();
-      return { kind: "attemptFailed" };
-    }
+    if (!rev.preHooksOk) return await onPreHookFailure(deps, plan, id);
     if (rev.outcome?.aborted) {
-      // A phase interrupt says nothing about the implementation: it was never
-      // judged. Re-implementing working code to reach a second opinion costs
-      // two agent sessions to get back where the loop already was, so the
-      // reviewer is spawned again inside the same bounded budget instead.
-      state.review_file_retry++;
-      if (state.review_file_retry > config.run.reviewFileRetry) {
-        state.review_file_retry = 0;
-        notify(`review interrupted for ${id} beyond its retries, attempt failed`, "warning");
-        await persist();
-        return { kind: "attemptFailed" };
-      }
-      await persist();
-      notify(
-        `review interrupted for ${id}, new spawn ${state.review_file_retry}/${config.run.reviewFileRetry}`,
-        "warning",
-      );
+      const verdict = await onInterruptedReview(deps, plan, id);
+      if (verdict) return verdict;
       continue;
     }
-    // A subprocess that failed left no verdict to read, and reading the absent
-    // report as "the reviewer forgot to write it" would spend the whole review
-    // budget re-spawning an agent that cannot even start. This is an
-    // environment failure — a rejected model, an expired key or a rate limit
-    // fails identically on every spawn — so no re-implementation can fix it:
-    // the only useful answer is to stop the task and say so, without spending
-    // an attempt on it.
     const failure = classifyPhaseFailure(rev.outcome);
-    if (failure) {
-      state.review_file_retry = 0;
-      await persist();
-      // A refused spawn is reported as an error, not a warning: it names a
-      // provider or a configuration the operator has to change, and it read as
-      // one more failed attempt when it shared the severity of a lost round.
-      if (failure.environment) {
-        notify(environmentFailureMessage("review", id, failure), "error");
-      } else {
-        notify(`review did not run for ${id} (${failure.detail}), task abandoned`, "warning");
-      }
-      return { kind: "reportUnusable", detail: `review ${failure.kind}: ${failure.detail}` };
-    }
+    if (failure) return await onSpawnFailure(deps, plan, id, failure);
     // The reviewer does not write code, so a red gate after it is nothing the
     // review itself can act on and there is no retry path here to spend. It is
     // recorded like the gates of the other phases that cannot react, so the
@@ -189,53 +278,23 @@ export async function runReviewStep(
 
     const report = await readReviewReport(specDir, id);
     if (!report) {
-      state.review_file_retry++;
-      if (state.review_file_retry > config.run.reviewFileRetry) {
-        const detail = `review file missing or invalid after ${config.run.reviewFileRetry} new attempts`;
-        state.review_file_error = detail;
-        state.review_file_retry = 0;
-        notify(`review file absent for ${id}, task abandoned`, "warning");
-        await persist();
-        return { kind: "reportUnusable", detail };
+      const missing = await onReportMissing(deps, plan, id);
+      if (typeof missing === "string") {
+        formatError = missing;
+        continue;
       }
-      formatError = reviewFormatReminder(id);
-      await persist();
-      notify(`review file missing for ${id}, new spawn ${state.review_file_retry}/${config.run.reviewFileRetry}`, "warning");
-      continue;
+      return missing;
     }
 
     state.review_file_retry = 0;
     state.review_file_error = null;
-    await persist();
+    await deps.persist(plan);
     // The report the loop read is the one that counts: nothing is left behind
     // to make a later reader think the salvaged copy is still pending.
     await rm(reviewUnreadablePath(specDir, id), { force: true }).catch(() => {});
     if (report.recovered) {
       notify(`review report of ${id} had a malformed frontmatter block, verdict read line by line`, "warning");
     }
-    // A review that reports a requirement contradicted by the implementation
-    // cannot also wave it through: the reviewer describes the conflict, the
-    // loop decides what it costs. Without this the same session both raises
-    // the contradiction and absolves it, which is how one leaves a run as a
-    // note in a report nobody acts on.
-    if (report.specConflicts.length > 0) {
-      const first = report.specConflicts[0];
-      notify(
-        `review of ${id} reports ${report.specConflicts.length} requirement conflict(s): ${first}`,
-        "warning",
-      );
-      return { kind: "failed", feedback: reviewFeedback(report) };
-    }
-    // A deferral to a task that will not run is not a deferral: the fix would
-    // be recorded and never made. The implementation is asked to do it now,
-    // which is the only owner still available.
-    const unowned = routedWithoutOwner(report.routed, plan, id);
-    if (unowned.length > 0) {
-      notify(`review of ${id} routed ${unowned.length} fix(es) to a task that will not run`, "warning");
-      return { kind: "failed", feedback: unownedRoutedFeedback(unowned) };
-    }
-    if (report.status === "PASSED") return { kind: "passed" };
-    notify(`review rejected for ${id}: ${report.summary || "see the report"}`, "warning");
-    return { kind: "failed", feedback: reviewFeedback(report) };
+    return judgeReport(deps, plan, id, report);
   }
 }
