@@ -106,7 +106,7 @@ export async function checkTraceabilityMatrix(
 
   for (const line of content.split("\n")) {
     const row = parseRow(line);
-    if (!row || !row.covered) continue;
+    if (!row?.covered) continue;
     if (row.citations.length === 0) {
       findings.push({ id: row.id, problem: "claims coverage without naming a test file" });
       continue;

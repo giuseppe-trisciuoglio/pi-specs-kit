@@ -157,10 +157,7 @@ export class PhaseExecutor {
       }
       const { prompt, systemPromptOverride } = await this.#context.buildPrompt(phase, input, preResults);
       const { outcome } = await this.#spawner.spawn(
-        task.frontmatter.id,
-        phase,
-        role,
-        prompt,
+        { taskId: task.frontmatter.id, label: phase, role, prompt },
         systemPromptOverride,
         input.signal,
         false,
@@ -209,7 +206,7 @@ export class PhaseExecutor {
   async runLearner(
     task: TaskFile,
     known: readonly string[] = [],
-    opts: { signal?: AbortSignal } = {},
+    opts?: { signal?: AbortSignal },
   ): Promise<LearnerResult> {
     return this.#spawner.runLearner(task, known, opts);
   }
@@ -218,7 +215,7 @@ export class PhaseExecutor {
    * Spawn the learner to compact the project-level learnings: deduplicate,
    * merge related entries, and drop outdated insights. Returns the cleaned list.
    */
-  async compactLearnings(learnings: string[], opts: { signal?: AbortSignal } = {}): Promise<string[]> {
+  async compactLearnings(learnings: string[], opts?: { signal?: AbortSignal }): Promise<string[]> {
     return this.#spawner.compactLearnings(learnings, opts);
   }
 

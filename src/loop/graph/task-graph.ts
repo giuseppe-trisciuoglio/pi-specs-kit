@@ -10,7 +10,7 @@ import type { NodeAction, TaskEdge, TaskGraph, TaskNode, TaskNodeId } from "./ty
 
 /** Node kinds, in declaration order. The start marker only forwards to the
  * task entry; sinks terminate the walk with the task outcome. */
-const NODE_DECLARATIONS: readonly (Pick<TaskNode, "id" | "kind"> & { outcome?: TaskNode["outcome"] })[] = [
+const NODE_DECLARATIONS: readonly Pick<TaskNode, "id" | "kind" | "outcome">[] = [
   { id: "task_start", kind: "deterministic" },
   { id: "enter_task", kind: "deterministic" },
   { id: "implementation", kind: "agentic" },

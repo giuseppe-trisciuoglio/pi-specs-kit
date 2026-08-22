@@ -73,7 +73,7 @@ test("a refused primary is retried once on the configured fallback model", async
       notices.push(message);
     };
     const spawner = new PhaseSpawner(deps);
-    const result = await spawner.spawn("TASK-001", "review", "reviewer", TASK_PROMPT, undefined, undefined, false);
+    const result = await spawner.spawn({ taskId: "TASK-001", label: "review", role: "reviewer", prompt: TASK_PROMPT }, undefined, undefined, false);
 
     assert.deepEqual(calls, ["provider/a", "provider/b"]);
     assert.equal(classifyPhaseFailure(result.outcome), null, "the delivered fallback attempt is returned");
@@ -91,7 +91,7 @@ test("without a fallback the refusal reaches the caller unchanged", async () => 
       return outcome({ exitCode: 1, stopReason: "error", errorMessage: QUOTA });
     });
     const spawner = new PhaseSpawner(deps);
-    await spawner.spawn("TASK-001", "review", "reviewer", TASK_PROMPT, undefined, undefined, false);
+    await spawner.spawn({ taskId: "TASK-001", label: "review", role: "reviewer", prompt: TASK_PROMPT }, undefined, undefined, false);
     assert.equal(calls, 1, "no second spawn without an escalation model");
   });
 });
@@ -104,7 +104,7 @@ test("a fallback identical to the primary does not escalate", async () => {
       return outcome({ exitCode: 1, stopReason: "error", errorMessage: QUOTA });
     });
     const spawner = new PhaseSpawner(deps);
-    await spawner.spawn("TASK-001", "review", "reviewer", TASK_PROMPT, undefined, undefined, false);
+    await spawner.spawn({ taskId: "TASK-001", label: "review", role: "reviewer", prompt: TASK_PROMPT }, undefined, undefined, false);
     assert.equal(calls, 1);
   });
 });
@@ -127,7 +127,7 @@ test("a silent spawn escalates and the notice asks the catalogue about the model
       notices.push(message);
     };
     const spawner = new PhaseSpawner(deps);
-    const result = await spawner.spawn("TASK-001", "review", "reviewer", TASK_PROMPT, undefined, undefined, false);
+    const result = await spawner.spawn({ taskId: "TASK-001", label: "review", role: "reviewer", prompt: TASK_PROMPT }, undefined, undefined, false);
 
     assert.deepEqual(calls, ["provider/gone", "provider/b"]);
     assert.equal(catalogueQueries, 1, "the empty-output diagnosis checks the catalogue once");
@@ -144,7 +144,7 @@ test("an empty stream that also reports a quota error classifies as the refusal,
       return outcome({ exitCode: 1, stopReason: "error", errorMessage: QUOTA, assistantMessages: 0 });
     });
     const spawner = new PhaseSpawner(deps);
-    const result = await spawner.spawn("TASK-001", "review", "reviewer", TASK_PROMPT, undefined, undefined, false);
+    const result = await spawner.spawn({ taskId: "TASK-001", label: "review", role: "reviewer", prompt: TASK_PROMPT }, undefined, undefined, false);
     // The refusal names its cause, so the evidence beats the silence: the
     // diagnosis is quota, and the routing treats it as environmental.
     const failure = classifyPhaseFailure(result.outcome);
@@ -165,7 +165,7 @@ test("every escalation attempt is charged to the budget like any other subproces
     // spawn of any kind is refused — the escalation cannot sneak past it.
     deps.budget = new LoopBudget({ maxSpawnsPerTask: 2, maxSpawnsPerRun: 2, maxRunDurationMs: 3_600_000 });
     const spawner = new PhaseSpawner(deps);
-    await spawner.spawn("TASK-001", "review", "reviewer", TASK_PROMPT, undefined, undefined, false);
+    await spawner.spawn({ taskId: "TASK-001", label: "review", role: "reviewer", prompt: TASK_PROMPT }, undefined, undefined, false);
     assert.equal(calls, 2, "primary plus one escalation");
     assert.throws(() => deps.budget.consume(), /run budget exhausted/);
   });

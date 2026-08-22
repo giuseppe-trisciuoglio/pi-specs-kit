@@ -38,9 +38,9 @@ function asIndex(value: unknown): number | null {
  */
 export function startAssistantDraft(message: unknown): AssistantDraft | null {
   const record = asRecord(message);
-  if (!record || record.role !== "assistant") return null;
+  if (record?.role !== "assistant") return null;
   const content = Array.isArray(record.content) ? record.content : [];
-  return { ...record, role: "assistant", content: content.map((b) => ({ ...(asRecord(b) ?? {}) })) };
+  return { ...record, role: "assistant", content: content.map((b) => ({ ...asRecord(b) })) };
 }
 
 /** Grow the content array so `index` exists, then put `block` there. */
@@ -59,6 +59,34 @@ function blockAt(draft: AssistantDraft, index: number, seed: Block): Block {
   return draft.content[index];
 }
 
+const TEXT_BLOCK: Block = { type: "text", text: "" };
+const THINKING_BLOCK: Block = { type: "thinking", thinking: "" };
+
+/** Put `block` at `index`; outside the stream positions do not exist, so a
+ * misplaced boundary event is dropped rather than guessed at. */
+function ensureBlock(draft: AssistantDraft, index: number | null, block: Block): AssistantDraft {
+  if (index === null) return draft;
+  setBlock(draft, index, block);
+  return draft;
+}
+
+/** Append a streamed text delta to the block at `index`, seeding it when the
+ * stream never opened it. */
+function appendText(draft: AssistantDraft, index: number | null, delta: unknown): AssistantDraft {
+  if (index === null) return draft;
+  const block = blockAt(draft, index, TEXT_BLOCK);
+  block.text = asString(block.text) + asString(delta);
+  return draft;
+}
+
+/** The same for a thinking delta. */
+function appendThinking(draft: AssistantDraft, index: number | null, delta: unknown): AssistantDraft {
+  if (index === null) return draft;
+  const block = blockAt(draft, index, THINKING_BLOCK);
+  block.thinking = asString(block.thinking) + asString(delta);
+  return draft;
+}
+
 /**
  * Apply one streaming update to the draft, returning the draft to render.
  *
@@ -74,32 +102,20 @@ export function applyAssistantEvent(draft: AssistantDraft, assistantMessageEvent
 
   switch (event.type) {
     case "text_start":
-      if (index !== null) setBlock(draft, index, { type: "text", text: "" });
-      return draft;
-    case "text_delta": {
-      if (index === null) return draft;
-      const block = blockAt(draft, index, { type: "text", text: "" });
-      block.text = asString(block.text) + asString(event.delta);
-      return draft;
-    }
+      return ensureBlock(draft, index, TEXT_BLOCK);
+    case "text_delta":
+      return appendText(draft, index, event.delta);
     case "text_end":
-      if (index !== null) setBlock(draft, index, { type: "text", text: asString(event.content) });
-      return draft;
+      return ensureBlock(draft, index, { type: "text", text: asString(event.content) });
     case "thinking_start":
-      if (index !== null) setBlock(draft, index, { type: "thinking", thinking: "" });
-      return draft;
-    case "thinking_delta": {
-      if (index === null) return draft;
-      const block = blockAt(draft, index, { type: "thinking", thinking: "" });
-      block.thinking = asString(block.thinking) + asString(event.delta);
-      return draft;
-    }
+      return ensureBlock(draft, index, THINKING_BLOCK);
+    case "thinking_delta":
+      return appendThinking(draft, index, event.delta);
     case "thinking_end":
-      if (index !== null) setBlock(draft, index, { type: "thinking", thinking: asString(event.content) });
-      return draft;
+      return ensureBlock(draft, index, { type: "thinking", thinking: asString(event.content) });
     case "toolcall_end": {
       const toolCall = asRecord(event.toolCall);
-      if (index !== null && toolCall) setBlock(draft, index, { ...toolCall });
+      if (index !== null && toolCall) return ensureBlock(draft, index, { ...toolCall });
       return draft;
     }
     case "done": {

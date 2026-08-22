@@ -52,21 +52,27 @@ function balancedEnd(source, start) {
 
 let lastAnswer = null;
 let lastObject = null;
-for (let i = 0; i < text.length; i += 1) {
-  if (text[i] !== '{') continue;
-  const end = balancedEnd(text, i);
-  if (end === -1) continue;
+let cursor = 0;
+while (cursor < text.length) {
+  const open = text.indexOf('{', cursor);
+  if (open === -1) break;
+  const end = balancedEnd(text, open);
+  if (end === -1) {
+    cursor = open + 1;
+    continue;
+  }
   let parsed;
   try {
-    parsed = JSON.parse(text.slice(i, end + 1));
+    parsed = JSON.parse(text.slice(open, end + 1));
   } catch {
+    cursor = open + 1;
     continue;
   }
   lastObject = parsed;
   // An object carrying findings or verdicts is the deliverable; anything else is a
   // fragment the model happened to print along the way, kept only as a fallback.
   if (Array.isArray(parsed.findings) || Array.isArray(parsed.verdicts)) lastAnswer = parsed;
-  i = end; // objects nested inside this one cannot be the answer
+  cursor = end + 1; // objects nested inside this one cannot be the answer
 }
 
 const answer = lastAnswer ?? lastObject;

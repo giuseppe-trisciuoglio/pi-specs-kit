@@ -274,6 +274,35 @@ function commandList(value: unknown): string[] {
   return [];
 }
 
+/** The role model/thinking/fallback triples under the agents section. */
+function parseRoles(doc: Record<string, unknown>): SpecsKitConfig["roles"] {
+  const agents = record(doc.agents);
+  const roles = {} as SpecsKitConfig["roles"];
+  for (const role of ROLE_NAMES) {
+    roles[role] = {
+      model: text(agents[`${role}_model`]) ?? "auto",
+      thinkingLevel: text(agents[`${role}_thinking_level`]),
+      fallbackModel: text(agents[`${role}_fallback_model`]),
+    };
+  }
+  return roles;
+}
+
+/** Per-phase prompt overrides; an override that does not name both a mode and
+ * a source is dropped rather than half-applied. */
+function parsePhaseOverrides(overrides: Record<string, unknown>): SpecsKitConfig["prompts"]["phaseOverrides"] {
+  const pi = record(record(overrides.agent_phase).pi);
+  const result: SpecsKitConfig["prompts"]["phaseOverrides"] = {};
+  for (const phase of PHASE_NAMES) {
+    const o = record(pi[phase]);
+    const mode = o.mode === "append" || o.mode === "replace" ? o.mode : undefined;
+    const source = o.source === "file" || o.source === "text" ? o.source : undefined;
+    if (!mode || !source) continue;
+    result[phase] = { mode, source, file: text(o.file), text: text(o.text) };
+  }
+  return result;
+}
+
 /**
  * Load the yaml config into its typed view, filling defaults for anything
  * absent. A missing file yields an all-default config; malformed yaml raises
@@ -318,14 +347,7 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
   config.mode = doc.mode === "full" ? "full" : "fast";
   config.pollIntervalMs = parseDurationMs(doc.poll_interval) ?? config.pollIntervalMs;
 
-  const agents = record(doc.agents);
-  for (const role of ROLE_NAMES) {
-    config.roles[role] = {
-      model: text(agents[`${role}_model`]) ?? "auto",
-      thinkingLevel: text(agents[`${role}_thinking_level`]),
-      fallbackModel: text(agents[`${role}_fallback_model`]),
-    };
-  }
+  config.roles = parseRoles(doc);
 
   config.reviewPanel = panelReviewers(record(doc.adversarial_review).panel);
 
@@ -366,14 +388,7 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
 
   const overrides = record(record(doc.prompts).system_overrides);
   config.prompts.unsupportedPolicy = overrides.unsupported_policy === "skip" ? "skip" : "error";
-  const pi = record(record(overrides.agent_phase).pi);
-  for (const phase of PHASE_NAMES) {
-    const o = record(pi[phase]);
-    const mode = o.mode === "append" || o.mode === "replace" ? o.mode : undefined;
-    const source = o.source === "file" || o.source === "text" ? o.source : undefined;
-    if (!mode || !source) continue;
-    config.prompts.phaseOverrides[phase] = { mode, source, file: text(o.file), text: text(o.text) };
-  }
+  config.prompts.phaseOverrides = parsePhaseOverrides(overrides);
 
   return config;
 }

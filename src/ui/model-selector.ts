@@ -91,7 +91,7 @@ function buildSelector(
       const isSelected = i === selected;
       const prefix = isSelected ? theme.fg("accent", "→ ") : "  ";
       const label = isSelected ? theme.fg("accent", model.id) : model.id;
-      const badge = model.provider === "" ? "" : ` ${theme.fg("muted", `[${model.provider}]`)}`;
+      const badge = model.provider === "" ? "" : " " + theme.fg("muted", `[${model.provider}]`);
       const check = entryValue(model) === opts.current ? theme.fg("success", " ✓") : "";
       list.addChild(new Text(`${prefix}${label}${badge}${check}`, 1, 0));
     }

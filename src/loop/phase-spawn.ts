@@ -77,13 +77,21 @@ export function parseConfirmations(text: string, known: readonly string[]): stri
   const byLower = new Map(known.map((k) => [k.toLowerCase(), k]));
   const cited: string[] = [];
   for (const line of text.split("\n")) {
-    const match = new RegExp(`^\\s*(?:[-*]\\s*)?${CONFIRMED_PREFIX}\\s*(.+?)\\s*$`).exec(line);
+    const match = new RegExp(String.raw`^\s*(?:[-*]\s*)?${CONFIRMED_PREFIX}\s*(.+?)\s*$`).exec(line);
     if (!match) continue;
     const hit = byLower.get(match[1].replace(/^["'`]|["'`]$/g, "").toLowerCase());
     if (hit && !cited.includes(hit)) cited.push(hit);
     if (cited.length === MAX_CONFIRMATIONS) break;
   }
   return cited;
+}
+
+/** Identity and prompt of one spawn: what is being run, as opposed to how. */
+export interface PhaseSpawnRequest {
+  taskId: string;
+  label: string;
+  role: RoleName;
+  prompt: string;
 }
 
 export interface PhaseSpawnerDeps {
@@ -119,19 +127,17 @@ export class PhaseSpawner {
   }
 
   async spawn(
-    taskId: string,
-    label: string,
-    role: RoleName,
-    prompt: string,
+    request: PhaseSpawnRequest,
     systemPromptOverride: SystemPromptOverrideText | undefined,
     signal: AbortSignal | undefined,
     captureText: boolean,
     meterHandle: PhaseHandle | null = null,
   ): Promise<LearnerResult> {
+    const { taskId, label, role } = request;
     const roleConfig = this.#deps.config.roles[role];
     if (!roleConfig.model || roleConfig.model === "auto") this.#deps.warnAutoModel(role);
     const first = await this.#spawnOnce(
-      taskId, label, role, roleConfig.model, prompt, systemPromptOverride, signal, captureText, meterHandle,
+      request, roleConfig.model, systemPromptOverride, signal, captureText, meterHandle,
     );
     const failure = classifyPhaseFailure(first.outcome);
     if (!failure) return first;
@@ -143,7 +149,7 @@ export class PhaseSpawner {
     if (fallback === null) return first;
     this.#deps.onNotify(await this.#escalationNotice(taskId, label, failure, roleConfig.model, fallback), "warning");
     const second = await this.#spawnOnce(
-      taskId, label, role, fallback, prompt, systemPromptOverride, signal, captureText, meterHandle,
+      request, fallback, systemPromptOverride, signal, captureText, meterHandle,
     );
     return classifyPhaseFailure(second.outcome) === null ? second : first;
   }
@@ -179,16 +185,14 @@ export class PhaseSpawner {
   }
 
   async #spawnOnce(
-    taskId: string,
-    label: string,
-    role: RoleName,
+    request: PhaseSpawnRequest,
     model: string | undefined,
-    prompt: string,
     systemPromptOverride: SystemPromptOverrideText | undefined,
     signal: AbortSignal | undefined,
     captureText: boolean,
     meterHandle: PhaseHandle | null,
   ): Promise<LearnerResult> {
+    const { taskId, label, role, prompt } = request;
     const { config } = this.#deps;
     // Every phase reaches the agent through here, so charging the budget at
     // this single point is what makes the ceilings inescapable. It throws
@@ -237,12 +241,18 @@ export class PhaseSpawner {
   async runLearner(
     task: TaskFile,
     known: readonly string[] = [],
-    opts: { signal?: AbortSignal } = {},
+    opts?: { signal?: AbortSignal },
   ): Promise<LearnerResult> {
     const spec = path.basename(this.#deps.specDir);
     const meterHandle = this.#deps.beginMeter(spec, task.frontmatter.id, "learner", 1, "learner");
     try {
-      return await this.spawn(task.frontmatter.id, "learner", "learner", buildLearnerPrompt(task, known), undefined, opts.signal, true, meterHandle);
+      return await this.spawn(
+        { taskId: task.frontmatter.id, label: "learner", role: "learner", prompt: buildLearnerPrompt(task, known) },
+        undefined,
+        opts?.signal,
+        true,
+        meterHandle,
+      );
     } finally {
       if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
     }
@@ -252,7 +262,7 @@ export class PhaseSpawner {
    * Spawn the learner to compact the project-level learnings: deduplicate,
    * merge related entries, and drop outdated insights. Returns the cleaned list.
    */
-  async compactLearnings(learnings: string[], opts: { signal?: AbortSignal } = {}): Promise<string[]> {
+  async compactLearnings(learnings: string[], opts?: { signal?: AbortSignal }): Promise<string[]> {
     const prompt = [
       "Review the following accumulated project learnings. Clean up the list:",
       "- Remove entries that are outdated or no longer relevant.",
@@ -265,12 +275,9 @@ export class PhaseSpawner {
     const meterHandle = this.#deps.beginMeter(path.basename(this.#deps.specDir), "learnings", "compact", 1, "learner");
     try {
       const { text } = await this.spawn(
-        "learnings",
-        "compact",
-        "learner",
-        prompt,
+        { taskId: "learnings", label: "compact", role: "learner", prompt },
         undefined,
-        opts.signal,
+        opts?.signal,
         true,
         meterHandle,
       );

@@ -95,14 +95,29 @@ export async function listReviewAttemptArchives(specDir: string, taskId: string)
     .map((name) => path.join("tasks", name));
 }
 
+/** Render an untrusted value without leaking '[object Object]' into reports. */
+function asText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && value !== null) return JSON.stringify(value);
+  return String(value);
+}
+
+/** Coerce a raw frontmatter `issues` value into a list, tolerating junk. */
+function issueList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(asText);
+  if (value === null || value === undefined || value === "") return [];
+  return [asText(value)];
+}
+
 /** Coerce a raw frontmatter `routed` value into a typed list, tolerating junk. */
 function parseRouted(value: unknown): RoutedSuggestion[] {
   if (!Array.isArray(value)) return [];
   const result: RoutedSuggestion[] = [];
   for (const entry of value) {
     if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const to = String((entry as Record<string, unknown>).to ?? "").trim();
-    const text = String((entry as Record<string, unknown>).text ?? "").trim();
+    const raw = entry as Record<string, unknown>;
+    const to = asText(raw.to ?? "").trim();
+    const text = asText(raw.text ?? "").trim();
     if (to !== "" && text !== "") result.push({ to, text });
   }
   return result;
@@ -208,9 +223,9 @@ export function parseReviewReport(content: string): ReviewReport | null {
   }
   if (data !== null && typeof data === "object" && !Array.isArray(data)) {
     const fm = data as Record<string, unknown>;
-    const status = String(fm.review_status ?? "").trim().toUpperCase();
+    const status = asText(fm.review_status ?? "").trim().toUpperCase();
     if (status === "PASSED" || status === "FAILED") {
-      const issues = Array.isArray(fm.issues) ? fm.issues.map(String) : fm.issues ? [String(fm.issues)] : [];
+      const issues = issueList(fm.issues);
       return {
         status,
         summary: typeof fm.summary === "string" ? fm.summary : "",
@@ -254,7 +269,10 @@ export function routedFor(report: ReviewReport, targetTaskId: string): RoutedSug
 export function reviewFeedback(report: ReviewReport): string {
   const parts: string[] = [];
   if (report.summary) parts.push(`Summary: ${report.summary}`);
-  if (report.issues.length > 0) parts.push(`Issues:\n${report.issues.map((issue) => `- ${issue}`).join("\n")}`);
+  if (report.issues.length > 0) {
+    const bullets = report.issues.map((issue) => `- ${issue}`).join("\n");
+    parts.push(`Issues:\n${bullets}`);
+  }
   if (report.specConflicts.length > 0) {
     parts.push(
       "Requirements the review found contradicted by the implementation. Change the code to " +
