@@ -125,6 +125,24 @@ export interface PromptsConfig {
   phaseOverrides: Partial<Record<PhaseName, SystemPromptOverride>>;
 }
 
+/**
+ * Issue-triggered runs. The labels live in the project's own repository, so
+ * they are configured per project; the interval is how often the watcher asks
+ * GitHub for issues carrying the ready label.
+ */
+export interface GithubConfig {
+  /** Label an operator adds to an issue to ask for a run. */
+  readyLabel: string;
+  /** Label the watcher swaps in while the run it started is in flight. */
+  runningLabel: string;
+  doneLabel: string;
+  failedLabel: string;
+  /** Interval between two polls of the issue list. */
+  pollIntervalMs: number;
+  /** Post the outcome of the run as a comment on the issue that asked for it. */
+  commentOnFinish: boolean;
+}
+
 export interface SpecsKitConfig {
   version: string;
   /** Absolute path of the project root (directory holding the config file). */
@@ -145,6 +163,7 @@ export interface SpecsKitConfig {
   hooks: HooksConfig;
   knowledgeBase: { files: string[] };
   prompts: PromptsConfig;
+  github: GithubConfig;
 }
 
 /** Defaults shared by the loader and by the file created for a new project. */
@@ -170,6 +189,15 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
   maxRunDurationMs: 6 * 60 * 60 * 1000,
   reconcileContext: false,
   protectSpecArtifacts: true,
+};
+
+export const DEFAULT_GITHUB_CONFIG: GithubConfig = {
+  readyLabel: "ready",
+  runningLabel: "specs-kit:running",
+  doneLabel: "specs-kit:done",
+  failedLabel: "specs-kit:failed",
+  pollIntervalMs: 60_000,
+  commentOnFinish: true,
 };
 
 export function defaultRoles(): Record<RoleName, RoleConfig> {
@@ -289,6 +317,7 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
     hooks: defaultHooks(),
     knowledgeBase: { files: [] },
     prompts: { unsupportedPolicy: "error", phaseOverrides: {} },
+    github: { ...DEFAULT_GITHUB_CONFIG },
   };
 
   let raw: string;
@@ -356,6 +385,15 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
   }
 
   config.knowledgeBase.files = commandList(record(doc.knowledge_base).files);
+
+  const github = record(doc.github);
+  const gh = config.github;
+  gh.readyLabel = text(github.ready_label) ?? gh.readyLabel;
+  gh.runningLabel = text(github.running_label) ?? gh.runningLabel;
+  gh.doneLabel = text(github.done_label) ?? gh.doneLabel;
+  gh.failedLabel = text(github.failed_label) ?? gh.failedLabel;
+  gh.pollIntervalMs = positiveDuration(github.poll_interval, file, "github.poll_interval") ?? gh.pollIntervalMs;
+  gh.commentOnFinish = flag(github.comment_on_finish) ?? gh.commentOnFinish;
 
   const overrides = record(record(doc.prompts).system_overrides);
   config.prompts.unsupportedPolicy = overrides.unsupported_policy === "skip" ? "skip" : "error";
