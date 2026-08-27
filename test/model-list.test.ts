@@ -75,7 +75,8 @@ test("the window never exceeds the number of visible rows", () => {
   for (let selected = 0; selected < 380; selected++) {
     const { start, end } = listWindow(selected, 380);
     assert.equal(end - start, VISIBLE_MODELS);
-    assert.ok(selected >= start && selected < end, `row ${selected} is off screen`);
+    assert.ok(selected >= start, `row ${selected} starts before the window`);
+    assert.ok(selected < end, `row ${selected} falls after the window`);
   }
 });
 

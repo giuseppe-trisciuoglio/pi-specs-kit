@@ -56,6 +56,34 @@ interface SpecScan {
   clarificationFile: string | null;
 }
 
+/** True when the spec's tasks/ holds at least one file the loader parses. */
+async function hasTaskFiles(specDirAbs: string): Promise<boolean> {
+  try {
+    const sub = await readdir(path.join(specDirAbs, "tasks"));
+    return sub.some(isTaskFileName);
+  } catch {
+    // No tasks directory or unreadable.
+    return false;
+  }
+}
+
+/** The first spec file, in the deterministic order of the scan, that carries
+ * open questions. A file that cannot be read is assumed to carry none. */
+async function findClarificationFile(
+  specDirAbs: string,
+  specFiles: readonly string[],
+): Promise<string | null> {
+  for (const name of specFiles) {
+    try {
+      const text = await readFile(path.join(specDirAbs, name), "utf8");
+      if (NEEDS_CLARIFICATION.test(text)) return name;
+    } catch {
+      // Unreadable file: assume it carries no open questions.
+    }
+  }
+  return null;
+}
+
 async function scanSpec(specDirAbs: string): Promise<SpecScan | null> {
   let entries: string[];
   try {
@@ -68,13 +96,7 @@ async function scanSpec(specDirAbs: string): Promise<SpecScan | null> {
   let hasTasks = false;
   for (const name of entries) {
     if (name === "tasks") {
-      let sub: string[] = [];
-      try {
-        sub = await readdir(path.join(specDirAbs, "tasks"));
-      } catch {
-        // No tasks directory or unreadable.
-      }
-      if (sub.some(isTaskFileName)) hasTasks = true;
+      if (!hasTasks) hasTasks = await hasTaskFiles(specDirAbs);
       continue;
     }
     if (!name.endsWith(".md") || AUX_FILES.has(name) || TASKS_INDEX.test(name)) continue;
@@ -83,17 +105,8 @@ async function scanSpec(specDirAbs: string): Promise<SpecScan | null> {
   }
   // Deterministic order: the directive below names one of these files, and
   // readdir order is not guaranteed.
-  specFiles.sort();
-  let clarificationFile: string | null = null;
-  for (const name of specFiles) {
-    if (clarificationFile) break;
-    try {
-      const text = await readFile(path.join(specDirAbs, name), "utf8");
-      if (NEEDS_CLARIFICATION.test(text)) clarificationFile = name;
-    } catch {
-      // Unreadable file: assume it carries no open questions.
-    }
-  }
+  specFiles.sort((a, b) => a.localeCompare(b));
+  const clarificationFile = await findClarificationFile(specDirAbs, specFiles);
   return { specFiles, hasTechnicalPlan, hasTasks, clarificationFile };
 }
 

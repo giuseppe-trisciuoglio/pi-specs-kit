@@ -8,16 +8,18 @@
  * — a unitless value that looks like seconds kills every phase subprocess
  * almost immediately.
  */
+
+const UNIT_FACTOR_MS: Record<string, number> = { h: 3_600_000, m: 60_000, s: 1_000, ms: 1 };
 export function parseDurationMs(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
     return value;
   }
   if (typeof value !== "string") return undefined;
-  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$/i);
+  const match = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$/i.exec(value.trim());
   if (!match) return undefined;
   const amount = Number.parseFloat(match[1]);
   const unit = (match[2] ?? "ms").toLowerCase();
-  const factor = unit === "h" ? 3_600_000 : unit === "m" ? 60_000 : unit === "s" ? 1_000 : 1;
+  const factor = UNIT_FACTOR_MS[unit] ?? 1;
   return Math.round(amount * factor);
 }
 

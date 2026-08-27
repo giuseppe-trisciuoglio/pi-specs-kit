@@ -33,42 +33,54 @@ export function modelCandidates(ctx: ExtensionCommandContext): ModelEntry[] {
  * narrowed by typing a filter term, because scrolling the whole catalogue in a
  * selection dialog is impractical. Undefined on cancel, null to keep.
  */
+/** Title of the dialog: what went wrong with the filter, or how much is left. */
+function dialogTitle(label: string, matchCount: number, query: string): string {
+  return matchCount === 0
+    ? `Model for ${label} — no match for "${query}"`
+    : `Model for ${label} (${matchCount} available)`;
+}
+
+/** The filter entry opens a second input. A new filter starts from a short
+ * list again: showing everything only makes sense for the list the operator
+ * just asked to expand. Returns true when the choice was the filter action. */
+async function handleFilterChoice(
+  ctx: ExtensionCommandContext,
+  label: string,
+  choice: string,
+  state: { query: string; showAll: boolean },
+): Promise<boolean> {
+  if (choice !== filterEntry(state.query)) return false;
+  const input = await ctx.ui.input(`Filter models for ${label}:`, "e.g. sonnet, gpt, anthropic haiku");
+  if (input !== undefined) {
+    state.query = input.trim();
+    state.showAll = false;
+  }
+  return true;
+}
+
 async function pickModelFromDialog(
   ctx: ExtensionCommandContext,
   label: string,
   current: string,
 ): Promise<string | null | undefined> {
   const models = modelCandidates(ctx);
-  let query = "";
-  let showAll = false;
+  const state = { query: "", showAll: false };
 
   for (;;) {
-    const list = buildModelPickList(models, { query, current, showAll });
-    const title =
-      list.matchCount === 0
-        ? `Model for ${label} — no match for "${query}"`
-        : `Model for ${label} (${list.matchCount} available)`;
-    const choice = await ctx.ui.select(title, list.options);
+    const list = buildModelPickList(models, { ...state, current });
+    const choice = await ctx.ui.select(dialogTitle(label, list.matchCount, state.query), list.options);
     if (choice === undefined) return undefined;
     if (choice === KEEP) return null;
     if (choice === AUTO) return AUTO;
 
     if (choice === CLEAR_FILTER) {
-      query = "";
-      showAll = false;
+      state.query = "";
+      state.showAll = false;
       continue;
     }
-    if (choice === filterEntry(query)) {
-      const input = await ctx.ui.input(`Filter models for ${label}:`, "e.g. sonnet, gpt, anthropic haiku");
-      if (input === undefined) continue;
-      query = input.trim();
-      // A new filter starts from a short list again: showing everything only
-      // makes sense for the list the operator just asked to expand.
-      showAll = false;
-      continue;
-    }
+    if (await handleFilterChoice(ctx, label, choice, state)) continue;
     if (choice === moreEntry(list.hiddenCount)) {
-      showAll = true;
+      state.showAll = true;
       continue;
     }
 

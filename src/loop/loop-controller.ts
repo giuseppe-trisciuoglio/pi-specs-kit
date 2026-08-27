@@ -17,10 +17,12 @@ import { LoopEngine, type LoopEndReason, type LoopStartOptions } from "./engine.
 import { idleStatus, type LoopStatus } from "./loop-status.ts";
 import { findGraphifySkill, graphifyMissingWarning } from "../prompt/graphify.ts";
 import {
+  configuredFallbackModels,
   configuredModels,
   findMissingModels,
   listModels,
   modelListUnavailableWarning,
+  unknownFallbackModelsWarning,
   unknownModelsError,
   type ListedModel,
 } from "./model-check.ts";
@@ -149,6 +151,13 @@ export class LoopController {
         const missing = findMissingModels(configured, listed);
         if (missing.length > 0) {
           throw new Error(unknownModelsError(missing));
+        }
+        // A fallback the catalogue does not know costs nothing until the day
+        // it is needed, so it warns instead of refusing: the run is viable
+        // without it, but the operator should hear about the gap now.
+        const missingFallbacks = findMissingModels(configuredFallbackModels(config), listed);
+        if (missingFallbacks.length > 0) {
+          this.#safely(() => this.#events.onNotify?.(unknownFallbackModelsWarning(missingFallbacks), "warning"));
         }
       }
     }

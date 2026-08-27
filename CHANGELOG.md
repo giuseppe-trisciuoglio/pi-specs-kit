@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Escalation model per role.** `agents.<role>_fallback_model` names a
+  second model the phase is spawned on, once, when the primary comes back
+  refused (quota, auth, unknown model) or silent. One attempt, not a ladder:
+  a fallback that fails the same way stops the task with both diagnoses.
+  The pre-flight warns about a fallback the CLI catalogue does not know.
+- **Spawn-outcome rows in the measurement ledger.** Every agent subprocess
+  now leaves one row recording exit code, termination signal, stop reason,
+  error message, duration and completed-assistant-message count — the raw
+  evidence a post-mortem needs, since phases run sessionless by design.
+- **Run-level circuit breaker.** Consecutive environmental phase failures
+  (refused or silent, across tasks) halt the whole run with every reason
+  accumulated; any delivered phase resets the count. A provider outage
+  stops being rediscovered task after task at full spawn price.
+
+### Changed
+
+- **A silent spawn is classified as a failure.** A clean exit with an empty
+  stream used to read as "delivered", so the loop retried the review as if
+  the reviewer had merely forgotten to write the report; eight blind spawns
+  were possible against a provider that never answered. Classification is
+  now evidence-based: a termination signal, an error message without an
+  error stop reason, or zero completed assistant messages each fail the
+  phase on their own. An empty-output review ends the review sub-loop with
+  a named reason instead of entering the missing-report retry path.
+- **The review-format reminder distinguishes a missing report from an
+  unreadable one.** A missing report states plainly that the previous spawn
+  created no file and where the file must appear; an unreadable one keeps
+  pointing at the preserved copy for repair. The skeleton shown in the
+  reminder quotes every value, status literal included.
+
 ## [1.0.0] - TBD
 
 ### Changed

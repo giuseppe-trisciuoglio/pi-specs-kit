@@ -38,6 +38,42 @@ interface OpenWindow {
   messages: number;
 }
 
+/** Group measurement rows by the window they belong to. */
+function groupByWindow(rows: readonly WalRow[]): Map<string, WalRow[]> {
+  const byWindow = new Map<string, WalRow[]>();
+  for (const row of rows) {
+    const group = byWindow.get(row.scope_id);
+    if (group) group.push(row);
+    else byWindow.set(row.scope_id, [row]);
+  }
+  return byWindow;
+}
+
+interface WindowTotals {
+  startedAt: string;
+  durationMs: number;
+  usage: UsageSummary;
+  cost: number;
+}
+
+/** Sum one window's rows: earliest start, last activity, summed usage and
+ * cost. The close time of a window from a killed session is unknown; the
+ * last recorded activity is the best approximation left on disk. */
+function totalWindow(rows: readonly WalRow[]): WindowTotals {
+  const usage = zeroUsage();
+  let cost = 0;
+  let startedAt = rows[0].started_at ?? rows[0].ts;
+  let lastTs = rows[0].ts;
+  for (const row of rows) {
+    addUsage(usage, row.usage);
+    cost += row.cost_total;
+    if (row.started_at && row.started_at < startedAt) startedAt = row.started_at;
+    if (row.ts > lastTs) lastTs = row.ts;
+  }
+  const duration = Date.parse(lastTs) - Date.parse(startedAt);
+  return { startedAt, durationMs: Number.isFinite(duration) && duration >= 0 ? duration : 0, usage, cost };
+}
+
 export class AuthoringWindowTracker {
   readonly #deps: AuthoringWindowDeps;
   readonly #now: () => Date;
@@ -130,38 +166,21 @@ export class AuthoringWindowTracker {
     const pending = readWalRows(this.#deps.walFile).filter(
       (row) => row.scope === "window" && row.spec === null && row.project === project && row.scope_id !== openId,
     );
-    const byWindow = new Map<string, WalRow[]>();
-    for (const row of pending) {
-      const group = byWindow.get(row.scope_id);
-      if (group) group.push(row);
-      else byWindow.set(row.scope_id, [row]);
-    }
+    const byWindow = groupByWindow(pending);
     if (byWindow.size === 0) return;
     const spec = path.basename(specDir);
     const pruned = new Set<string>();
     for (const [scopeId, rows] of byWindow) {
-      const usage = zeroUsage();
-      let cost = 0;
-      let startedAt = rows[0].started_at ?? rows[0].ts;
-      let lastTs = rows[0].ts;
-      for (const row of rows) {
-        addUsage(usage, row.usage);
-        cost += row.cost_total;
-        if (row.started_at && row.started_at < startedAt) startedAt = row.started_at;
-        if (row.ts > lastTs) lastTs = row.ts;
-      }
-      // The close time of a window from a killed session is unknown; the last
-      // recorded activity is the best approximation left on disk.
-      const duration = Date.parse(lastTs) - Date.parse(startedAt);
+      const totals = totalWindow(rows);
       this.#appendRow(ledgerFile, {
         v: 1,
         kind: "authoring",
         ts: this.#now().toISOString(),
         spec,
-        started_at: startedAt,
-        duration_ms: Number.isFinite(duration) && duration >= 0 ? duration : 0,
-        usage,
-        cost_total: cost,
+        started_at: totals.startedAt,
+        duration_ms: totals.durationMs,
+        usage: totals.usage,
+        cost_total: totals.cost,
       });
       pruned.add(scopeId);
     }

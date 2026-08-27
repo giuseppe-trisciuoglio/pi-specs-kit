@@ -15,10 +15,12 @@ import type { PiStreamEvent } from "../agent/json-stream.ts";
 import type { PhaseMeter } from "../measure/phase-meter.ts";
 import { runPhaseHooks } from "./hooks.ts";
 import { BudgetExceededError } from "./budget.ts";
+import { DEFAULT_ENVIRONMENT_STREAK, EnvironmentStreakError } from "./phase-failure.ts";
 import { commitCheckpoint } from "./checkpoint.ts";
 import { refreshCodebaseGraph } from "./codebase-graph.ts";
 import { workspaceFingerprint } from "./workspace.ts";
 import { LoopStatusTracker, type LoopStatus } from "./loop-status.ts";
+import { listModels, type ListedModel } from "./model-check.ts";
 import { prepareRun } from "./run-setup.ts";
 import { assembleRun } from "./run-assembly.ts";
 import { walkSelection } from "./run-walk.ts";
@@ -51,6 +53,13 @@ export interface EngineDeps {
   refreshCodebaseGraph?: typeof refreshCodebaseGraph;
   /** Config loader for the per-phase reload; defaults to the real loader. */
   reloadConfig?: (projectRoot: string, configPath?: string) => Promise<SpecsKitConfig | null>;
+  /** Catalogue lookup for the escalation diagnosis; defaults to the real one. */
+  listModels?: () => Promise<ListedModel[]>;
+  /**
+   * How many consecutive environmental phase failures halt the run.
+   * Injectable so tests can pin a small threshold.
+   */
+  environmentStreakLimit?: number;
   /** Phase measurement; defaults to the real ledger/write-ahead writer. */
   meter?: PhaseMeter;
   now?: () => Date;
@@ -71,6 +80,9 @@ interface ResolvedDeps {
   /** Null means "build the real one at run start", keeping the constructor inert. */
   meter: PhaseMeter | null;
   now: () => Date;
+  environmentStreakLimit: number;
+  /** Catalogue lookup used by the escalation diagnosis. */
+  listModels: () => Promise<ListedModel[]>;
 }
 
 export class LoopEngine {
@@ -93,6 +105,8 @@ export class LoopEngine {
       reloadConfig: deps.reloadConfig ?? loadConfigIfPresent,
       meter: deps.meter ?? null,
       now: deps.now ?? (() => new Date()),
+      environmentStreakLimit: deps.environmentStreakLimit ?? DEFAULT_ENVIRONMENT_STREAK,
+      listModels: deps.listModels ?? listModels,
     };
   }
 
@@ -204,6 +218,7 @@ export class LoopEngine {
       refreshCodebaseGraph: this.#deps.refreshCodebaseGraph,
       reloadConfig: this.#deps.reloadConfig,
       meter: this.#deps.meter,
+      listModels: () => this.#deps.listModels(),
       now: this.#deps.now,
       notify: (m, t) => this.#notify(m, t),
       persist: (p) => this.#persist(specDir, p),
@@ -236,16 +251,21 @@ export class LoopEngine {
         },
       );
     } catch (err) {
-      if (!(err instanceof BudgetExceededError)) throw err;
-      // A ceiling is not a task failure: continue-on-failure would carry the
-      // exhausted budget straight into the next task, which cannot afford a
-      // single phase either, and the run would walk the whole range spending
-      // nothing but notifications.
-      plan.state.error = err.message;
-      plan.state.step = "failed";
-      await this.#persist(specDir, plan);
-      this.#notify(`loop stopped: ${err.message}`, "error");
-      return { reason: "halted", error: err.message };
+      if (err instanceof BudgetExceededError || err instanceof EnvironmentStreakError) {
+        // A ceiling — or an environment broken past its escalation — is not a
+        // task failure: continue-on-failure would carry the exhausted budget
+        // (or the sick provider) straight into the next task, which cannot
+        // afford a single phase either, and the run would walk the whole
+        // range spending nothing but notifications.
+        const detail =
+          err instanceof EnvironmentStreakError ? `${err.message}: ${err.reasons.join(" | ")}` : err.message;
+        plan.state.error = detail;
+        plan.state.step = "failed";
+        await this.#persist(specDir, plan);
+        this.#notify(`loop stopped: ${detail}`, "error");
+        return { reason: "halted", error: detail };
+      }
+      throw err;
     }
   }
 }

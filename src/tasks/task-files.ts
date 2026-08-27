@@ -15,10 +15,9 @@ export const REVIEW_FILE_SUFFIX = "--review.md";
  */
 export const REVIEW_MARKER = "--review";
 
-/** Matches the id-prefixed naming convention of a task source file. */
-const TASK_FILE_NAME = /^TASK-\d+.*\.md$/i;
-
 /** True for a `tasks/` entry the loader will parse as a task. */
 export function isTaskFileName(name: string): boolean {
-  return TASK_FILE_NAME.test(name) && !name.includes(REVIEW_MARKER);
+  if (name.includes(REVIEW_MARKER)) return false;
+  const lower = name.toLowerCase();
+  return /^task-\d+/.test(lower) && lower.endsWith(".md");
 }

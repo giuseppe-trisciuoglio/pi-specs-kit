@@ -72,18 +72,25 @@ export function taskIdNumber(id: string): number | null {
   return match ? Number.parseInt(match[1], 10) : null;
 }
 
+/** Render a frontmatter value without leaking '[object Object]' into messages. */
+function describe(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && value !== null) return JSON.stringify(value);
+  return String(value);
+}
+
 /** Coerce a frontmatter value to a string array: scalar -> [scalar], missing -> []. */
 function toStringArray(value: unknown): string[] {
   if (value === undefined || value === null) return [];
-  if (Array.isArray(value)) return value.map((item) => String(item));
-  return [String(value)];
+  if (Array.isArray(value)) return value.map(describe);
+  return [describe(value)];
 }
 
 /** Normalize a date-ish frontmatter value to an ISO yyyy-mm-dd string. */
 function toDateString(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (value instanceof Date) return value.toISOString().slice(0, 10);
-  return String(value);
+  return describe(value);
 }
 
 /**
@@ -126,7 +133,7 @@ export function parseTaskFile(path: string, content: string): TaskFile {
   }
   const status = fm.status ?? "pending";
   if (typeof status !== "string" || !TASK_STATUSES.includes(status as TaskStatus)) {
-    throw new TaskParseError(path, "status", `invalid value: ${String(status)}`);
+    throw new TaskParseError(path, "status", `invalid value: ${describe(status)}`);
   }
   // Treat the cleanup hook's terminal stamp as equivalent to the canonical
   // reviewed one so downstream comparisons do not need to know about both.

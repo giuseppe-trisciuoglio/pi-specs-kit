@@ -15,7 +15,11 @@ function textResult(text: string): AgentToolResult<undefined> {
 
 /** Bring an agent-provided path to the shape discovery reports (no "./", no trailing separator). */
 function normalizeSpecDir(value: string): string {
-  const normalized = path.normalize(value.trim().replace(/[\\/]+$/, ""));
+  let normalized = value.trim();
+  while (normalized.endsWith("/") || normalized.endsWith("\\")) {
+    normalized = normalized.slice(0, -1);
+  }
+  normalized = path.normalize(normalized);
   return normalized === "." ? "" : normalized;
 }
 

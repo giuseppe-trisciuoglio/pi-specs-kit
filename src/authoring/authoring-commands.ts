@@ -69,8 +69,11 @@ export function registerAuthoringCommands(
         return;
       }
       const idea = args.trim();
+      const head = idea
+        ? `Author a new functional specification from this idea:\n\n${idea}`
+        : "Author a new functional specification";
       const directive =
-        `Author a new functional specification${idea ? ` from this idea:\n\n${idea}` : ""}. ` +
+        `${head}. When you have written it under ${config.specsDir}/, call the specs_kit_set_active_spec tool ` +
         `When you have written it under ${config.specsDir}/, call the specs_kit_set_active_spec tool ` +
         "with the new spec directory (relative to the project root) so it becomes the active spec.";
       pi.sendUserMessage(buildSkillMessage(skill.name, skill.content, skill.dir, directive));

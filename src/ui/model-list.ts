@@ -32,7 +32,8 @@ export function modelValue(model: ModelEntry): string {
  * second provider inside them, the way proxy catalogues list them.
  */
 export function modelSearchText(model: ModelEntry): string {
-  return `${model.provider} ${modelValue(model)} ${model.id}${model.name ? ` ${model.name}` : ""}`;
+  const name = model.name ? ` ${model.name}` : "";
+  return `${model.provider} ${modelValue(model)} ${model.id}${name}`;
 }
 
 /**

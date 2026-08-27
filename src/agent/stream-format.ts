@@ -22,9 +22,9 @@ function compactArgs(args: unknown): string {
   if (args === null || args === undefined) return "";
   let s: string;
   try {
-    s = JSON.stringify(args) ?? String(args);
+    s = JSON.stringify(args) ?? "<unserializable arguments>";
   } catch {
-    s = String(args);
+    s = "<unserializable arguments>";
   }
   return s.length > MAX_ARGS_PREVIEW ? s.slice(0, MAX_ARGS_PREVIEW) + "…" : s;
 }
@@ -32,7 +32,7 @@ function compactArgs(args: unknown): string {
 /** The text an assistant message ended up carrying, thinking blocks excluded. */
 export function assistantText(message: unknown): string {
   const record = asRecord(message);
-  if (!record || record.role !== "assistant") return "";
+  if (record?.role !== "assistant") return "";
   const content = Array.isArray(record.content) ? record.content : [];
   let out = "";
   for (const block of content) {
@@ -45,7 +45,7 @@ export function assistantText(message: unknown): string {
 /** The same message rendered for a log: thinking blocks marked, text as is. */
 function assistantLogText(message: unknown): string | null {
   const record = asRecord(message);
-  if (!record || record.role !== "assistant") return null;
+  if (record?.role !== "assistant") return null;
   const content = Array.isArray(record.content) ? record.content : [];
   const parts: string[] = [];
   for (const block of content) {
@@ -71,7 +71,7 @@ export function agentEndOutcome(event: PiStreamEvent): { stopReason: string | nu
   const messages = Array.isArray(event.messages) ? event.messages : [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = asRecord(messages[i]);
-    if (message && message.role === "assistant") {
+    if (message?.role === "assistant") {
       return { stopReason: asString(message.stopReason), errorMessage: asString(message.errorMessage) };
     }
   }

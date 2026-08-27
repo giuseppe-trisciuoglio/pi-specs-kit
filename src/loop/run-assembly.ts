@@ -19,6 +19,7 @@ import { LoopBudget } from "./budget.ts";
 import type { commitCheckpoint } from "./checkpoint.ts";
 import type { refreshCodebaseGraph } from "./codebase-graph.ts";
 import { ConfigReloader } from "./config-reload.ts";
+import type { ListedModel } from "./model-check.ts";
 import type { workspaceFingerprint } from "./workspace.ts";
 import { declareFinalSyncNode, type RunNode } from "./graph/run-graph.ts";
 import type { TaskNodeDeps } from "./graph/types.ts";
@@ -35,6 +36,8 @@ export interface RunAssemblyDeps {
   resume: boolean;
   phase?: PhaseName;
   spawnPhase: (opts: PhaseSpawnOptions) => Promise<PhaseRunOutcome>;
+  /** Catalogue lookup for the escalation diagnosis; defaults to the real one. */
+  listModels?: () => Promise<ListedModel[]>;
   runHooks: typeof runPhaseHooks;
   commitCheckpoint: typeof commitCheckpoint;
   workspaceFingerprint: typeof workspaceFingerprint;
@@ -117,6 +120,7 @@ export function assembleRun(deps: RunAssemblyDeps): AssembledRun {
     runHooks: deps.runHooks,
     refreshConfig: () => reloader.refresh(),
     meter,
+    listModels: deps.listModels,
     onNotify: (m, t) => deps.notify(m, t),
     onStream: (event, formatted) => {
       // A completed message arrives as one formatted block; the log channel

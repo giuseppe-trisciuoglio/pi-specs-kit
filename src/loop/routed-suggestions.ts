@@ -44,7 +44,7 @@ export async function collectRoutedSuggestions(
  * outside the range all mean the fix has no owner at all.
  */
 function willRun(taskId: string, plan: FixPlan): boolean {
-  const known = plan.tasks.find((t) => t.id === taskId);
+  const known = plan.tasks.some((t) => t.id === taskId);
   if (!known || plan.done.includes(taskId)) return false;
   const num = taskIdNumber(taskId);
   if (num === null) return true;

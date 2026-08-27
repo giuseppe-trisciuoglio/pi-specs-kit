@@ -8,7 +8,7 @@ import { loadSpecsKitConfig } from "../src/config/specs-kit-config.ts";
 import { LoopEngine, type LoopEndReason } from "../src/loop/engine.ts";
 import { loadFixPlan, type FixPlan } from "../src/fixplan/fix-plan.ts";
 import { LoopController } from "../src/loop/loop-controller.ts";
-import type { PhaseLedgerRow } from "../src/measure/ledger.ts";
+import type { LedgerRow, PhaseLedgerRow } from "../src/measure/ledger.ts";
 import { readWalRows } from "../src/measure/wal.ts";
 
 const E2E_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -112,19 +112,22 @@ test("e2e: full loop over three tasks completes with the expected fix plan", { t
     const logs = await readdir(path.join(project.specDir, "_ralph_loop", "logs"));
     assert.ok(logs.length > 0, "phase log files under _ralph_loop/logs");
 
-    // Measurement ledger: one consolidated row per executed phase. The default
-    // mode is fast, so cleanup never runs and sync rides on the last task.
+    // Measurement ledger: one consolidated row per executed phase, plus one
+    // raw spawn-outcome row per agent subprocess. The default mode is fast,
+    // so cleanup never runs and sync rides on the last task.
     const ledgerRows = (await readFile(path.join(project.projectRoot, "docs/specs/measurements.jsonl"), "utf8"))
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line) as PhaseLedgerRow);
-    const countPhase = (phase: string): number => ledgerRows.filter((r) => r.kind === "phase" && r.phase === phase).length;
-    assert.equal(ledgerRows.length, 10, JSON.stringify(ledgerRows.map((r) => `${r.task}:${r.phase}`)));
+      .map((line) => JSON.parse(line) as LedgerRow);
+    const phaseRows = ledgerRows.filter((r): r is PhaseLedgerRow => r.kind === "phase");
+    const countPhase = (phase: string): number => phaseRows.filter((r) => r.phase === phase).length;
+    assert.equal(phaseRows.length, 10, JSON.stringify(ledgerRows.map((r) => `${(r as PhaseLedgerRow).task}:${(r as PhaseLedgerRow).phase}`)));
+    assert.equal(ledgerRows.length - phaseRows.length, 10, "one spawn row per subprocess");
     assert.equal(countPhase("implementation"), 3);
     assert.equal(countPhase("review"), 3);
     assert.equal(countPhase("learner"), 3);
     assert.equal(countPhase("sync"), 1);
-    for (const row of ledgerRows) {
+    for (const row of phaseRows) {
       assert.equal(row.spec, "e2e-spec");
       assert.match(row.task, /^TASK-00[123]$/);
       // The fake agent emits two messages per phase: 100+10 and 200+20 tokens.

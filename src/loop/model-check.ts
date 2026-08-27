@@ -62,6 +62,22 @@ export function configuredModels(config: SpecsKitConfig): ConfiguredModel[] {
 }
 
 /**
+ * The escalation models configured, one per role that declares one distinct
+ * from its primary. Checked like the primaries but only warned about: a
+ * fallback the catalogue does not know costs nothing until the day it is
+ * needed — and then it fails exactly like any other unknown model, with a
+ * diagnosis naming it.
+ */
+export function configuredFallbackModels(config: SpecsKitConfig): ConfiguredModel[] {
+  const models: ConfiguredModel[] = [];
+  for (const role of ROLE_NAMES) {
+    const { model, fallbackModel } = config.roles[role];
+    if (fallbackModel && fallbackModel !== model) models.push({ role, model: fallbackModel });
+  }
+  return models;
+}
+
+/**
  * The configured models the CLI catalogue does not know about, i.e. the ones
  * that would fail at spawn time on every attempt. Comparison is exact: the
  * catalogue is case-sensitive.
@@ -109,5 +125,18 @@ export function unknownModelsError(missing: readonly ConfiguredModel[]): string 
   return (
     `cannot start the loop: model(s) not known to the agent CLI: ${entries}. ` +
     "Check the agents.*_model values in specs-kit.yaml."
+  );
+}
+
+/**
+ * Warning for a declared fallback the CLI does not know. Advisory on purpose:
+ * the run starts, and the gap is named so it can be fixed before an outage
+ * ever needs the fallback.
+ */
+export function unknownFallbackModelsWarning(missing: readonly ConfiguredModel[]): string {
+  const entries = missing.map((m) => `${m.role}: ${m.model}`).join(", ");
+  return (
+    `[specs-kit] escalation model(s) not known to the agent CLI: ${entries}. ` +
+    "The loop starts anyway; when a phase falls back it will fail like any other unknown model."
   );
 }

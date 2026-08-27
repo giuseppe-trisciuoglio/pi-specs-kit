@@ -26,6 +26,10 @@ export type PhaseFailureKind =
   | "timeout"
   /** A stop request or a phase interrupt cut the subprocess short. */
   | "aborted"
+  /** The subprocess ran clean but the stream carried no assistant message:
+   * nothing was produced, so a phase whose contract is a written artifact
+   * cannot have delivered it. */
+  | "no-output"
   /** Anything else the agent reported as an error. */
   | "agent-error";
 
@@ -64,9 +68,16 @@ function trim(text: string): string {
 }
 
 /**
- * Classify a finished phase, or null when it delivered. Structural flags are
- * read before the error text: a timeout and an abort are facts about the
- * subprocess, whatever the agent managed to say before it went.
+ * Classify a finished phase, or null when it delivered.
+ *
+ * The question is answered from evidence, and the evidence list is a
+ * disjunction: a termination signal, a nonzero exit, a timeout, an interrupt,
+ * an error message on the closing message, or a stream that carried no
+ * completed assistant message at all — each on its own is enough to call the
+ * phase failed. The stop reason names the failure but no longer gates whether
+ * one exists: an error that fires before the first token travels in the error
+ * field with the stop reason unset, and reading only the taxonomy let exactly
+ * that shape walk past as a delivered phase.
  */
 export function classifyPhaseFailure(outcome: PhaseRunOutcome | null): PhaseFailure | null {
   // No outcome at all means the subprocess never produced one, which is the
@@ -74,7 +85,19 @@ export function classifyPhaseFailure(outcome: PhaseRunOutcome | null): PhaseFail
   if (!outcome) return { kind: "agent-error", detail: "the phase produced no outcome", environment: false };
   if (outcome.timedOut) return { kind: "timeout", detail: "the phase outlived its timeout", environment: false };
   if (outcome.aborted) return { kind: "aborted", detail: "the phase was interrupted", environment: false };
-  if (outcome.exitCode === 0 && outcome.stopReason !== "error") return null;
+  if (outcome.signal) {
+    return { kind: "agent-error", detail: `terminated by ${outcome.signal}`, environment: false };
+  }
+  // Silence is positive evidence and must be reported by the counter: an
+  // outcome that does not carry the count at all says nothing either way.
+  if (outcome.assistantMessages === 0 && !hasReportedError(outcome)) {
+    return {
+      kind: "no-output",
+      detail: "the phase ended without producing any output",
+      environment: false,
+    };
+  }
+  if (isClean(outcome)) return null;
 
   const text = `${outcome.errorMessage ?? ""}\n${outcome.stderr}`;
   for (const { kind, pattern } of SIGNATURES) {
@@ -83,10 +106,44 @@ export function classifyPhaseFailure(outcome: PhaseRunOutcome | null): PhaseFail
   return { kind: "agent-error", detail: trim(outcome.errorMessage ?? outcome.stderr) || "agent error", environment: false };
 }
 
+/** The transport-level evidence of something going wrong, independent of taxonomy. */
+function hasReportedError(outcome: PhaseRunOutcome): boolean {
+  return outcome.exitCode !== 0 || outcome.stopReason === "error" || outcome.errorMessage !== null;
+}
+
+/** Nothing in the outcome or the stream says otherwise: the phase delivered. */
+function isClean(outcome: PhaseRunOutcome): boolean {
+  return outcome.exitCode === 0 && outcome.stopReason !== "error" && outcome.errorMessage === null;
+}
+
 /** A phase subprocess outcome counts as failed on any of these conditions. */
 export function spawnFailed(outcome: PhaseRunOutcome | null): boolean {
   return classifyPhaseFailure(outcome) !== null;
 }
+
+/**
+ * Thrown after consecutive phases failed the environmental way — refused, or
+ * silent, or both. A provider outage does not respect task boundaries: the
+ * task that discovered it stops with a diagnosis, and the one after would
+ * discover nothing new. Crossing the streak limit halts the whole run with
+ * every reason accumulated, so the operator reads one sentence instead of
+ * watching the same failure replay per task.
+ */
+export class EnvironmentStreakError extends Error {
+  /** One line per failed phase, oldest first. */
+  readonly reasons: readonly string[];
+
+  constructor(reasons: readonly string[]) {
+    super(
+      `${reasons.length} phase(s) in a row failed against the environment and the escalation model did not help either`,
+    );
+    this.name = "EnvironmentStreakError";
+    this.reasons = reasons;
+  }
+}
+
+/** Consecutive environmental phase failures the run tolerates before halting. */
+export const DEFAULT_ENVIRONMENT_STREAK = 2;
 
 /**
  * Operator-facing line for a failure no retry can absorb. It names the role
@@ -101,6 +158,7 @@ export function environmentFailureMessage(phase: string, taskId: string, failure
     model: "the configured model is not one the agent CLI can reach",
     timeout: "the phase outlived its timeout",
     aborted: "the phase was interrupted",
+    "no-output": "the phase ran but produced no output at all",
     "agent-error": "the agent reported an error",
   }[failure.kind];
   return (

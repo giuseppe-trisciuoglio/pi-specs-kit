@@ -73,7 +73,7 @@ export async function protectedSpecFiles(specDir: string): Promise<string[]> {
   } catch {
     // A spec directory that cannot be listed protects only what was found.
   }
-  return files.sort();
+  return files.sort((a, b) => a.localeCompare(b));
 }
 
 /**
@@ -105,7 +105,7 @@ export function changedProtectedPaths(
   for (const [file, hash] of after) {
     if (before.get(file) !== hash) changed.add(file);
   }
-  return [...changed].map((file) => path.relative(specDir, file)).sort();
+  return [...changed].map((file) => path.relative(specDir, file)).sort((a, b) => a.localeCompare(b));
 }
 
 /**

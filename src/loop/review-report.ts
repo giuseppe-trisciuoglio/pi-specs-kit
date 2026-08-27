@@ -95,14 +95,29 @@ export async function listReviewAttemptArchives(specDir: string, taskId: string)
     .map((name) => path.join("tasks", name));
 }
 
+/** Render an untrusted value without leaking '[object Object]' into reports. */
+function asText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && value !== null) return JSON.stringify(value);
+  return String(value);
+}
+
+/** Coerce a raw frontmatter `issues` value into a list, tolerating junk. */
+function issueList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(asText);
+  if (value === null || value === undefined || value === "") return [];
+  return [asText(value)];
+}
+
 /** Coerce a raw frontmatter `routed` value into a typed list, tolerating junk. */
 function parseRouted(value: unknown): RoutedSuggestion[] {
   if (!Array.isArray(value)) return [];
   const result: RoutedSuggestion[] = [];
   for (const entry of value) {
     if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const to = String((entry as Record<string, unknown>).to ?? "").trim();
-    const text = String((entry as Record<string, unknown>).text ?? "").trim();
+    const raw = entry as Record<string, unknown>;
+    const to = asText(raw.to ?? "").trim();
+    const text = asText(raw.text ?? "").trim();
     if (to !== "" && text !== "") result.push({ to, text });
   }
   return result;
@@ -116,46 +131,64 @@ function parseStringList(value: unknown): string[] {
 }
 
 /**
- * What to tell a reviewer whose previous report could not be read. The skill
+ * What to tell a reviewer whose previous report could not be used. The skill
  * carries a much longer report template, so the reminder repeats the one part
  * the loop actually parses and shows it verbatim rather than describing it.
  *
  * The quoting rule is spelled out because it is what actually breaks: the
- * values reviewers write are prose, and prose contains colons. When the
- * unreadable report is still on disk its path is named, so the next spawn
- * repairs the block it already wrote instead of reviewing the task again.
+ * values reviewers write are prose, and prose contains colons. Two very
+ * different failures share this reminder, and the message says which one
+ * happened: an unreadable report is still on disk (its path is named) and
+ * only the block has to be rewritten, while a missing one means the previous
+ * spawn created no file at all, so the whole review has to be produced and
+ * written to the named path.
  */
-export function reviewFormatReminder(taskId: string, preservedPath?: string): string {
-  const lines = [
-    `The previous review of ${taskId} left no readable verdict: the file`,
-    `tasks/${taskId}--review.md was missing, or it did not start with a YAML`,
-    "frontmatter block holding review_status. Write it again, starting with",
-    "exactly these lines and nothing before them:",
+export function reviewFormatReminder(
+  taskId: string,
+  opts: { preservedPath?: string; missing?: boolean } = {},
+): string {
+  let lines: string[];
+  if (opts.preservedPath) {
+    lines = [
+      `The previous review of ${taskId} wrote a report the loop could not read:`,
+      `the file did not start with a usable YAML frontmatter block. The report`,
+      `is preserved at ${opts.preservedPath}. Do not review the task again:`,
+      "read that file, keep its findings and its verdict exactly as they are,",
+      "and write it back to the report path with a frontmatter block in the",
+      "shape below.",
+    ];
+  } else if (opts.missing) {
+    lines = [
+      `The previous review of ${taskId} produced no file at all:`,
+      `tasks/${taskId}--review.md does not exist. Produce the review now and`,
+      "write the report to that exact path (relative to the spec folder),",
+      "starting with exactly these lines and nothing before them:",
+    ];
+  } else {
+    lines = [
+      `The previous review of ${taskId} left no readable verdict: the file`,
+      `tasks/${taskId}--review.md was missing, or it did not start with a YAML`,
+      "frontmatter block holding review_status. Write it again, starting with",
+      "exactly these lines and nothing before them:",
+    ];
+  }
+  lines.push(
     "",
     "---",
-    "review_status: PASSED",
+    'review_status: "PASSED"',
     'summary: "one line on the outcome"',
     "issues: []",
     "spec_conflicts: []",
     "routed: []",
     "---",
     "",
-    "review_status must be PASSED or FAILED, nothing else. Any report body you",
-    "want to write goes after the closing ---.",
+    'review_status must be "PASSED" or "FAILED", nothing else. Any report body',
+    "you want to write goes after the closing ---.",
     "",
     "Quote every value with double quotes: a summary, an issue or a routed fix",
     "that contains a colon followed by a space is what made the previous block",
     "unreadable.",
-  ];
-  if (preservedPath) {
-    lines.push(
-      "",
-      `The report you wrote is preserved at ${preservedPath}. Do not review the`,
-      "task again: read that file, keep its findings and its verdict exactly as",
-      "they are, and write it back to the report path with a frontmatter block",
-      "in the shape above.",
-    );
-  }
+  );
   return lines.join("\n");
 }
 
@@ -193,9 +226,9 @@ export function parseReviewReport(content: string): ReviewReport | null {
   }
   if (data !== null && typeof data === "object" && !Array.isArray(data)) {
     const fm = data as Record<string, unknown>;
-    const status = String(fm.review_status ?? "").trim().toUpperCase();
+    const status = asText(fm.review_status ?? "").trim().toUpperCase();
     if (status === "PASSED" || status === "FAILED") {
-      const issues = Array.isArray(fm.issues) ? fm.issues.map(String) : fm.issues ? [String(fm.issues)] : [];
+      const issues = issueList(fm.issues);
       return {
         status,
         summary: typeof fm.summary === "string" ? fm.summary : "",
@@ -239,7 +272,10 @@ export function routedFor(report: ReviewReport, targetTaskId: string): RoutedSug
 export function reviewFeedback(report: ReviewReport): string {
   const parts: string[] = [];
   if (report.summary) parts.push(`Summary: ${report.summary}`);
-  if (report.issues.length > 0) parts.push(`Issues:\n${report.issues.map((issue) => `- ${issue}`).join("\n")}`);
+  if (report.issues.length > 0) {
+    const bullets = report.issues.map((issue) => `- ${issue}`).join("\n");
+    parts.push(`Issues:\n${bullets}`);
+  }
   if (report.specConflicts.length > 0) {
     parts.push(
       "Requirements the review found contradicted by the implementation. Change the code to " +

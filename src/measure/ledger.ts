@@ -54,7 +54,49 @@ export interface AuthoringLedgerRow {
   cost_total: number;
 }
 
-export type LedgerRow = PhaseLedgerRow | AuthoringLedgerRow;
+/**
+ * Structural summary of one agent subprocess outcome. PhaseRunOutcome
+ * satisfies it structurally; the ledger never imports the spawner.
+ */
+export interface SpawnOutcomeSummary {
+  exitCode: number | null;
+  signal?: string | null;
+  timedOut: boolean;
+  aborted: boolean;
+  stopReason: string | null;
+  errorMessage: string | null;
+  elapsedMs: number;
+  assistantMessages?: number;
+}
+
+/**
+ * One agent subprocess outcome, recorded whether the phase delivered or not.
+ * Spawns run sessionless by design, so this row is the only trace of what a
+ * silent or refused subprocess actually did — the raw closing evidence a
+ * post-mortem reads instead of guessing.
+ */
+export interface SpawnLedgerRow {
+  v: 1;
+  kind: "spawn";
+  ts: string;
+  spec: string;
+  task: string;
+  phase: string;
+  attempt: number;
+  role: string;
+  /** Model the subprocess was spawned with; null when the CLI chose. */
+  model: string | null;
+  exit_code: number | null;
+  signal: string | null;
+  timed_out: boolean;
+  aborted: boolean;
+  stop_reason: string | null;
+  error_message: string | null;
+  duration_ms: number;
+  assistant_messages: number;
+}
+
+export type LedgerRow = PhaseLedgerRow | AuthoringLedgerRow | SpawnLedgerRow;
 
 export const LEDGER_FILE_NAME = "measurements.jsonl";
 

@@ -84,13 +84,13 @@ test("a full run appends one ledger row per phase and leaves no WAL rows", async
   const rows = (await readFile(ledgerFile, "utf8"))
     .trim()
     .split("\n")
-    .map((line) => JSON.parse(line) as PhaseLedgerRow);
+    .map((line) => JSON.parse(line) as PhaseLedgerRow)
+    .filter((row) => row.kind === "phase");
   assert.deepEqual(
     rows.map((row) => row.phase),
     ["implementation", "review", "cleanup", "learner", "sync"],
   );
   for (const row of rows) {
-    assert.equal(row.kind, "phase");
     assert.equal(row.spec, "001-spec");
     assert.equal(row.task, "TASK-001");
     assert.equal(row.model, "fake/fake-model");
@@ -138,10 +138,105 @@ test("a retried phase records the declared attempt number in the ledger", async 
   const rows = (await readFile(ledgerFile, "utf8"))
     .trim()
     .split("\n")
-    .map((line) => JSON.parse(line) as PhaseLedgerRow);
+    .map((line) => JSON.parse(line) as PhaseLedgerRow)
+    .filter((row) => row.kind === "phase");
   assert.deepEqual(
     rows.filter((row) => row.phase === "implementation").map((row) => row.attempt),
     [1, 2],
   );
   assert.equal(rows.find((row) => row.phase === "review")?.attempt, 2);
+});
+
+test("two consecutive environmental failures halt the run instead of walking the range", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "measure-engine-"));
+  tmpDirs.push(root);
+  const specDir = path.join(root, "docs/specs/001-spec");
+  await mkdir(path.join(specDir, "tasks"), { recursive: true });
+  for (const id of ["TASK-001", "TASK-002", "TASK-003"]) {
+    await writeFile(path.join(specDir, "tasks", `${id}.md`), TASK.replace("TASK-001", id), "utf8");
+  }
+
+  const config = await loadSpecsKitConfig(root);
+  // Without continue-on-failure the range stops at the first failed task, and
+  // the breaker would never see a second task walk into the same outage.
+  config.run.continueOnFailure = true;
+  const meter = new PhaseMeter({
+    ledgerFile: path.join(root, "ledger.jsonl"),
+    walFile: path.join(root, "wal.jsonl"),
+    projectRoot: root,
+  });
+
+  const quota = '429 {"type":"error","error":{"type":"rate_limit_error"}}';
+  const engine = new LoopEngine(
+    {
+      config,
+      spawnPhase: async () => {
+        // The first two tasks find the outage; the streak crosses the limit
+        // before a third task can rediscover it all over again.
+        return { ...okOutcome(), exitCode: 1, stopReason: "error", errorMessage: quota };
+      },
+      runHooks: async () => [],
+      commitCheckpoint: async () => ({ committed: true }),
+      refreshCodebaseGraph: async () => ({ status: "unavailable" as const, detail: "" }),
+      meter,
+      environmentStreakLimit: 2,
+    },
+    {},
+  );
+  const result = await engine.start({ specDir });
+
+  assert.equal(result.reason, "halted");
+  assert.match(result.error ?? "", /failed against the environment/);
+  assert.match(result.error ?? "", /quota/);
+});
+
+test("a delivered phase clears the environmental streak", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "measure-engine-"));
+  tmpDirs.push(root);
+  const specDir = path.join(root, "docs/specs/001-spec");
+  await mkdir(path.join(specDir, "tasks"), { recursive: true });
+  for (const id of ["TASK-001", "TASK-002", "TASK-003"]) {
+    await writeFile(path.join(specDir, "tasks", `${id}.md`), TASK.replace("TASK-001", id), "utf8");
+  }
+
+  const config = await loadSpecsKitConfig(root);
+  config.run.continueOnFailure = true;
+  const meter = new PhaseMeter({
+    ledgerFile: path.join(root, "ledger.jsonl"),
+    walFile: path.join(root, "wal.jsonl"),
+    projectRoot: root,
+  });
+
+  const failing = new Set(["TASK-001", "TASK-003"]);
+  const currentTask = (): string | null => {
+    const match = /TASK-00\d/.exec(lastPrompt ?? "");
+    return match ? match[0] : null;
+  };
+  let lastPrompt: string | null = null;
+  const engine = new LoopEngine(
+    {
+      config,
+      spawnPhase: async (opts) => {
+        lastPrompt = opts.prompt;
+        if (phaseOf(opts.prompt) === "implementation" && failing.has(currentTask() ?? "")) {
+          return { ...okOutcome(), exitCode: 1, stopReason: "error", errorMessage: "429 rate limit" };
+        }
+        if (phaseOf(opts.prompt) === "review") {
+          await writeFile(reviewFilePath(specDir, currentTask() ?? "TASK-001"), "---\nreview_status: PASSED\n---\n\nOK.\n", "utf8");
+        }
+        return okOutcome();
+      },
+      runHooks: async () => [],
+      commitCheckpoint: async () => ({ committed: true }),
+      refreshCodebaseGraph: async () => ({ status: "unavailable" as const, detail: "" }),
+      meter,
+      environmentStreakLimit: 2,
+    },
+    {},
+  );
+  const result = await engine.start({ specDir });
+
+  // One task fails environmentally, the next one delivers, a third fails
+  // again: a counter that never reset would halt on that third failure.
+  assert.equal(result.reason, "completed", "one flaky phase never stops the run");
 });

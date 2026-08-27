@@ -32,12 +32,20 @@ export interface PhaseSpawnOptions {
 
 export interface PhaseRunOutcome {
   exitCode: number | null;
+  /** Termination signal reported by the OS, when the process died by signal.
+   * Optional so older constructors (tests, fixtures) stay valid; absent reads
+   * as "no signal", which is what they mean. */
+  signal?: NodeJS.Signals | null;
   timedOut: boolean;
   aborted: boolean;
   stopReason: string | null;
   errorMessage: string | null;
   elapsedMs: number;
   stderr: string;
+  /** Completed assistant messages the stream carried; absent reads as "the
+   * caller does not know", which the empty-output check treats as nonzero
+   * rather than inventing evidence of silence. */
+  assistantMessages?: number;
 }
 
 /**
@@ -61,11 +69,19 @@ export async function runAgentPhase(opts: PhaseSpawnOptions): Promise<PhaseRunOu
 
   let stopReason: string | null = null;
   let errorMessage: string | null = null;
+  let assistantMessages = 0;
   const parser = createJsonlParser((event) => {
     const ended = agentEndOutcome(event);
     if (ended) {
       stopReason = ended.stopReason;
       errorMessage = ended.errorMessage;
+    }
+    // Counted off the parsed stream, not off the formatted log: the two can
+    // diverge, and the empty-output classification must not inherit a
+    // formatter's blind spots.
+    if (event.type === "message_end") {
+      const message = (event as { message?: { role?: unknown } }).message;
+      if (message?.role === "assistant") assistantMessages++;
     }
     opts.onEvent?.(event);
   });
@@ -95,11 +111,13 @@ export async function runAgentPhase(opts: PhaseSpawnOptions): Promise<PhaseRunOu
 
   return {
     exitCode: res.exitCode,
+    signal: res.signal,
     timedOut: res.timedOut,
     aborted: opts.signal?.aborted ?? false,
     stopReason,
     errorMessage,
     elapsedMs: res.elapsedMs,
     stderr: res.stderr,
+    assistantMessages,
   };
 }

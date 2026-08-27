@@ -55,7 +55,7 @@ export async function prepareRun(config: SpecsKitConfig, opts: RunSetupOptions):
     const range = [from ? `from ${from}` : null, to ? `to ${to}` : null].filter(Boolean).join(" ");
     throw new Error(
       `the task range (${range || "open"}) selects no task: ` +
-        `${ids.length} tasks available, ${ids[0]}..${ids[ids.length - 1]}`,
+        `${ids.length} tasks available, ${ids[0]}..${ids.at(-1)}`,
     );
   }
 

@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { appendLedgerRow, type PhaseLedgerRow, type UsageSummary, zeroUsage } from "./ledger.ts";
+import { appendLedgerRow, type PhaseLedgerRow, type SpawnLedgerRow, type SpawnOutcomeSummary, type UsageSummary, zeroUsage } from "./ledger.ts";
 import { addUsage, messageUsage } from "./usage.ts";
 import { appendWalRow, pruneWalRows } from "./wal.ts";
 
@@ -118,6 +118,36 @@ export class PhaseMeter {
     };
     this.#io(() => appendLedgerRow(this.#deps.ledgerFile, row));
     this.#io(() => pruneWalRows(this.#deps.walFile, (raw) => raw.scope_id !== handle.id));
+  }
+
+  /**
+   * Record one subprocess outcome verbatim. A spawn that came back silent or
+   * refused has no usage to consolidate and often no log line either — the
+   * lifecycle events are not rendered — so this row is the evidence a
+   * post-mortem reads instead of reconstructing what might have happened.
+   */
+  recordSpawn(handle: PhaseHandle, outcome: SpawnOutcomeSummary): void {
+    const { context } = handle;
+    const row: SpawnLedgerRow = {
+      v: 1,
+      kind: "spawn",
+      ts: this.#now().toISOString(),
+      spec: context.spec,
+      task: context.task,
+      phase: context.phase,
+      attempt: context.attempt,
+      role: context.role,
+      model: handle.model,
+      exit_code: outcome.exitCode,
+      signal: outcome.signal ?? null,
+      timed_out: outcome.timedOut,
+      aborted: outcome.aborted,
+      stop_reason: outcome.stopReason,
+      error_message: outcome.errorMessage,
+      duration_ms: outcome.elapsedMs,
+      assistant_messages: outcome.assistantMessages ?? 0,
+    };
+    this.#io(() => appendLedgerRow(this.#deps.ledgerFile, row));
   }
 
   #io(fn: () => void): void {

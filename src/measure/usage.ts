@@ -28,7 +28,7 @@ export interface MessageUsage {
  */
 export function messageUsage(message: unknown): MessageUsage | null {
   const record = asRecord(message);
-  if (!record || record.role !== "assistant") return null;
+  if (record?.role !== "assistant") return null;
   const usage = asRecord(record.usage);
   if (!usage) return null;
   const cost = asRecord(usage.cost);

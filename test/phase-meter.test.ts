@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { PhaseLedgerRow } from "../src/measure/ledger.ts";
+import type { LedgerRow, PhaseLedgerRow } from "../src/measure/ledger.ts";
 import { PhaseMeter, type PhaseMeterDeps } from "../src/measure/phase-meter.ts";
 import { readWalRows } from "../src/measure/wal.ts";
 
@@ -46,11 +46,11 @@ function messageEnd(message: unknown): unknown {
   return { type: "message_end", message };
 }
 
-function ledgerRows(file: string): PhaseLedgerRow[] {
+function ledgerRows(file: string): LedgerRow[] {
   return readFileSync(file, "utf8")
     .trim()
     .split("\n")
-    .map((line) => JSON.parse(line) as PhaseLedgerRow);
+    .map((line) => JSON.parse(line) as LedgerRow);
 }
 
 test("a finished phase writes one consolidated ledger row and prunes the WAL", () => {
@@ -103,7 +103,7 @@ test("messages without usage contribute nothing but the row is still written", (
   meter.recordEvent(handle, messageEnd({ role: "assistant", stopReason: "stop" }));
   meter.finishPhase(handle);
 
-  const [row] = ledgerRows(ledgerFile);
+  const [row] = ledgerRows(ledgerFile) as PhaseLedgerRow[];
   assert.deepEqual(row.usage, { input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 });
   // No usage observed on the stream: the configured model is the fallback.
   assert.equal(row.model, "configured/model");
@@ -149,4 +149,31 @@ test("an I/O failure warns once and disables measurement silently", () => {
   meter.finishPhase(handle);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /measurement disabled/);
+});
+
+test("a spawn outcome is recorded verbatim, even when nothing was produced", async () => {
+  const { deps, ledgerFile } = setup();
+  const meter = new PhaseMeter(deps);
+  const handle = meter.beginPhase({ spec: "001-spec", task: "TASK-001", phase: "review", attempt: 1, role: "reviewer", model: "provider/a" });
+
+  meter.recordSpawn(handle, {
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    aborted: false,
+    stopReason: null,
+    errorMessage: "connection reset before the first token",
+    elapsedMs: 61_000,
+    assistantMessages: 0,
+  });
+  meter.finishPhase(handle);
+
+  const rows = ledgerRows(ledgerFile);
+  const spawn = rows.find((row): row is Extract<LedgerRow, { kind: "spawn" }> => row.kind === "spawn");
+  assert.ok(spawn, "one spawn row next to the phase row");
+  assert.equal(spawn.role, "reviewer");
+  assert.equal(spawn.exit_code, 0);
+  assert.equal(spawn.stop_reason, null);
+  assert.match(spawn.error_message ?? "", /connection reset/);
+  assert.equal(spawn.assistant_messages, 0, "the silence is the evidence a post-mortem reads");
 });
