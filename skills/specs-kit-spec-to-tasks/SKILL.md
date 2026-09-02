@@ -1377,21 +1377,16 @@ All task files follow a standardized frontmatter schema defined in `hooks/task_s
 Tasks use a standardized status workflow with automatic date tracking:
 
 ```
-pending → in_progress → implemented → reviewed → completed
-              ↓
-          blocked (can return to in_progress)
+pending → implemented → reviewed
+                └───────────→ completed (cleanup hook terminal stamp)
 ```
 
 | Status | Description | Dates Set |
 |--------|-------------|-----------|
 | `pending` | Initial state, ready to start | None |
-| `in_progress` | Work has started | `started_date` |
 | `implemented` | Coding complete, awaiting review | `implemented_date` |
-| `reviewed` | Review passed, awaiting cleanup | `reviewed_date` |
+| `reviewed` | Review passed (canonical terminal) | `reviewed_date` |
 | `completed` | Cleanup done, fully complete | `completed_date`, `cleanup_date` |
-| `superseded` | Replaced by other tasks | None |
-| `optional` | Not required for feature | None |
-| `blocked` | Cannot proceed | None |
 
 ### Auto-Status Management
 
@@ -1399,25 +1394,28 @@ Task status is automatically managed by Claude Code hooks:
 
 | User Action | Automatic Status Update |
 |-------------|------------------------|
-| Edit task file, check AC boxes | `pending` → `in_progress` → `implemented` |
-| Check all DoD boxes | `implemented` → `reviewed` |
-| Add Cleanup Summary section | `reviewed` → `completed` |
+| Implementation phase finishes | `pending` → `implemented` |
+| Review passes | `implemented` → `reviewed` |
+| Cleanup hook stamps the terminal | `reviewed` → `completed` |
 
 **How it works:**
-- Hooks monitor `TASK-*.md` files on every save
-- Checkboxes are analyzed to determine progress
-- Frontmatter `status` and date fields update automatically
+- The loop updates `status` and the date fields on `TASK-*.md` files at each phase boundary
 - No manual status management needed
 
 **Manual override (if needed):**
 Simply edit the YAML frontmatter directly:
 ```yaml
 ---
-status: blocked  # or any valid status
+status: pending  # or any other valid status
 ---
 ```
 
-Valid statuses: `pending`, `in_progress`, `implemented`, `reviewed`, `completed`, `superseded`, `optional`, `blocked`
+Valid statuses: `pending`, `implemented`, `reviewed`, `completed`
+
+These are the only values the task parser accepts (`src/tasks/task-parser.ts`): any other value
+(e.g. `in_progress`, `blocked`, `superseded`, `optional`, `done`) makes the task file fail to load
+and blocks `run`/`refresh` for the entire spec. To put a task aside, comment it out in the fix
+plan or remove the file; do not invent a status.
 
 ---
 

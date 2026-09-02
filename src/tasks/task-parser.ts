@@ -133,7 +133,11 @@ export function parseTaskFile(path: string, content: string): TaskFile {
   }
   const status = fm.status ?? "pending";
   if (typeof status !== "string" || !TASK_STATUSES.includes(status as TaskStatus)) {
-    throw new TaskParseError(path, "status", `invalid value: ${describe(status)}`);
+    throw new TaskParseError(
+      path,
+      "status",
+      `invalid value: ${describe(status)} (expected one of: ${TASK_STATUSES.join(", ")})`,
+    );
   }
   // Treat the cleanup hook's terminal stamp as equivalent to the canonical
   // reviewed one so downstream comparisons do not need to know about both.

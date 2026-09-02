@@ -6,7 +6,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { isTaskFileName } from "./task-files.ts";
-import { parseTaskFile, taskIdNumber, type TaskFile } from "./task-parser.ts";
+import { parseTaskFile, taskIdNumber, TaskParseError, type TaskFile } from "./task-parser.ts";
 
 /**
  * Load every task file in `<specDir>/tasks/` (review reports and any other
@@ -25,10 +25,22 @@ export async function loadTasks(specDir: string): Promise<TaskFile[]> {
 
   const tasks: TaskFile[] = [];
   const byId = new Map<string, string>();
+  const parseErrors: Error[] = [];
   for (const name of entries) {
     if (!isTaskFileName(name)) continue;
     const filePath = path.join(tasksDir, name);
-    const task = parseTaskFile(filePath, await readFile(filePath, "utf8"));
+    let task: TaskFile;
+    try {
+      task = parseTaskFile(filePath, await readFile(filePath, "utf8"));
+    } catch (err) {
+      // One malformed file must not hide the others: report every invalid
+      // file at once so the user can fix the whole batch in one pass.
+      if (err instanceof TaskParseError) {
+        parseErrors.push(err);
+        continue;
+      }
+      throw err;
+    }
     // Two files declaring the same id are ambiguous for every consumer: the
     // loop would run one and skip the other as already done, while progress
     // counts both. Fail loudly instead of silently dropping a task body.
@@ -41,6 +53,9 @@ export async function loadTasks(specDir: string): Promise<TaskFile[]> {
     }
     byId.set(task.frontmatter.id, name);
     tasks.push(task);
+  }
+  if (parseErrors.length > 0) {
+    throw new Error(parseErrors.map((err) => err.message).join("\n"));
   }
   return tasks.sort((a, b) => a.num - b.num);
 }
