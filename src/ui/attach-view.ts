@@ -112,7 +112,10 @@ class AttachView implements Component {
 
     const output = [...visible, ...padding];
     if (this.#lastHookLine) output.push(truncateToWidth(this.#lastHookLine, width));
-    return [...output, footerLine(status), this.#hint()];
+    // The footer and the hint are lines of the frame like any other: a line
+    // wider than the viewport would be wrapped by the terminal and push the
+    // frame out of alignment.
+    return [...output, truncateToWidth(footerLine(status), width), truncateToWidth(this.#hint(), width)];
   }
 
   #emptyLine(status: LoopStatus): string {
@@ -175,6 +178,22 @@ class AttachView implements Component {
   }
 }
 
+/**
+ * A resize that lands while the process is not listening leaves the cached
+ * terminal size stale, and the transcript would then wrap its markdown to a
+ * width that has nothing to do with the window. Re-emitting the resize signal
+ * makes the runtime read the real size again; the fullscreen view is where a
+ * stale width is most visible, so it is refreshed on the way in.
+ */
+function refreshTerminalSize(): void {
+  if (process.platform === "win32") return;
+  try {
+    process.kill(process.pid, "SIGWINCH");
+  } catch {
+    // Best-effort: a view opening must never fail over a signal.
+  }
+}
+
 /** Open the fullscreen transcript; resolves when the operator closes it. */
 export async function openAttachView(ctx: ExtensionCommandContext, controller: LoopController): Promise<void> {
   if (ctx.mode !== "tui" || !ctx.hasUI) {
@@ -183,6 +202,7 @@ export async function openAttachView(ctx: ExtensionCommandContext, controller: L
     else process.stdout.write(`${message}\n`);
     return;
   }
+  refreshTerminalSize();
   const cwd = controller.config?.projectRoot ?? process.cwd();
   await ctx.ui.custom<void>((tui, _theme, keybindings, done) => {
     return new AttachView(tui, keybindings, controller, cwd, () => done(), () => {
