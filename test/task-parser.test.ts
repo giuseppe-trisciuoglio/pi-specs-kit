@@ -80,6 +80,7 @@ test("parseTaskFile rejects an invalid status", () => {
     (err: unknown) => {
       assert.ok(err instanceof TaskParseError);
       assert.equal(err.field, "status");
+      assert.match(err.message, /invalid value: doing \(expected one of: pending, implemented, reviewed, completed\)/);
       return true;
     },
   );
@@ -278,6 +279,24 @@ test("loadTasks rejects two files declaring the same task id", async () => {
   });
 });
 
+test("loadTasks reports every invalid task file in one error", async () => {
+  await withSpec(async (specDir) => {
+    const dir = path.join(specDir, "tasks");
+    await writeFile(path.join(dir, "TASK-001.md"), taskFile("TASK-001", "One"), "utf8");
+    await writeFile(path.join(dir, "TASK-002.md"), taskFile("TASK-002", "Two", "status: done\n"), "utf8");
+    await writeFile(path.join(dir, "TASK-003.md"), taskFile("TASK-003", "Three", "status: blocked\n"), "utf8");
+    await assert.rejects(
+      () => loadTasks(specDir),
+      (err: unknown) => {
+        const message = (err as Error).message;
+        assert.match(message, /TASK-002\.md.*invalid value: done/);
+        assert.match(message, /TASK-003\.md.*invalid value: blocked/);
+        return true;
+      },
+    );
+  });
+});
+
 test("parseTaskFile admits the cleanup stamp and reads it back as reviewed", () => {
   // A cleanup hook may stamp a terminal value the loop did not write itself.
   // The parser treats it as the canonical terminal so a fix-plan refresh never
@@ -292,7 +311,7 @@ test("parseTaskFile admits the cleanup stamp and reads it back as reviewed", () 
 test("parseTaskFile still rejects an unknown status", () => {
   assert.throws(
     () => parseTaskFile("/x/TASK-003.md", "---\nid: TASK-003\ntitle: X\nstatus: draft\n---\n\nb\n"),
-    /invalid value: draft/,
+    /invalid value: draft \(expected one of/,
   );
 });
 

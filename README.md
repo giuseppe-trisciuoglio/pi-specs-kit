@@ -68,7 +68,7 @@ any point leaves a snapshot you can resume from.
 | `/specs-kit-run` | `[--spec p] [--from-task T] [--to-task T] [--phase f] [--resume] [--force]` | Starts the loop; with no arguments it opens the spec, range and phase pickers. |
 | `/specs-kit-stop` | `[--now]` | Stop at the end of the phase, or immediately with `--now`. |
 | `/specs-kit-status` | — | Current phase, attempt, progress, last error, log path. |
-| `/specs-kit-refresh` | `[--spec p]` | Regenerate the fix plan from the task files: a task turned `reviewed` is marked done, one sent back to any other status returns to the queue. |
+| `/specs-kit-refresh` | `[--spec p]` | Regenerate the fix plan from the task files: a task whose frontmatter status is `reviewed` (or `completed`) counts as finished in the plan, one sent back to `pending` or `implemented` returns to the queue. |
 | `/specs-kit-attach` | — | Fullscreen transcript of the phase running now. |
 | `/specs-kit-config` | — | Pick model (searchable list) and thinking level per role, edit the adversarial review panel, the phase hooks and the run options, written to the configuration. |
 | `/specs-kit-new` | — | Brainstorm a new functional specification and set it active on completion. |

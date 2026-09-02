@@ -99,11 +99,15 @@ Review context for each finding. Remove confirmed debt and document what was rem
 
 ### Phase 8: Task Completion
 
-1. **Auto-update task status**:
+1. **Update the task status**:
    - Add a `## Cleanup Summary` section to the task file
    - Check any remaining boxes in the DoD section
-   - Hooks update status to `reviewed` (the canonical terminal the loop
-     expects) and stamp `reviewed_date` + `cleanup_date`
+   - Inside the loop, hooks update status to `reviewed` (the canonical terminal the loop
+     expects) and stamp `reviewed_date` + `cleanup_date`.
+   - **Standalone run (outside the loop)**: no hook fires, so edit the frontmatter yourself —
+     set `status: reviewed` and stamp `reviewed_date` + `cleanup_date` (YYYY-MM-DD).
+     Only `pending`, `implemented`, `reviewed`, `completed` are valid values; anything else
+     (e.g. `done`) makes the task file fail to load and blocks run/refresh for the whole spec.
    
 2. Append `## Cleanup Summary` to task file with:
    - Files cleaned
