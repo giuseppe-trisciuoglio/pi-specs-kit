@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  DEFAULT_GITHUB_CONFIG,
   DEFAULT_RUN_CONFIG,
   defaultHooks,
   defaultRoles,
@@ -28,6 +29,7 @@ function makeConfig(overrides: Partial<SpecsKitConfig> = {}): SpecsKitConfig {
     hooks: defaultHooks(),
     knowledgeBase: { files: [] },
     prompts: { unsupportedPolicy: "skip", phaseOverrides: {} },
+    github: { ...DEFAULT_GITHUB_CONFIG },
     ...overrides,
   };
 }

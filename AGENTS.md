@@ -92,6 +92,13 @@ silent no-op (never a swap to the all-default config). The run ceilings follow t
   `pi --list-models` catalog (`src/loop/model-check.ts`): a missing model refuses startup naming roles and
   models; an unobtainable catalog only produces a warning and the loop starts. The lookup function is
   injectable (`ControllerDeps.listModels`). Decision documented in `docs/adr/0013`.
+- **`gh` backs the issue watcher only.** `/specs-kit-watch` polls the repository's issues for the
+  ready label and starts the loop on the spec the issue names (`src/github/`). Polling, not
+  webhooks: both need a live local process, polling needs no endpoint and no repo-level webhook
+  (decision documented in `docs/adr/0027`). The watcher is created by the command, never at load
+  time, and the labels are the interlock that keeps a poll from starting the same issue twice.
+  Missing, unauthenticated, or outside a GitHub repo: the command reports and nothing else
+  degrades.
 - Decision documented in `docs/adr/0009`.
 
 ## Testing

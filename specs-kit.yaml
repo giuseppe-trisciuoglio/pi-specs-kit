@@ -62,3 +62,10 @@ hooks:
 knowledge_base:
   files: []
 spec: docs/specs/001-auto-pr-at-loop-end
+github:
+  ready_label: ready
+  running_label: "specs-kit:running"
+  done_label: "specs-kit:done"
+  failed_label: "specs-kit:failed"
+  poll_interval: 60s
+  comment_on_finish: true

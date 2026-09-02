@@ -70,6 +70,7 @@ any point leaves a snapshot you can resume from.
 | `/specs-kit-status` | — | Current phase, attempt, progress, last error, log path. |
 | `/specs-kit-refresh` | `[--spec p]` | Regenerate the fix plan from the task files: a task whose frontmatter status is `reviewed` (or `completed`) counts as finished in the plan, one sent back to `pending` or `implemented` returns to the queue. |
 | `/specs-kit-attach` | — | Fullscreen transcript of the phase running now. |
+| `/specs-kit-watch` | `[--once] [--status] [--stop]` | Watch the repository's issues and start the loop on the ones labeled `ready`. |
 | `/specs-kit-config` | — | Pick model (searchable list) and thinking level per role, edit the adversarial review panel, the phase hooks and the run options, written to the configuration. |
 | `/specs-kit-new` | — | Brainstorm a new functional specification and set it active on completion. |
 | `/specs-kit-spec` | — | Show or set the active spec. |
@@ -130,6 +131,13 @@ hooks:
     post: ["npm test"]
 knowledge_base:
   files: ["./docs/architecture.md"]
+github:
+  ready_label: ready
+  running_label: "specs-kit:running"
+  done_label: "specs-kit:done"
+  failed_label: "specs-kit:failed"
+  poll_interval: 60s
+  comment_on_finish: true
 ```
 
 **Durations** (`run.timeout`, `hooks.timeout`, `poll_interval`) always take a
@@ -184,6 +192,44 @@ model: every coverage-matrix row marked implemented or verified must cite a test
 file that exists (and, when the citation names a test, a name that is in it), and
 no review fix may be left routed to a task that never completed. Both are
 warnings, printed once with the closing notices.
+
+## Runs started from a GitHub issue
+
+`/specs-kit-watch` polls the issues of the repository the working directory
+belongs to and starts the loop on the ones carrying the `ready` label. The
+repository is never configured: it is whatever `gh` resolves from the git
+remote, so the same extension serves every project.
+
+Which spec to run is read from the issue body: an explicit line wins, and
+anything else falls back to the first spec directory mentioned — a bare path, a
+markdown link or a GitHub URL all work.
+
+```markdown
+spec: docs/specs/034-example
+from-task: TASK-003
+to-task: TASK-007
+phase: implementation
+```
+
+Only `spec:` is needed; without a range the run covers every task from
+`implementation`. The specs root is the configured `specs_dir`, not a fixed
+`docs/specs`.
+
+The labels are the interlock. Picking an issue up removes `ready` and adds
+`specs-kit:running`, so a later poll cannot start it twice; the ending swaps in
+`specs-kit:done` or `specs-kit:failed` and comments the outcome on the issue.
+Missing labels are created at the first watch. An issue whose spec cannot be
+resolved keeps its label and is commented once, then ignored for the rest of
+the session.
+
+The watcher starts a run only while the session is idle, so one loop per
+session still holds. `--once` checks the issues a single time, `--status`
+reports what is being watched, `--stop` ends the watch; closing the session
+ends it too.
+
+Requires the GitHub CLI, authenticated (`gh auth login`). Without it — or
+outside a GitHub repository — the command reports why and no watching starts;
+every other command is unaffected.
 
 ## Spending ceilings
 

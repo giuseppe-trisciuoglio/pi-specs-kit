@@ -83,6 +83,7 @@ export class ConfigReloader {
     config.hooks = fresh.hooks;
     config.knowledgeBase = fresh.knowledgeBase;
     config.prompts = fresh.prompts;
+    config.github = fresh.github;
     this.#deps.onReloaded?.(config);
   }
 }

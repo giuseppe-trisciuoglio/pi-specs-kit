@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import type { PhaseName, SpecsKitConfig } from "./config/specs-kit-config.ts";
 import type { LoopStartOptions, LoopStatus } from "./loop/engine.ts";
 import { registerAuthoringCommands } from "./authoring/authoring-commands.ts";
+import { createIssueWatchService, registerWatchCommand, type IssueWatchService } from "./github/watch-command.ts";
 import { ledgerPath } from "./measure/ledger.ts";
 import { AuthoringWindowTracker } from "./measure/authoring-window.ts";
 import { walPath } from "./measure/wal.ts";
@@ -42,6 +43,9 @@ export default function specsKitExtension(pi: ExtensionAPI): void {
   pi.on("resources_discover", () => ({ skillPaths: [BUNDLED_SKILLS_DIR] }));
 
   let lastCtx: ExtensionCommandContext | null = null;
+  // Assigned right after the controller exists; the controller's own callbacks
+  // only read it once a run is already in flight.
+  let watchService: IssueWatchService | null = null;
 
   // Authoring window measurement: tracks the interactive-session tokens spent
   // on a spec. The closures read the controller's lazily loaded config, so the
@@ -65,7 +69,10 @@ export default function specsKitExtension(pi: ExtensionAPI): void {
   pi.on("message_end", (event) => {
     tracker.recordMessage(event.message);
   });
-  pi.on("session_shutdown", () => tracker.close());
+  pi.on("session_shutdown", () => {
+    tracker.close();
+    watchService?.stop();
+  });
 
   const widgetStatus = (): WidgetStatus | null => {
     const engine = controller.engine;
@@ -87,6 +94,9 @@ export default function specsKitExtension(pi: ExtensionAPI): void {
     onUpdate: () => syncWidget(),
     onActiveSpecChanged: (specDir) => tracker.attributePending(specDir),
     onFinished: (reason, error) => {
+      // The issue that asked for this run learns how it ended, whether or not
+      // a UI is attached to the session.
+      watchService?.noteFinished(reason, error);
       const ctx = lastCtx;
       if (!ctx) return;
       syncWidget(); // engine is idle now: hides the widget
@@ -273,6 +283,14 @@ export default function specsKitExtension(pi: ExtensionAPI): void {
       tracker.close();
       await openConfigView(ctx, controller);
     },
+  });
+
+  watchService = createIssueWatchService(controller, (message, type) => {
+    if (lastCtx?.hasUI) lastCtx.ui.notify(message, type);
+  });
+  registerWatchCommand(pi, watchService, (ctx) => {
+    lastCtx = ctx;
+    tracker.close();
   });
 
   registerLoopTools(pi, controller, { onLoopStart: () => tracker.close() });

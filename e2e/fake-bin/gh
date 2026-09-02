@@ -1,0 +1,33 @@
+#!/bin/bash
+# Fake GitHub CLI for the e2e harness. Emulates the handful of `gh`
+# invocations the issue watcher makes, and records every call in
+# FAKE_GH_LOG so the test can assert on the arguments the watcher built.
+set -u
+
+log() { [ -n "${FAKE_GH_LOG:-}" ] && printf '%s\n' "$*" >> "$FAKE_GH_LOG"; return 0; }
+
+log "$*"
+
+case "${1:-}" in
+  auth|repo)
+    # Authenticated, inside a repository.
+    exit 0
+    ;;
+  label)
+    exit 0
+    ;;
+  issue)
+    case "${2:-}" in
+      list)
+        cat "${FAKE_GH_ISSUES:-/dev/null}"
+        exit 0
+        ;;
+      edit|comment)
+        exit 0
+        ;;
+    esac
+    ;;
+esac
+
+echo "fake gh: unsupported invocation: $*" >&2
+exit 1
