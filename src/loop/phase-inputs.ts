@@ -11,6 +11,7 @@
  */
 
 import type { TaskFile } from "../tasks/task-parser.ts";
+import type { Blocker } from "./blockers.ts";
 import type { HookResult } from "./hooks.ts";
 import type { RoutedSuggestion } from "./review-report.ts";
 
@@ -29,6 +30,9 @@ export interface PhaseSpawnInput extends PhaseMeterId {
 }
 
 export interface ImplementationPhaseInput extends PhaseSpawnInput {
+  /** What the earlier attempts of this task walked into, already bounded.
+   * Distinct from the learnings: run memory of one task, not project memory. */
+  blockers: Blocker[];
   /** Verbatim feedback from a failed review, null on the first attempt. */
   reviewFeedback: string | null;
   /** Failed post hooks of the previous attempt, fed to the retry as the

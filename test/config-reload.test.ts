@@ -251,6 +251,7 @@ test("the executor awaits the reload before the pre-hooks of the phase", async (
     learnings: [],
     specId: "001-spec",
     attempt: 1,
+    blockers: [],
     reviewFeedback: null,
     postHookFailures: null,
     upstreamProvides: [],

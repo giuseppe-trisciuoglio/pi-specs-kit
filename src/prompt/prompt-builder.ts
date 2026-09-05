@@ -7,6 +7,7 @@
  */
 
 import {
+  blockersBlock,
   contextFilesBlock,
   hookBlock,
   knowledgeBaseBlock,
@@ -132,6 +133,7 @@ export function buildPhasePrompt(ctx: PromptContext): string {
     knowledgeBaseBlock(ctx.config),
     contextFilesBlock(ctx.contextFiles),
     ...memory.blocks,
+    blockersBlock(ctx.blockers),
     hookBlock(ctx),
     reviewFeedbackBlock(ctx.reviewFeedback),
     reviewFormatErrorBlock(ctx.reviewFormatError),

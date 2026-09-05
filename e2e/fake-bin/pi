@@ -17,6 +17,8 @@ PHASE="unknown"
 TASK_ID=$(printf '%s' "$PROMPT" | grep -oE 'tasks/TASK-[0-9]+--review\.md' | head -n 1 | sed -e 's|tasks/||' -e 's|--review\.md||')
 if [[ -n "$TASK_ID" ]]; then
   PHASE="review"
+elif [[ "$PROMPT" == *"What the loop observed:"* ]]; then
+  PHASE="failure_learner"
 elif [[ "$PROMPT" == *"bullet list"* ]]; then
   PHASE="learner"
 elif [[ "$PROMPT" == *"Modify the code in the workspace"* ]]; then
@@ -85,6 +87,9 @@ fi
 case "$PHASE" in
   learner)
     TEXT='- persist the loop state after every step\n- keep task files small and focused'
+    ;;
+  failure_learner)
+    TEXT='- VERIFIED_FACT: the fake agent exits non-zero while the failure is injected'
     ;;
   *)
     TEXT="fake pi completed phase $PHASE"

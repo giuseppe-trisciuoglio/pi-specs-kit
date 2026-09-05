@@ -49,6 +49,7 @@ function buildRoutingContext(runtime: TaskRuntime, facts: RoutingFacts, feedback
     mode: facts.mode,
     isLastTask: facts.isLastTask,
     continueOnFailure: facts.continueOnFailure,
+    blockerWall: runtime.blockerWall !== null,
     stopping: facts.stopping(),
     syncRan: runtime.runState.syncRan,
     hasLastCompleted: runtime.runState.lastCompleted !== null,

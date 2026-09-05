@@ -13,6 +13,7 @@ function makeCtx(overrides: Partial<RoutingContext> = {}): RoutingContext {
     mode: "full",
     isLastTask: false,
     continueOnFailure: false,
+    blockerWall: false,
     stopping: false,
     syncRan: false,
     hasLastCompleted: false,
@@ -31,6 +32,7 @@ function truth(name: ConditionName, cases: [Partial<RoutingContext>, boolean][])
 test("the registry contains exactly the declared routing predicates", () => {
   assert.deepEqual(Object.keys(CONDITIONS).sort(), [
     "always",
+    "blocker_wall_repeated",
     "continue_on_failure",
     "enters_at_cleanup_fast_mode",
     "enters_at_cleanup_full_mode",
@@ -40,6 +42,7 @@ test("the registry contains exactly the declared routing predicates", () => {
     "enters_at_sync",
     "enters_at_sync_skipped",
     "enters_at_update_done",
+    "failure_terminal",
     "final_sync_needed",
     "halt_on_failure",
     "impl_environment_failed",
@@ -59,6 +62,22 @@ test("the registry contains exactly the declared routing predicates", () => {
     "verdict_passed_full_mode",
     "verdict_report_unusable",
     "verdict_retry_attempts_exhausted",
+  ]);
+});
+
+test("the wall guard fires only once the failure learner found a repeat", () => {
+  truth("blocker_wall_repeated", [
+    [{}, false],
+    [{ blockerWall: true }, true],
+    // Attempts left do not matter: no further attempt can clear this kind.
+    [{ blockerWall: true, attemptsLeft: true }, true],
+  ]);
+});
+
+test("a failure with no attempts left leaves the cycle for the funnel", () => {
+  truth("failure_terminal", [
+    [{ attemptsLeft: true }, false],
+    [{ attemptsLeft: false }, true],
   ]);
 });
 

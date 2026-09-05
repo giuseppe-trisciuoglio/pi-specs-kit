@@ -152,6 +152,7 @@ async function expectedPrompt(h: Harness, phase: PhaseName, input: PhaseInput): 
     skill,
     preHookResults: h.preHooks,
     postHookFailures: "postHookFailures" in input ? input.postHookFailures : undefined,
+    blockers: [],
     reviewFeedback: "reviewFeedback" in input ? input.reviewFeedback : null,
     reviewFormatError: "reviewFormatError" in input ? input.reviewFormatError : null,
     priorAttemptArchives: "priorAttemptArchives" in input ? input.priorAttemptArchives : undefined,
@@ -175,6 +176,7 @@ test("implementation on retry carries review feedback, upstream contracts and ro
   const h = await harness();
   const input: ImplementationPhaseInput = {
     ...baseInput(h, 2),
+    blockers: [],
     reviewFeedback: "Found problems\n- Missing input validation",
     postHookFailures: null,
     upstreamProvides: ["parseSpec(text: string): Spec"],
@@ -198,6 +200,7 @@ test("only the phases that read the spec folder receive its documents", async ()
   const h = await harness();
   const impl: ImplementationPhaseInput = {
     ...baseInput(h),
+    blockers: [],
     reviewFeedback: null,
     postHookFailures: null,
     upstreamProvides: [],
@@ -217,6 +220,7 @@ test("implementation on the first attempt has no feedback block at all", async (
   const h = await harness();
   const input: ImplementationPhaseInput = {
     ...baseInput(h),
+    blockers: [],
     reviewFeedback: null,
     postHookFailures: null,
     upstreamProvides: [],
@@ -236,6 +240,7 @@ test("a failing pre-hook blocks the phase on the first attempt: no spawn at all"
   const h = await harness({ preHooks: [FAILING_PREHOOK] });
   const input: ImplementationPhaseInput = {
     ...baseInput(h),
+    blockers: [],
     reviewFeedback: null,
     postHookFailures: null,
     upstreamProvides: [],
@@ -253,6 +258,7 @@ test("a failing pre-hook on a retry feeds its output into the prompt as context"
   const h = await harness({ preHooks: [FAILING_PREHOOK] });
   const input: ImplementationPhaseInput = {
     ...baseInput(h, 2),
+    blockers: [],
     reviewFeedback: "Found problems\n- Missing input validation",
     postHookFailures: null,
     upstreamProvides: [],
@@ -277,6 +283,7 @@ test("a failing post hook is exposed and feeds the retry prompt, labeled against
   const h = await harness({ postHooks: [FAILING_POSTHOOK] });
   const input: ImplementationPhaseInput = {
     ...baseInput(h),
+    blockers: [],
     reviewFeedback: null,
     postHookFailures: null,
     upstreamProvides: [],

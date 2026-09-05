@@ -49,6 +49,7 @@ const REVIEW_OK = "---\nreview_status: PASSED\nsummary: Looks good\nissues: []\n
 
 /** Recognize the phase from the markers of its prompt (all roles included). */
 function phaseOf(prompt: string): string {
+  if (prompt.includes("What the loop observed:")) return "failure_learner";
   if (prompt.includes("Write your verdict to tasks/")) return "review";
   if (prompt.includes("reusable learnings")) return "learner";
   if (prompt.includes("Update the specification documentation")) return "sync";

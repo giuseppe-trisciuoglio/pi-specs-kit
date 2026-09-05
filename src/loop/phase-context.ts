@@ -173,6 +173,7 @@ export class PhaseContext {
       learnings: input.learnings,
       skill,
       preHookResults: preResults,
+      blockers: "blockers" in input ? input.blockers : undefined,
       reviewFeedback: "reviewFeedback" in input ? input.reviewFeedback : null,
       postHookFailures: "postHookFailures" in input ? input.postHookFailures : undefined,
       reviewFormatError: "reviewFormatError" in input ? input.reviewFormatError : null,

@@ -70,8 +70,14 @@ export class LoopBudget {
    * Account for one agent subprocess, before it starts. Throws when a ceiling
    * is crossed: every phase goes through the same choke point, so no spawn
    * path can escape the budget by forgetting to ask.
+   *
+   * The failure learner is the one exception, and it asks for it explicitly:
+   * it runs because the task's own allowance ran out, so charging it to that
+   * allowance would make the phase that explains the exhaustion impossible to
+   * run. It stays charged to the run and duration ceilings, which are the
+   * ones that bound the whole run.
    */
-  consume(): void {
+  consume(opts: { offTaskBudget?: boolean } = {}): void {
     const elapsed = this.#now() - this.#startedAt;
     if (elapsed >= this.#limits.maxRunDurationMs) {
       throw new BudgetExceededError(
@@ -85,7 +91,7 @@ export class LoopBudget {
         `run budget exhausted: ${this.#runSpawns} agent sessions, limit ${this.#limits.maxSpawnsPerRun}`,
       );
     }
-    if (this.#taskSpawns >= this.#limits.maxSpawnsPerTask) {
+    if (!opts.offTaskBudget && this.#taskSpawns >= this.#limits.maxSpawnsPerTask) {
       const task = this.#taskId ?? "the current task";
       throw new BudgetExceededError(
         "task",
@@ -93,7 +99,7 @@ export class LoopBudget {
       );
     }
     this.#runSpawns++;
-    this.#taskSpawns++;
+    if (!opts.offTaskBudget) this.#taskSpawns++;
   }
 
   snapshot(): BudgetSnapshot {

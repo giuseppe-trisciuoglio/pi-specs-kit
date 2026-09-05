@@ -10,6 +10,7 @@
 import { computeRangeProgress, type FixPlan } from "../../fixplan/fix-plan.ts";
 import { updateTaskStatus, type TaskFile } from "../../tasks/task-parser.ts";
 import { graphifyGraphExists, graphifyGraphMissingWarning } from "../../prompt/graphify.ts";
+import { promotableFacts, pruneTaskBlockers, resolveTaskBlockers } from "../blockers.ts";
 import { mergeLearnings, parseNewLearnings, loadProjectLearnings, saveProjectLearnings, MAX_PROJECT_LEARNINGS } from "../learner.ts";
 import { parseConfirmations, spawnFailed } from "../phases.ts";
 import { loopArtifactExclusions } from "../workspace.ts";
@@ -95,7 +96,13 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
       // The learner is shown what the project already knows so it can add
       // instead of re-deriving; the same list is what its citations point into.
       const known = [...plan.learnings];
-      const lr = await executor.runLearner(taskFile, known, { signal: deps.signal() });
+      // The task passed, so what the failed attempts had to establish along
+      // the way is worth more than the run it was paid for: the facts are
+      // offered to the learner as candidates, and it is the learner — the
+      // sanctioned channel — that decides whether they reach project memory.
+      const candidates = promotableFacts(state.blockers, id);
+      state.blockers = resolveTaskBlockers(state.blockers, id);
+      const lr = await executor.runLearner(taskFile, known, { signal: deps.signal(), candidates });
       if (deps.stopping() === "now") return { kind: "stopped" };
       if (spawnFailed(lr.outcome)) {
         notify(`learner failed for ${id}, continuing`, "warning");
@@ -179,6 +186,10 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
     // effect only at the next task boundary, never here.
     update_done: async (io) => {
       state.step = "update_done";
+      // Blockers are run memory: they explain a task that was still failing,
+      // and this one is not. Whatever deserved to outlive it went through the
+      // learner one node ago.
+      state.blockers = pruneTaskBlockers(state.blockers, id);
       if (!plan.done.includes(id)) plan.done.push(id);
       plan.pending = plan.pending.filter((p) => p !== id);
       plan.range_progress = computeRangeProgress(plan);

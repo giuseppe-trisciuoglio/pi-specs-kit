@@ -25,7 +25,7 @@ La spec su cui i comandi operano di default quando non è indicata esplicitament
 _Avoid_: spec corrente, default spec
 
 **Fix plan**:
-File `_ralph_loop/fix_plan.json` dentro la spec: single source of truth dello stato del loop (task done/pending, fase corrente, retry, learnings). Shape condivisa con il CLI Go.
+File `_ralph_loop/fix_plan.json` dentro la spec: single source of truth dello stato del loop (task done/pending, fase corrente, retry, learnings, blocker). Shape condivisa con il CLI Go.
 _Avoid_: state file, progress file
 
 **Agente**:
@@ -33,7 +33,7 @@ Il CLI che esegue una fase in sottoprocesso: sempre e solo `pi`. I ruoli differi
 _Avoid_: LLM, provider, tool, codex
 
 **Ruolo**:
-Funzione svolta da un agente nel loop: agent (implementation), reviewer (review), cleaner (cleanup), synchronizer (sync), learner (estrazione learnings). Ogni ruolo ha modello e thinking level propri, configurabili da `specs-kit.yaml` o dalla TUI di pi.
+Funzione svolta da un agente nel loop: agent (implementation), reviewer (review), cleaner (cleanup), synchronizer (sync), learner (estrazione learnings, e sui tentativi falliti failure learner). Ogni ruolo ha modello e thinking level propri, configurabili da `specs-kit.yaml` o dalla TUI di pi.
 _Avoid_: persona, worker
 
 **Skill di fase**:
@@ -50,6 +50,18 @@ _Avoid_: guard, script
 **Learner**:
 Ruolo agente che a fine task estrae learnings e li salva nel fix plan; i learnings sono iniettati come memory nei prompt dei task successivi.
 _Avoid_: memory (è il dato, non il ruolo)
+
+**Failure learner**:
+Nodo agentico che gira su un tentativo fallito, prima del successivo: legge cosa ha bloccato il tentativo e lo scrive nei Blocker del fix plan. Non è il Learner: l'input è un tentativo morto, non un cambiamento approvato dalla review, e ciò che produce muore col task.
+_Avoid_: learner dei fallimenti, error learner
+
+**Blocker**:
+Ciò che ha fermato un tentativo, registrato per task in `state.blockers` e iniettato nel prompt del tentativo successivo in un blocco distinto dalla memory. Ha un kind — `verified_fact`, `spec_contradiction`, `unowned_decision`, `env` — ed è il kind a decidere la risposta del loop. Memoria di run: viene potato quando il task passa la review, e raggiunge i learnings di progetto solo attraverso il Learner.
+_Avoid_: learning di fallimento, memory (quella è la memoria di progetto), issue
+
+**Muro ripetuto**:
+Lo stesso Blocker di kind `spec_contradiction` o `unowned_decision` in due tentativi consecutivi dello stesso task: nessun altro tentativo può risolverlo, quindi il task si chiude subito e l'operatore riceve il testo del blocker invece di pagare un'altra sessione agente.
+_Avoid_: escalation (troppo generico), blocco definitivo
 
 **Riconciliazione del contesto**:
 Estensione opt-in del mandato della fase sync: quando `run.reconcile_context` è attivo e ci sono learnings consolidati, sync corregge la singola istruzione contraddetta in un documento sorgente (AGENTS.md, architecture.md, ontology.md, .pi/rules) e riporta ogni correzione nel suo summary. Di default i documenti autorevoli non vengono modificati dal loop.

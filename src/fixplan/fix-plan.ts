@@ -10,6 +10,7 @@ import path from "node:path";
 import type { PhaseName } from "../config/specs-kit-config.ts";
 import { taskIdNumber, type TaskStatus } from "../tasks/task-parser.ts";
 import type { LearningStat } from "../loop/learner.ts";
+import { normalizeBlockers, type Blocker } from "../loop/blockers.ts";
 
 export interface FixPlanTask {
   id: string;
@@ -59,6 +60,14 @@ export interface LoopState {
    * as missing on older fix plans.
    */
   postHookGateFailed?: string | null;
+  /**
+   * Failure memory of the tasks of this run: what stopped an attempt, written
+   * by the failure learner and injected into the next attempt of the same
+   * task. Run memory, pruned when the task passes; only the learner promotes
+   * one of them to the project learnings. Advisory only — tolerated as missing
+   * on older fix plans.
+   */
+  blockers?: Blocker[];
   last_updated: string;
 }
 
@@ -131,6 +140,13 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String) : [];
 }
 
+/** The blockers of a persisted state, sanitized; absent when the field is not
+ * there, so the spread leaves the loaded state exactly as it was. */
+function blockersField(value: unknown): { blockers?: Blocker[] } {
+  const blockers = normalizeBlockers(value);
+  return blockers === undefined ? {} : { blockers };
+}
+
 /**
  * Load the fix plan of a spec, tolerating missing fields (each one falls back
  * to the empty-plan default). Returns null when the file does not exist.
@@ -157,7 +173,7 @@ export async function loadFixPlan(specDir: string): Promise<FixPlan | null> {
     learnings: stringArray(data.learnings),
     task_range: { ...base.task_range, ...data.task_range },
     range_progress: { ...base.range_progress, ...data.range_progress },
-    state: { ...base.state, ...data.state },
+    state: { ...base.state, ...data.state, ...blockersField(data.state?.blockers) },
   };
 }
 

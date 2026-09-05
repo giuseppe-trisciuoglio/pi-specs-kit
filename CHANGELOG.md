@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Failure memory.** A failed implementation attempt now goes through a
+  `failure_learner` node that records what stopped it as *blockers* in
+  `fix_plan.state.blockers`, per task and classified. The next attempt of the
+  same task receives them in its own prompt block, separate from the
+  learnings, so it does not re-derive a fact the previous one already
+  established. Blockers are bounded like the learnings and pruned when the
+  task passes review; a verified fact is offered to the learner as a candidate
+  before it goes. The same `spec_contradiction` or `unowned_decision` in two
+  consecutive attempts ends the task and names the wall to the operator
+  instead of spending the next spawn.
+
 - **Escalation model per role.** `agents.<role>_fallback_model` names a
   second model the phase is spawned on, once, when the primary comes back
   refused (quota, auth, unknown model) or silent. One attempt, not a ladder:

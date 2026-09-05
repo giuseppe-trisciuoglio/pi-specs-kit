@@ -16,6 +16,7 @@ import type { ListedModel } from "./model-check.ts";
 import { PhaseLogWriter } from "../util/log-writer.ts";
 import type { LoopBudget } from "./budget.ts";
 import type { HookResult } from "./hooks.ts";
+import { buildFailureLearnerPrompt } from "./blockers.ts";
 import { CONFIRMED_PREFIX, parseLearnings } from "./learner.ts";
 import type { SystemPromptOverrideText } from "./phase-context.ts";
 
@@ -26,6 +27,17 @@ export interface LearnerResult {
 }
 
 export { CONFIRMED_PREFIX };
+
+/** What the failure learner is told about the attempt that just died. */
+export interface FailureLearnerInput {
+  /** 1-based attempt that failed. */
+  attempt: number;
+  /** What the loop observed, in its own words. */
+  detail: string;
+  /** Blockers earlier attempts of the same task already recorded. */
+  known: readonly string[];
+  signal?: AbortSignal;
+}
 
 /** How many existing insights one learner may cite as re-confirmed. */
 export const MAX_CONFIRMATIONS = 3;
@@ -43,7 +55,11 @@ export const MAX_CONFIRMATIONS = 3;
  * turns that restatement into a pointer instead: cheaper for the learner, and
  * it tells the loop which insights the project keeps re-teaching.
  */
-export function buildLearnerPrompt(task: TaskFile, known: readonly string[] = []): string {
+export function buildLearnerPrompt(
+  task: TaskFile,
+  known: readonly string[] = [],
+  candidates: readonly string[] = [],
+): string {
   const fm = task.frontmatter;
   const lines = [
     `The task ${fm.id} "${fm.title}" has just been implemented and approved by review.`,
@@ -62,6 +78,19 @@ export function buildLearnerPrompt(task: TaskFile, known: readonly string[] = []
       `If this task re-confirmed or tripped over one of them, add a line "${CONFIRMED_PREFIX} <the`,
       'insight, copied exactly>" instead of rewriting it. Cite at most',
       `${MAX_CONFIRMATIONS}, and only the ones this task genuinely met.`,
+    );
+  }
+  if (candidates.length > 0) {
+    // Facts the failed attempts of this task had to establish at full price.
+    // They are handed to the learner rather than written to memory directly:
+    // the learner is the only sanctioned writer of the project learnings, and
+    // it is the one that can tell a reusable fact from a local detail.
+    lines.push(
+      "",
+      "The failed attempts of this task had to establish the facts below. Include any that",
+      "a future task would have to rediscover, reworded as an insight; drop the rest.",
+      "",
+      ...candidates.map((c) => `- ${c}`),
     );
   }
   lines.push("", "Output only the bullet list and any such lines.");
@@ -92,6 +121,9 @@ export interface PhaseSpawnRequest {
   label: string;
   role: RoleName;
   prompt: string;
+  /** Charge the run ceilings but not the per-task one; only the failure
+   * learner asks for it, because it runs when that allowance is gone. */
+  offTaskBudget?: boolean;
 }
 
 export interface PhaseSpawnerDeps {
@@ -197,7 +229,7 @@ export class PhaseSpawner {
     // Every phase reaches the agent through here, so charging the budget at
     // this single point is what makes the ceilings inescapable. It throws
     // before the log file is opened: a refused spawn leaves nothing behind.
-    this.#deps.budget.consume();
+    this.#deps.budget.consume({ offTaskBudget: request.offTaskBudget });
     const writer = new PhaseLogWriter(this.#deps.specDir, taskId, label, {
       noLogFiles: config.run.noLogFiles,
       onFailure: (message) => this.#deps.onNotify(message, "warning"),
@@ -241,15 +273,54 @@ export class PhaseSpawner {
   async runLearner(
     task: TaskFile,
     known: readonly string[] = [],
-    opts?: { signal?: AbortSignal },
+    opts?: { signal?: AbortSignal; candidates?: readonly string[] },
   ): Promise<LearnerResult> {
     const spec = path.basename(this.#deps.specDir);
     const meterHandle = this.#deps.beginMeter(spec, task.frontmatter.id, "learner", 1, "learner");
     try {
       return await this.spawn(
-        { taskId: task.frontmatter.id, label: "learner", role: "learner", prompt: buildLearnerPrompt(task, known) },
+        {
+          taskId: task.frontmatter.id,
+          label: "learner",
+          role: "learner",
+          prompt: buildLearnerPrompt(task, known, opts?.candidates),
+        },
         undefined,
         opts?.signal,
+        true,
+        meterHandle,
+      );
+    } finally {
+      if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
+    }
+  }
+
+  /**
+   * Run the failure learner on a dead attempt and capture its answer. It is
+   * the learner role — the reading is the same kind of work — but a different
+   * subroutine: the input is a failed attempt, not a diff that passed review,
+   * and what it produces has a different lifecycle.
+   */
+  async runFailureLearner(task: TaskFile, input: FailureLearnerInput): Promise<LearnerResult> {
+    const spec = path.basename(this.#deps.specDir);
+    const meterHandle = this.#deps.beginMeter(spec, task.frontmatter.id, "failure_learner", input.attempt, "learner");
+    try {
+      return await this.spawn(
+        {
+          taskId: task.frontmatter.id,
+          label: "failure_learner",
+          role: "learner",
+          prompt: buildFailureLearnerPrompt({
+            taskId: task.frontmatter.id,
+            title: task.frontmatter.title,
+            attempt: input.attempt,
+            detail: input.detail,
+            known: input.known,
+          }),
+          offTaskBudget: true,
+        },
+        undefined,
+        input.signal,
         true,
         meterHandle,
       );

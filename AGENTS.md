@@ -53,6 +53,14 @@ Measurements (tokens and durations) do not live in the fix plan: the append-only
 `~/.pi/agent/specs-kit/measurements-wal.jsonl` (`src/measure/` modules). Every measurement I/O is
 best-effort: never let the loop fail because of a logging error.
 
+A failed attempt has its own memory, distinct from the learnings: `src/loop/blockers.ts` holds the
+shape and the bounds, the `failure_learner` node writes it into `state.blockers` and the next attempt
+of the same task receives it in its own prompt block. It is run memory — pruned when the task passes,
+and reaching the project learnings only through the learner, which is offered the facts as candidates.
+The kind of a blocker is what routes: the same `spec_contradiction` or `unowned_decision` in two
+consecutive attempts ends the task instead of buying the next spawn. Decision documented in
+`docs/adr/0030`.
+
 Two channels the loop owns outright. The review prompt of a retry lists where the earlier verdicts
 are archived — paths, never findings (decision documented in `docs/adr/0023`). And the project
 learnings file is reverted when an implementation writes to it mid-task: the executor rereads it at
