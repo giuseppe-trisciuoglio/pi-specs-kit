@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Sincronizza le skill di questo progetto (./skills/) verso ~/.agents/skills.
+# Sincronizza le skill di questo progetto (./skills/) verso le directory locali
+# usate dagli agenti.
 #
-# Per ogni sottocartella di ./skills/ esegue un rsync con --delete: le skill
-# del progetto diventano identiche alla sorgente, mentre le altre skill
-# installate in ~/.agents/skills (non presenti qui) restano intatte.
+# In push ogni sottocartella di ./skills/ viene sincronizzata verso entrambe le
+# directory di destinazione. In pull resta invariata la direzione storica da
+# ~/.agents/skills verso ./skills/.
 #
 # Uso:
-#   ./sync-skills.sh            # sincronizza (progetto -> ~/.agents/skills)
+#   ./sync-skills.sh            # sincronizza verso ~/.agents/skills e ~/.claude/skills
 #   ./sync-skills.sh --dry-run  # mostra cosa farebbe senza scrivere nulla
 #   ./sync-skills.sh --pull     # direzione inversa (~/.agents/skills -> progetto)
 
@@ -14,7 +15,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="${SCRIPT_DIR}/skills"
-DEST_DIR="${HOME}/.agents/skills"
+AGENTS_DEST_DIR="${HOME}/.agents/skills"
+CLAUDE_DEST_DIR="${HOME}/.claude/skills"
 
 MODE="push"
 for arg in "$@"; do
@@ -38,16 +40,19 @@ if [[ ! -d "${SRC_DIR}" ]]; then
   echo "Cartella sorgente assente: ${SRC_DIR}" >&2
   exit 1
 fi
-mkdir -p "${DEST_DIR}"
+mkdir -p "${AGENTS_DEST_DIR}"
+if [[ "${MODE}" == "push" ]]; then
+  mkdir -p "${CLAUDE_DEST_DIR}"
+fi
 
 if [[ "${MODE}" == "pull" ]]; then
-  FROM="${DEST_DIR}"
+  FROM="${AGENTS_DEST_DIR}"
   TO="${SRC_DIR}"
   echo ">> Pull: ${FROM} -> ${TO}"
 else
   FROM="${SRC_DIR}"
-  TO="${DEST_DIR}"
-  echo ">> Push: ${FROM} -> ${TO}"
+  echo ">> Push: ${FROM} -> ${AGENTS_DEST_DIR}"
+  echo ">> Push: ${FROM} -> ${CLAUDE_DEST_DIR}"
 fi
 
 # Esclude i metadata macOS e i file di sistema: non devono propagarsi.
@@ -59,16 +64,19 @@ for skill_dir in "${SRC_DIR}"/*/; do
   skill_name="$(basename "${skill_dir}")"
 
   if [[ "${MODE}" == "pull" ]]; then
-    src="${DEST_DIR}/${skill_name}/"
+    src="${AGENTS_DEST_DIR}/${skill_name}/"
     dst="${SRC_DIR}/${skill_name}/"
-    [[ -d "${src}" ]] || { echo "-- salto ${skill_name}: non presente in ${DEST_DIR}"; continue; }
+    [[ -d "${src}" ]] || { echo "-- salto ${skill_name}: non presente in ${AGENTS_DEST_DIR}"; continue; }
+
+    echo "-- ${skill_name}"
+    rsync -a --delete "${EXCLUDES[@]}" ${DRY_RUN} "${src}" "${dst}"
   else
     src="${SRC_DIR}/${skill_name}/"
-    dst="${DEST_DIR}/${skill_name}/"
+    for destination in "${AGENTS_DEST_DIR}" "${CLAUDE_DEST_DIR}"; do
+      echo "-- ${skill_name} -> ${destination}"
+      rsync -a --delete "${EXCLUDES[@]}" ${DRY_RUN} "${src}" "${destination}/${skill_name}/"
+    done
   fi
-
-  echo "-- ${skill_name}"
-  rsync -a --delete "${EXCLUDES[@]}" ${DRY_RUN} "${src}" "${dst}"
   synced=$((synced + 1))
 done
 

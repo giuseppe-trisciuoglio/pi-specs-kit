@@ -10,8 +10,8 @@ for architecture decisions. The domain glossary is the only canonical guide to t
 npm test          # unit + e2e, Node 24 runs TypeScript natively
 npm run typecheck # tsc --noEmit
 npm run lint      # eslint . (flat config, AST-level; types belong to tsc)
-./sync-skills.sh  # re-syncs ./skills/ to ~/.agents/skills (project skills only;
-                  # --dry-run for a preview, --pull for the reverse direction)
+./sync-skills.sh  # re-syncs ./skills/ to ~/.agents/skills and ~/.claude/skills
+                  # (--dry-run for a preview, --pull keeps the reverse direction via ~/.agents/skills)
 ```
 
 No build step: do not add bundlers or transpilers. npm publishing is driven by GitHub Releases
