@@ -362,12 +362,13 @@ export class PhaseSpawner {
   async runHook(
     command: string,
     label: string,
-    opts: { cwd: string; timeoutMs: number; signal?: AbortSignal } = { cwd: ".", timeoutMs: 30_000 },
+    opts?: { cwd: string; timeoutMs: number; signal?: AbortSignal },
   ): Promise<HookResult> {
+    const finalOpts = opts ?? { cwd: ".", timeoutMs: 30_000 };
     const { runHook: runHookImpl } = await import("../loop/hooks.ts");
     return runHookImpl(command, {
-      cwd: opts.cwd,
-      timeoutMs: opts.timeoutMs,
+      cwd: finalOpts.cwd,
+      timeoutMs: finalOpts.timeoutMs,
       stream: {
         onStdoutLine: (line) => this.#deps.onLogLine(`[${label}] ${line}`),
         onStderrLine: (line) => this.#deps.onLogLine(`[${label}] ! ${line}`),

@@ -221,6 +221,77 @@ function judgeReport(deps: ReviewStepDeps, plan: FixPlan, id: string, report: Re
 }
 
 /**
+ * The outcome of one review spawn: a verdict the loop returns, or a request
+ * to try again with a possibly-updated format error.
+ */
+type ReviewSpawnResult =
+  | { kind: "verdict"; verdict: ReviewVerdict }
+  | { kind: "retry"; formatError: string | null };
+
+/**
+ * Spawn the reviewer once and decide what to do with the result. Pulled out
+ * of the review loop so the loop reads as a sequence of guarded steps instead
+ * of a deep nest of branching.
+ */
+async function runOneReviewSpawn(
+  deps: ReviewStepDeps,
+  plan: FixPlan,
+  taskFile: TaskFile,
+  formatError: string | null,
+): Promise<ReviewSpawnResult> {
+  const { specDir, executor, notify } = deps;
+  const state = plan.state;
+  const id = taskFile.frontmatter.id;
+
+  // The plan still flows in for the state counters (persist writes the
+  // whole document), but the prompt channel is the declared input only.
+  // The archives of earlier attempts are listed after the rotation above
+  // made room for the one it just wrote, so the freshest disk state is
+  // what the reviewer is told about.
+  const rev = await executor.run("review", {
+    task: taskFile,
+    learnings: plan.learnings,
+    reviewFormatError: formatError,
+    priorAttemptArchives: await listReviewAttemptArchives(specDir, id),
+    specId: plan.spec_id,
+    attempt: state.retry_count + 1,
+    signal: deps.signal(),
+  });
+  if (deps.stopping() === "now") return { kind: "verdict", verdict: { kind: "stopped" } };
+  if (!rev.preHooksOk) return { kind: "verdict", verdict: await onPreHookFailure(deps, plan, id) };
+  if (rev.outcome?.aborted) {
+    const verdict = await onInterruptedReview(deps, plan, id);
+    if (verdict) return { kind: "verdict", verdict };
+    return { kind: "retry", formatError };
+  }
+  const failure = classifyPhaseFailure(rev.outcome);
+  if (failure) return { kind: "verdict", verdict: await onSpawnFailure(deps, plan, id, failure) };
+  // The reviewer does not write code, so a red gate after it is nothing the
+  // review itself can act on and there is no retry path here to spend. It is
+  // recorded like the gates of the other phases that cannot react, so the
+  // range does not close clean over it.
+  if (!rev.postHooksOk) state.postHookGateFailed = "review";
+
+  const report = await readReviewReport(specDir, id);
+  if (!report) {
+    const missing = await onReportMissing(deps, plan, id);
+    if (typeof missing === "string") return { kind: "retry", formatError: missing };
+    return { kind: "verdict", verdict: missing };
+  }
+
+  state.review_file_retry = 0;
+  state.review_file_error = null;
+  await deps.persist(plan);
+  // The report the loop read is the one that counts: nothing is left behind
+  // to make a later reader think the salvaged copy is still pending.
+  await rm(reviewUnreadablePath(specDir, id), { force: true }).catch(() => {});
+  if (report.recovered) {
+    notify(`review report of ${id} had a malformed frontmatter block, verdict read line by line`, "warning");
+  }
+  return { kind: "verdict", verdict: judgeReport(deps, plan, id, report) };
+}
+
+/**
  * Review step: spawn the reviewer until a valid report appears. A missing
  * or invalid report costs a review file retry (bounded); exhausting those
  * costs a full attempt. The stale report is rotated before every spawn so
@@ -231,7 +302,7 @@ export async function runReviewStep(
   plan: FixPlan,
   taskFile: TaskFile,
 ): Promise<ReviewVerdict> {
-  const { config, specDir, executor, notify } = deps;
+  const { config, specDir } = deps;
   const state = plan.state;
   const id = taskFile.frontmatter.id;
 
@@ -247,54 +318,8 @@ export async function runReviewStep(
       });
     }
     if (deps.stopping()) return { kind: "stopped" };
-    // The plan still flows in for the state counters (persist writes the
-    // whole document), but the prompt channel is the declared input only.
-    // The archives of earlier attempts are listed after the rotation above
-    // made room for the one it just wrote, so the freshest disk state is
-    // what the reviewer is told about.
-    const rev = await executor.run("review", {
-      task: taskFile,
-      learnings: plan.learnings,
-      reviewFormatError: formatError,
-      priorAttemptArchives: await listReviewAttemptArchives(specDir, id),
-      specId: plan.spec_id,
-      attempt: state.retry_count + 1,
-      signal: deps.signal(),
-    });
-    if (deps.stopping() === "now") return { kind: "stopped" };
-    if (!rev.preHooksOk) return await onPreHookFailure(deps, plan, id);
-    if (rev.outcome?.aborted) {
-      const verdict = await onInterruptedReview(deps, plan, id);
-      if (verdict) return verdict;
-      continue;
-    }
-    const failure = classifyPhaseFailure(rev.outcome);
-    if (failure) return await onSpawnFailure(deps, plan, id, failure);
-    // The reviewer does not write code, so a red gate after it is nothing the
-    // review itself can act on and there is no retry path here to spend. It is
-    // recorded like the gates of the other phases that cannot react, so the
-    // range does not close clean over it.
-    if (!rev.postHooksOk) state.postHookGateFailed = "review";
-
-    const report = await readReviewReport(specDir, id);
-    if (!report) {
-      const missing = await onReportMissing(deps, plan, id);
-      if (typeof missing === "string") {
-        formatError = missing;
-        continue;
-      }
-      return missing;
-    }
-
-    state.review_file_retry = 0;
-    state.review_file_error = null;
-    await deps.persist(plan);
-    // The report the loop read is the one that counts: nothing is left behind
-    // to make a later reader think the salvaged copy is still pending.
-    await rm(reviewUnreadablePath(specDir, id), { force: true }).catch(() => {});
-    if (report.recovered) {
-      notify(`review report of ${id} had a malformed frontmatter block, verdict read line by line`, "warning");
-    }
-    return judgeReport(deps, plan, id, report);
+    const result = await runOneReviewSpawn(deps, plan, taskFile, formatError);
+    if (result.kind === "verdict") return result.verdict;
+    formatError = result.formatError;
   }
 }

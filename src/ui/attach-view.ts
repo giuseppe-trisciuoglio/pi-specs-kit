@@ -51,7 +51,7 @@ class AttachView implements Component {
   #timer: NodeJS.Timeout | null;
   /** Latest log line from hooks, shown below the transcript. */
   #lastHookLine: string | null = null;
-  #unsubLogLines: (() => void) | null = null;
+  readonly #unsubLogLines: (() => void) | null = null;
 
   constructor(
     tui: TUI,

@@ -228,7 +228,7 @@ export class PhaseExecutor {
   async runHook(
     command: string,
     label: string,
-    opts: { cwd: string; timeoutMs: number; signal?: AbortSignal } = { cwd: ".", timeoutMs: 30_000 },
+    opts?: { cwd: string; timeoutMs: number; signal?: AbortSignal },
   ): Promise<HookResult> {
     return this.#spawner.runHook(command, label, opts);
   }
