@@ -20,6 +20,7 @@ import {
   protectedPathsWarning,
   snapshotProtectedPaths,
 } from "../protected-paths.ts";
+import { blockersForTask, injectableBlockers } from "../blockers.ts";
 import { runReviewStep } from "../review-runner.ts";
 import { collectRoutedSuggestions } from "../routed-suggestions.ts";
 import { loopArtifactExclusions } from "../workspace.ts";
@@ -114,6 +115,10 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         learnings: plan.learnings,
         specId: plan.spec_id,
         attempt: state.retry_count + 1,
+        // What the earlier attempts of this task walked into. Separate from
+        // the learnings on purpose: these are not project insights, they are
+        // the wall the previous spawn died against.
+        blockers: injectableBlockers(blockersForTask(state.blockers, id)),
         reviewFeedback: io.runtime.feedback,
         postHookFailures: io.runtime.postHookFailures,
         upstreamProvides: upstreamProvides(taskFile, selected, plan.done),
@@ -161,6 +166,7 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         notify(`implementation failed for ${id} (attempt ${state.retry_count + 1}/${maxAttempts})`, "warning");
         state.retry_count++;
         await persist();
+        io.runtime.failureDetail = `implementation ${failure.kind}: ${failure.detail}`;
         io.runtime.implStatus = "spawn-failed";
         return { kind: "ok" };
       }
@@ -172,6 +178,8 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         state.retry_count++;
         await persist();
         io.runtime.postHookFailures = impl.failedPostHooks;
+        io.runtime.failureDetail =
+          "the post-implementation gate failed: " + impl.failedPostHooks.map((h) => h.command).join(", ");
         io.runtime.implStatus = "post-hook-failed";
         return { kind: "ok" };
       }

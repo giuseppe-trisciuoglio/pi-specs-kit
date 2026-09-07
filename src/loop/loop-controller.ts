@@ -69,7 +69,7 @@ export class LoopController {
   #phaseEvents: PiStreamEvent[] = [];
   readonly #streamListeners = new Set<(event: PiStreamEvent) => void>();
   readonly #phaseStartListeners = new Set<() => void>();
-  #logLines: string[] = [];
+  readonly #logLines: string[] = [];
   readonly #logLineListeners = new Set<(line: string) => void>();
   readonly #findGraphifySkill: typeof findGraphifySkill;
   readonly #listModels: () => Promise<ListedModel[]>;

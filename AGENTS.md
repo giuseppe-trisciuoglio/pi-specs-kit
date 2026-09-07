@@ -10,8 +10,8 @@ for architecture decisions. The domain glossary is the only canonical guide to t
 npm test          # unit + e2e, Node 24 runs TypeScript natively
 npm run typecheck # tsc --noEmit
 npm run lint      # eslint . (flat config, AST-level; types belong to tsc)
-./sync-skills.sh  # re-syncs ./skills/ to ~/.agents/skills (project skills only;
-                  # --dry-run for a preview, --pull for the reverse direction)
+./sync-skills.sh  # re-syncs ./skills/ to ~/.agents/skills and ~/.claude/skills
+                  # (--dry-run for a preview, --pull keeps the reverse direction via ~/.agents/skills)
 ```
 
 No build step: do not add bundlers or transpilers. npm publishing is driven by GitHub Releases
@@ -52,6 +52,14 @@ Measurements (tokens and durations) do not live in the fix plan: the append-only
 `<specs_dir>/measurements.jsonl` (versioned), fed by the write-ahead buffer
 `~/.pi/agent/specs-kit/measurements-wal.jsonl` (`src/measure/` modules). Every measurement I/O is
 best-effort: never let the loop fail because of a logging error.
+
+A failed attempt has its own memory, distinct from the learnings: `src/loop/blockers.ts` holds the
+shape and the bounds, the `failure_learner` node writes it into `state.blockers` and the next attempt
+of the same task receives it in its own prompt block. It is run memory — pruned when the task passes,
+and reaching the project learnings only through the learner, which is offered the facts as candidates.
+The kind of a blocker is what routes: the same `spec_contradiction` or `unowned_decision` in two
+consecutive attempts ends the task instead of buying the next spawn. Decision documented in
+`docs/adr/0030`.
 
 Two channels the loop owns outright. The review prompt of a retry lists where the earlier verdicts
 are archived — paths, never findings (decision documented in `docs/adr/0023`). And the project

@@ -23,7 +23,7 @@ import type {
   SyncPhaseInput,
 } from "./phase-inputs.ts";
 import { PhaseContext } from "./phase-context.ts";
-import { PhaseSpawner, type LearnerResult } from "./phase-spawn.ts";
+import { PhaseSpawner, type FailureLearnerInput, type LearnerResult } from "./phase-spawn.ts";
 
 export interface PhaseExecutorDeps {
   config: SpecsKitConfig;
@@ -73,7 +73,7 @@ export interface PhaseStepResult {
 }
 
 export type { SystemPromptOverrideText } from "./phase-context.ts";
-export type { LearnerResult } from "./phase-spawn.ts";
+export type { FailureLearnerInput, LearnerResult } from "./phase-spawn.ts";
 export { buildLearnerPrompt, parseConfirmations, CONFIRMED_PREFIX, MAX_CONFIRMATIONS } from "./phase-spawn.ts";
 export { classifyPhaseFailure, environmentFailureMessage, spawnFailed } from "./phase-failure.ts";
 export type { PhaseFailure, PhaseFailureKind } from "./phase-failure.ts";
@@ -206,9 +206,14 @@ export class PhaseExecutor {
   async runLearner(
     task: TaskFile,
     known: readonly string[] = [],
-    opts?: { signal?: AbortSignal },
+    opts?: { signal?: AbortSignal; candidates?: readonly string[] },
   ): Promise<LearnerResult> {
     return this.#spawner.runLearner(task, known, opts);
+  }
+
+  /** Run the failure learner on a dead attempt and capture its output. */
+  async runFailureLearner(task: TaskFile, input: FailureLearnerInput): Promise<LearnerResult> {
+    return this.#spawner.runFailureLearner(task, input);
   }
 
   /**
@@ -223,7 +228,7 @@ export class PhaseExecutor {
   async runHook(
     command: string,
     label: string,
-    opts: { cwd: string; timeoutMs: number; signal?: AbortSignal } = { cwd: ".", timeoutMs: 30_000 },
+    opts?: { cwd: string; timeoutMs: number; signal?: AbortSignal },
   ): Promise<HookResult> {
     return this.#spawner.runHook(command, label, opts);
   }

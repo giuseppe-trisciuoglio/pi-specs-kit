@@ -124,6 +124,45 @@ async function closeOutstandingNotices(plan: FixPlan, deps: WalkDeps): Promise<v
   if (dirty) await deps.persist(plan);
 }
 
+/** Pick the next task for the loop: a resumed anchor first, then the first
+ * un-done one. The consumed anchor is dropped from the cursor after a single
+ * iteration, so the rest of the range walks the selection in order. */
+function pickNext(
+  pendingStart: { task: TaskFile; step: LoopStep } | null,
+  firstPhase: LoopStep | null,
+  selected: TaskFile[],
+  plan: FixPlan,
+  index: number,
+  deps: WalkDeps,
+): { pick: { taskFile: TaskFile; startStep: LoopStep | null; resumed: boolean }; nextIndex: number } | { pick: null; nextIndex: number } {
+  if (pendingStart) {
+    const { taskFile, startStep } = consumePendingStart(pendingStart, firstPhase, deps);
+    return { pick: { taskFile, startStep, resumed: true }, nextIndex: index + 1 };
+  }
+  let cursor = index;
+  while (cursor < selected.length && plan.done.includes(selected[cursor].frontmatter.id)) cursor++;
+  if (cursor >= selected.length) return { pick: null, nextIndex: cursor };
+  return {
+    pick: { taskFile: selected[cursor], startStep: firstPhase, resumed: false },
+    nextIndex: cursor + 1,
+  };
+}
+
+/** Record the outcome of one task: stop or halt short-circuits, a failed
+ * task on a run that carries on leaves its message in the failures list. */
+function recordOutcome(
+  outcome: Awaited<ReturnType<TaskRunner["run"]>>,
+  plan: FixPlan,
+  failures: string[],
+): "continue" | { reason: "stopped" } | { reason: "halted"; error?: string } {
+  if (outcome === "stopped") return { reason: "stopped" };
+  if (outcome === "halted") return { reason: "halted", error: plan.state.error ?? undefined };
+  // The run carried on past a failed task: record it now, while its message
+  // is still there.
+  if (plan.state.step === "failed" && plan.state.error) failures.push(plan.state.error);
+  return "continue";
+}
+
 export async function walkSelection(
   plan: FixPlan,
   selected: TaskFile[],
@@ -140,29 +179,13 @@ export async function walkSelection(
   const failures: string[] = [];
   for (;;) {
     if (deps.stopping()) return { reason: "stopped" };
-    let taskFile: TaskFile;
-    let startStep: LoopStep | null = null;
-    let resumed = false;
-    if (pendingStart) {
-      ({ taskFile, startStep } = consumePendingStart(pendingStart, firstPhase, deps));
-      resumed = true;
-      pendingStart = null;
-      index++;
-      firstPhase = null;
-    } else {
-      while (index < selected.length && plan.done.includes(selected[index].frontmatter.id)) index++;
-      if (index >= selected.length) return await finishRange(plan, finalSync, runState, failures, deps);
-      taskFile = selected[index];
-      index++;
-      startStep = firstPhase;
-      firstPhase = null;
-    }
-
-    const outcome = await runner.run(plan, taskFile, selected, startStep, resumed, runState);
-    if (outcome === "stopped") return { reason: "stopped" };
-    if (outcome === "halted") return { reason: "halted", error: plan.state.error ?? undefined };
-    // The run carried on past a failed task: record it now, while its message
-    // is still there.
-    if (plan.state.step === "failed" && plan.state.error) failures.push(plan.state.error);
+    const next = pickNext(pendingStart, firstPhase, selected, plan, index, deps);
+    index = next.nextIndex;
+    pendingStart = null;
+    firstPhase = null;
+    if (!next.pick) return await finishRange(plan, finalSync, runState, failures, deps);
+    const outcome = await runner.run(plan, next.pick.taskFile, selected, next.pick.startStep, next.pick.resumed, runState);
+    const recorded = recordOutcome(outcome, plan, failures);
+    if (recorded !== "continue") return recorded;
   }
 }

@@ -54,6 +54,13 @@ const registry = {
   impl_post_hook_failed: (ctx) => ctx.implStatus === "post-hook-failed",
   impl_ok: (ctx) => ctx.implStatus === "ok",
 
+  // Leaving the failure learner. The wall guard comes first: the same
+  // contradiction or unowned decision in two consecutive attempts is not
+  // something the next spawn can resolve, so the task ends without spending
+  // it and the operator is told what the wall is.
+  blocker_wall_repeated: (ctx) => ctx.blockerWall,
+  failure_terminal: (ctx) => !ctx.attemptsLeft,
+
   // Leaving the review gate, on the verdict it just dispatched. A rejection
   // with the same feedback as the previous round means the implementation is
   // not acting on it: another round would reproduce the same pair of outputs.

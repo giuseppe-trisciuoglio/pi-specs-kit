@@ -188,6 +188,11 @@ test("e2e: exhausting the attempts halts the loop with an error state", { timeou
     assert.equal(plan.state.step, "failed");
     assert.ok(plan.state.error, "persisted error state");
     assert.deepEqual(plan.done, []);
+    // The dead attempts leave their failure memory behind: the retries of this
+    // task start from what the previous ones found, not from zero.
+    const blockers = plan.state.blockers ?? [];
+    assert.ok(blockers.length > 0, "the failed task recorded blockers");
+    assert.ok(blockers.every((b) => b.task === "TASK-001" && !b.resolved));
   } finally {
     await rm(project.projectRoot, { recursive: true, force: true });
   }

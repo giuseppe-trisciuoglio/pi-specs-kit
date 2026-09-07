@@ -7,6 +7,7 @@
 
 import path from "node:path";
 import type { PhaseName, SpecsKitConfig } from "../config/specs-kit-config.ts";
+import { blockerLabel, type Blocker } from "../loop/blockers.ts";
 import type { HookResult } from "../loop/hooks.ts";
 import type { RoutedSuggestion } from "../loop/review-report.ts";
 import type { TaskFile } from "../tasks/task-parser.ts";
@@ -27,6 +28,8 @@ export interface PromptContext {
   task: TaskFile;
   /** Loop learnings for this spec, injected as task memory. */
   learnings?: string[];
+  /** What the earlier attempts of this task walked into, already bounded. */
+  blockers?: Blocker[];
   skill?: ResolvedSkill | null;
   preHookResults?: PreHookResult[];
   /** Failed post hooks of the previous attempt of the same phase, fed to
@@ -142,6 +145,25 @@ export function memoryBlocks(ctx: PromptContext): { blocks: string[]; hasMemory:
     blocks.push(`<project_learnings>\n${bullets}\n</project_learnings>`);
   }
   return { blocks, hasMemory: learnings.length > 0 || projectLearnings.length > 0 };
+}
+
+/**
+ * What the previous attempts of this task walked into. Deliberately its own
+ * block, next to the memory but not inside it: learnings are what the project
+ * teaches every task, these are what one task's dead attempts cost, and an
+ * agent that reads them as project rules would generalize a local accident.
+ * The heading says what to do with them, because the failure they answer is an
+ * attempt re-deriving a fact the previous one had already established.
+ */
+export function blockersBlock(blockers: Blocker[] | undefined): string | null {
+  if (!blockers || blockers.length === 0) return null;
+  const lines = [
+    "The previous attempt at this task stopped on the following. Do not re-derive any of",
+    "it: a fact is stated so you can use it as it is, and an unresolved ambiguity is a",
+    "decision to make and state, not to research again.",
+    ...blockers.map((b) => `- ${blockerLabel(b.kind)} (attempt ${b.attempt}): ${b.text}`),
+  ];
+  return `<previous_attempt_blockers>\n${lines.join("\n")}\n</previous_attempt_blockers>`;
 }
 
 /** Pre-hook outcomes. Command and status are shown for every hook — that

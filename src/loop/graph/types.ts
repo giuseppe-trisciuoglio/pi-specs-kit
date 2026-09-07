@@ -56,6 +56,7 @@ export type TaskNodeId =
   | "review_gate"
   | "task_failed"
   | "cleanup"
+  | "failure_learner"
   | "learner"
   | "sync"
   | "update_done"
@@ -117,6 +118,12 @@ export interface TaskRuntime {
   postHookFailures: HookResult[] | null;
   /** Fixes earlier reviews routed to this task, collected once at entry. */
   routedSuggestions: RoutedSuggestion[];
+  /** What the loop observed about the attempt that just failed, handed to the
+   * failure learner; null while nothing has failed. */
+  failureDetail: string | null;
+  /** Text of a blocker the task hit twice in a row, set by the failure
+   * learner: the loop stops the task instead of spending the next spawn. */
+  blockerWall: string | null;
   runState: RunState;
 }
 
@@ -137,6 +144,9 @@ export interface RoutingContext {
   readonly isLastTask: boolean;
   readonly continueOnFailure: boolean;
   readonly stopping: boolean;
+  /** Set once the failure learner found the same unresolvable blocker in two
+   * consecutive attempts: no retry can clear it, so the task ends here. */
+  readonly blockerWall: boolean;
   /** Run-level facts, read by the end-of-range sync condition. */
   readonly syncRan: boolean;
   readonly hasLastCompleted: boolean;

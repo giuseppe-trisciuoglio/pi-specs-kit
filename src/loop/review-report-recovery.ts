@@ -170,9 +170,9 @@ export function recoverFrontmatter(block: string): RecoveredFrontmatter | null {
   };
 
   for (const raw of block.split("\n")) {
-    const line = raw.replace(/\s+$/, "");
+    const line = raw.replace(/[ \t]+$/, "");
     if (line.trim() === "") continue;
-    const bullet = /^\s*-\s*(.*)$/.exec(line);
+    const bullet = /^\s*-\s*([^\n]*)$/.exec(line);
     if (bullet) {
       applyBullet(scan, bullet[1]);
       continue;

@@ -77,6 +77,7 @@ function taskOf(prompt: string): string {
 }
 
 function phaseOf(prompt: string): string {
+  if (prompt.includes("What the loop observed:")) return "failure_learner";
   if (prompt.includes("Output only the bullet list")) return "learner";
   if (prompt.includes("Write your verdict to tasks/")) return "review";
   if (prompt.includes("Clean up the code")) return "cleanup";
@@ -337,11 +338,13 @@ test("entry at sync in fast mode on a non-last task skips the sync phase and kee
 
   assert.equal(run.result.reason, "completed");
   // No spawn for the skipped entry sync: the run opens on the second task's
-  // failed attempts, and the only sync spawn is the end-of-range one, riding
-  // on the last completed task after the tail exhausted its attempts.
+  // failed attempts — each of them followed by the failure learner, which
+  // writes down what stopped it before the next one starts — and the only
+  // sync spawn is the end-of-range one, riding on the last completed task
+  // after the tail exhausted its attempts.
   assert.deepEqual(sequence(run.calls), [
-    ...Array(5).fill("TASK-002:implementation"),
-    ...Array(5).fill("TASK-003:implementation"),
+    ...Array(5).fill(["TASK-002:implementation", "TASK-002:failure_learner"]).flat(),
+    ...Array(5).fill(["TASK-003:implementation", "TASK-003:failure_learner"]).flat(),
     "TASK-001:sync",
   ]);
   assert.deepEqual(run.plan.done, ["TASK-001"]);

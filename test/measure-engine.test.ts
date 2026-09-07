@@ -29,6 +29,7 @@ const TASK = [
 ].join("\n");
 
 function phaseOf(prompt: string): string {
+  if (prompt.includes("What the loop observed:")) return "failure_learner";
   if (prompt.includes("Output only the bullet list")) return "learner";
   if (prompt.includes("Write your verdict to tasks/")) return "review";
   if (prompt.includes("Clean up the code")) return "cleanup";

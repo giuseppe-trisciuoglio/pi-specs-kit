@@ -34,6 +34,7 @@ die() {
   local message="$1"
   printf '[specs-kit] %s\n' "$message" >&2
   exit 2
+  return 0
 }
 
 while [[ $# -gt 0 ]]; do

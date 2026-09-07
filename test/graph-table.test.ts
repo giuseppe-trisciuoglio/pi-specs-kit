@@ -129,6 +129,38 @@ test("exhaustion guards are evaluated before the back-edges", () => {
   assert.ok(order("review_gate", "attempts-exhausted") < order("review_gate", "attempt-failed"));
 });
 
+test("every implementation failure that spends an attempt writes its memory first", () => {
+  const g = graph();
+  // A failed attempt reaches the next one — or the funnel — only through the
+  // failure learner: that is what stops the retry from re-deriving the wall.
+  const spending: ConditionName[] = [
+    "impl_failed_attempts_exhausted",
+    "impl_spawn_failed",
+    "impl_post_hook_failed",
+  ];
+  for (const when of spending) {
+    const edge = g.edges.find((e) => e.from === "implementation" && e.when === when);
+    assert.equal(edge?.to, "failure_learner", `${when} routes through the failure learner`);
+  }
+  // A pre hook that failed never reached the agent, so there is nothing to
+  // learn from it, and an environment failure is not about this task at all.
+  assert.equal(g.edges.find((e) => e.when === "impl_pre_hook_failed")?.to, "implementation");
+  assert.equal(g.edges.find((e) => e.when === "impl_environment_failed")?.to, "task_failed");
+});
+
+test("the failure learner escalates a repeated wall before anything else", () => {
+  const g = graph();
+  const outgoing = g.edges.filter((e) => e.from === "failure_learner");
+  assert.deepEqual(
+    outgoing.map((e) => [e.when, e.to]),
+    [
+      ["blocker_wall_repeated", "task_failed"],
+      ["failure_terminal", "task_failed"],
+      ["always", "implementation"],
+    ],
+  );
+});
+
 test("the walk starts at the start marker, which forwards to the task entry", () => {
   const g = graph();
   assert.equal(g.entry, "task_start");

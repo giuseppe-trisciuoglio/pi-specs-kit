@@ -82,6 +82,7 @@ function taskOf(prompt: string): string {
 }
 
 function phaseOf(prompt: string): string {
+  if (prompt.includes("What the loop observed:")) return "failure_learner";
   if (prompt.includes("Output only the bullet list")) return "learner";
   if (prompt.includes("Write your verdict to tasks/")) return "review";
   if (prompt.includes("Clean up the code")) return "cleanup";
@@ -381,6 +382,71 @@ test("implementation fails once then succeeds; retry count is persisted", async 
   assert.ok(retried, "retry_count 1 persisted for TASK-001");
 });
 
+test("the next attempt is handed what the previous one walked into, apart from the memory", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(
+    root,
+    specDir,
+    (call) => {
+      if (call.phase === "failure_learner") {
+        return { text: "- VERIFIED_FACT: getPhase() returns MAX_VALUE - 1024\n" };
+      }
+      return call.task === "TASK-001" && call.phase === "implementation" && call.n === 1 ? { fail: true } : {};
+    },
+    (config) => {
+      config.mode = "fast";
+    },
+  );
+
+  assert.equal(run.result.reason, "completed");
+  assert.equal(countCalls(run.calls, "TASK-001", "failure_learner"), 1);
+  const retry = run.calls.find((c) => c.task === "TASK-001" && c.phase === "implementation" && c.n === 2);
+  assert.ok(retry, "the task was retried");
+  assert.match(retry.prompt, /<previous_attempt_blockers>/);
+  assert.match(retry.prompt, /VERIFIED_FACT \(attempt 1\): getPhase\(\) returns MAX_VALUE - 1024/);
+  // A blocker is what one task's dead attempt cost, not what the project
+  // teaches: reading it as a project rule would generalize a local accident.
+  const memory = /<memory>[\s\S]*?<\/memory>/.exec(retry.prompt)?.[0] ?? "";
+  assert.ok(!memory.includes("getPhase()"), "blockers stay out of the memory block");
+
+  // The task passed, so its run memory dies with it — after the learner was
+  // offered the fact it cost an attempt to establish.
+  assert.deepEqual(run.plan.state.blockers, []);
+  const learner = run.calls.find((c) => c.task === "TASK-001" && c.phase === "learner");
+  assert.match(learner?.prompt ?? "", /getPhase\(\) returns MAX_VALUE - 1024/);
+});
+
+test("the same wall in two consecutive attempts ends the task without spending the next spawn", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(
+    root,
+    specDir,
+    (call) => {
+      if (call.phase === "failure_learner") {
+        return { text: "- SPEC_CONTRADICTION: the manifest contradicts the decision it cites\n" };
+      }
+      return call.task === "TASK-001" && call.phase === "implementation" ? { fail: true } : {};
+    },
+    (config) => {
+      config.mode = "fast";
+      config.run.maxAttempts = 5;
+      config.run.continueOnFailure = true;
+    },
+  );
+
+  // Two attempts, not five: an ambiguity the agent cannot resolve is not
+  // something a third session would resolve either, so the operator gets it.
+  assert.equal(countCalls(run.calls, "TASK-001", "implementation"), 2);
+  assert.equal(countCalls(run.calls, "TASK-001", "failure_learner"), 2);
+  assert.ok(
+    run.notifications.some(
+      (n) => n.type === "error" && n.message.includes("blocked twice") && n.message.includes("SPEC_CONTRADICTION"),
+    ),
+    "the operator is told what the wall is",
+  );
+  assert.deepEqual(run.plan.done, ["TASK-002", "TASK-003"]);
+});
+
 test("halt after max attempts with state.error and reason halted", async () => {
   const { root, specDir } = await createSpec();
   const run = await runLoop(
@@ -625,9 +691,18 @@ test("the per-task spawn ceiling halts the run even with continue on failure", a
 
   assert.equal(run.result.reason, "halted");
   assert.match(run.result.error ?? "", /task budget exhausted for TASK-001/);
-  assert.equal(run.calls.length, 3);
+  // Three sessions charged to the task, then the failure learner: it runs
+  // because the allowance is gone, so charging it to that allowance would
+  // make the phase explaining the exhaustion impossible to run.
+  assert.equal(run.calls.filter((c) => c.phase !== "failure_learner").length, 3);
+  assert.equal(countCalls(run.calls, "TASK-001", "failure_learner"), 1);
   assert.equal(run.calls.some((c) => c.task === "TASK-002"), false, "an exhausted budget does not roll on");
   assert.equal(run.plan.state.step, "failed");
+  // The task that burned the budget leaves a trace of why, where the next
+  // run of the same task will read it.
+  const blockers = run.plan.state.blockers ?? [];
+  assert.ok(blockers.length > 0, "an exhausted task leaves at least one blocker");
+  assert.ok(blockers.every((b) => b.task === "TASK-001"));
 });
 
 test("the per-run spawn ceiling stops the range partway through", async () => {

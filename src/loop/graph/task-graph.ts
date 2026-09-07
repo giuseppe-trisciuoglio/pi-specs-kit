@@ -18,6 +18,7 @@ const NODE_DECLARATIONS: readonly Pick<TaskNode, "id" | "kind" | "outcome">[] = 
   { id: "review_gate", kind: "deterministic" },
   { id: "task_failed", kind: "deterministic" },
   { id: "cleanup", kind: "agentic" },
+  { id: "failure_learner", kind: "agentic" },
   { id: "learner", kind: "agentic" },
   { id: "sync", kind: "agentic" },
   { id: "update_done", kind: "deterministic" },
@@ -57,16 +58,27 @@ const EDGE_DECLARATIONS: readonly TaskEdge[] = [
   // Ahead of the exhaustion guard: a refused spawn is worth naming as such
   // even on the last attempt, where "attempts exhausted" would hide the cause.
   { from: "implementation", to: "task_failed", type: "report-unusable", when: "impl_environment_failed" },
-  { from: "implementation", to: "task_failed", type: "attempts-exhausted", when: "impl_failed_attempts_exhausted" },
+  // A failed attempt goes through the failure learner before anything else
+  // happens to it: the next attempt, or the operator, gets to know what this
+  // one walked into instead of re-deriving it at full price.
+  { from: "implementation", to: "failure_learner", type: "attempts-exhausted", when: "impl_failed_attempts_exhausted" },
   // Sits next to the exhaustion guard for the same reason: both say another
   // round cannot help. A retry that produced no change would hand the reviewer
   // the tree it has already rejected.
   { from: "implementation", to: "task_failed", type: "stall-guard", when: "impl_no_op_retry" },
+  // A pre hook that failed never reached the agent, so there is no attempt to
+  // learn from: that path loops back on its own, carrying the hook output.
   { from: "implementation", to: "implementation", type: "pre-hook-failed", when: "impl_pre_hook_failed" },
-  { from: "implementation", to: "implementation", type: "spawn-failed", when: "impl_spawn_failed" },
-  { from: "implementation", to: "implementation", type: "post-hook-failed", when: "impl_post_hook_failed" },
+  { from: "implementation", to: "failure_learner", type: "spawn-failed", when: "impl_spawn_failed" },
+  { from: "implementation", to: "failure_learner", type: "post-hook-failed", when: "impl_post_hook_failed" },
   { from: "implementation", to: "implementation", type: "protected-paths", when: "impl_protected_paths_touched" },
   { from: "implementation", to: "review", type: "advance", when: "impl_ok" },
+
+  // Leaving the failure learner: the wall guard first, then the exhaustion it
+  // was called on, then back to the attempt it just wrote the memory for.
+  { from: "failure_learner", to: "task_failed", type: "stall-guard", when: "blocker_wall_repeated" },
+  { from: "failure_learner", to: "task_failed", type: "attempts-exhausted", when: "failure_terminal" },
+  { from: "failure_learner", to: "implementation", type: "advance", when: "always" },
 
   { from: "review", to: "review_gate", type: "advance", when: "always" },
 
