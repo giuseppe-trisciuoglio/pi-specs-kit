@@ -1,168 +1,165 @@
 # pi-specs-kit
 
-Estensione di pi che reimplementa in TypeScript il loop di esecuzione task di specs-kit (state machine implementation → review → cleanup → sync), orchestrando sottoprocessi `pi` dalla sessione pi interattiva.
+TypeScript pi extension that re-implements a specification's task loop (state machine implementation → review → cleanup → sync), orchestrating `pi` subprocesses from inside the interactive pi session.
 
 ## Language
 
 **Loop**:
-Il ciclo di esecuzione automatica dei task di una spec: per ogni task, le fasi in sequenza, con retry e persistenza dello stato tra un'esecuzione e l'altra.
-_Avoid_: ralph loop, state machine (nome tecnico interno)
+The automated execution cycle of a spec's tasks: for each task the phases run in sequence, with retries and state persisted between runs.
+_Avoid_: ralph loop, state machine (internal technical name)
 
-**Fase**:
-Uno dei quattro passi eseguiti per un task: implementation, review, cleanup, sync. Ogni fase è un sottoprocesso agente con contesto fresco.
+**Phase**:
+One of the four steps executed for a task: implementation, review, cleanup, sync. Each phase is an agent subprocess with a clean context.
 _Avoid_: step, stage
 
 **Task**:
-Unità di lavoro di una spec, descritta da un file markdown con frontmatter nella directory `tasks/` della spec.
+A unit of work of a spec, described by a markdown file with frontmatter in the `tasks/` directory of the spec.
 _Avoid_: todo, job
 
 **Spec**:
-Directory sotto `docs/specs/` (es. `034-mes-listing-fasi-reparto`) che contiene specifica funzionale, piano tecnico, task e stato del loop.
-_Avoid_: feature, specifica (generico)
+A directory under `docs/specs/` (e.g. `034-mes-listing-fasi-reparto`) that holds the functional specification, technical plan, tasks and loop state.
+_Avoid_: feature, specification (generic)
 
-**Spec attiva**:
-La spec su cui i comandi operano di default quando non è indicata esplicitamente; l'unica persistita nel campo `spec:` di `specs-kit.yaml`. La creazione di una nuova spec la imposta automaticamente.
-_Avoid_: spec corrente, default spec
+**Active spec**:
+The spec the commands operate on by default when none is given explicitly; the only one persisted in the `spec:` field of `specs-kit.yaml`. Creating a new spec sets it automatically.
+_Avoid_: current spec, default spec
 
 **Fix plan**:
-File `_ralph_loop/fix_plan.json` dentro la spec: single source of truth dello stato del loop (task done/pending, fase corrente, retry, learnings, blocker). Shape condivisa con il CLI Go.
+The file `_ralph_loop/fix_plan.json` inside a spec: the single source of truth for the loop's state (tasks done/pending, current phase, retries, learnings, blockers). Compatible with the existing format.
 _Avoid_: state file, progress file
 
-**Agente**:
-Il CLI che esegue una fase in sottoprocesso: sempre e solo `pi`. I ruoli differiscono solo per modello e thinking level configurati.
+**Agent**:
+The CLI that runs a phase as a subprocess: always and only `pi`. Roles differ only by model and thinking level configured.
 _Avoid_: LLM, provider, tool, codex
 
-**Ruolo**:
-Funzione svolta da un agente nel loop: agent (implementation), reviewer (review), cleaner (cleanup), synchronizer (sync), learner (estrazione learnings, e sui tentativi falliti failure learner). Ogni ruolo ha modello e thinking level propri, configurabili da `specs-kit.yaml` o dalla TUI di pi.
+**Role**:
+Function an agent plays in the loop: agent (implementation), reviewer (review), cleaner (cleanup), synchronizer (sync), learner (learnings extraction, and on failed attempts the failure learner). Each role has its own model and thinking level, configurable from `specs-kit.yaml` or from pi's TUI.
 _Avoid_: persona, worker
 
-**Skill di fase**:
-Documento di istruzioni iniettato nel prompt di una fase (specs-kit-task-implementation, specs-kit-task-review, specs-kit-code-cleanup, specs-kit-sync), risolto dal fork bundled nell'estensione.
+**Phase skill**:
+Instructions document injected into a phase's prompt (specs-kit-task-implementation, specs-kit-task-review, specs-kit-code-cleanup, specs-kit-sync), resolved by the fork bundled in the extension.
 _Avoid_: prompt template
 
 **Hook**:
-Comando shell eseguito prima (pre) o dopo (post) una fase; un pre-hook fallito blocca la fase. Un
-post-hook è un gate: per l'implementazione un gate rosso costa il tentativo e il suo output entra nel
-prompt del tentativo successivo; per le fasi senza retry (cleanup, sync) viene registrato nello stato
-e riportato alla chiusura del range.
+Shell command executed before (pre) or after (post) a phase; a failed pre-hook blocks the phase. A post-hook is a gate: for implementation a red gate costs the attempt and its output enters the next attempt's prompt; for phases without retries (cleanup, sync) it is recorded in the state and reported at range close.
 _Avoid_: guard, script
 
 **Learner**:
-Ruolo agente che a fine task estrae learnings e li salva nel fix plan; i learnings sono iniettati come memory nei prompt dei task successivi.
-_Avoid_: memory (è il dato, non il ruolo)
+Agent role that at the end of a task extracts learnings and writes them into the fix plan; the learnings are then injected as memory into the prompts of the tasks that follow.
+_Avoid_: memory (it is the data, not the role)
 
 **Failure learner**:
-Nodo agentico che gira su un tentativo fallito, prima del successivo: legge cosa ha bloccato il tentativo e lo scrive nei Blocker del fix plan. Non è il Learner: l'input è un tentativo morto, non un cambiamento approvato dalla review, e ciò che produce muore col task.
-_Avoid_: learner dei fallimenti, error learner
+Agentic node that runs on a failed attempt, before the next one: it reads what stopped the attempt and writes it into the fix plan's blockers. It is not the Learner: the input is a dead attempt rather than a change approved by review, and what it produces dies with the task.
+_Avoid_: failure learner, error learner
 
 **Blocker**:
-Ciò che ha fermato un tentativo, registrato per task in `state.blockers` e iniettato nel prompt del tentativo successivo in un blocco distinto dalla memory. Ha un kind — `verified_fact`, `spec_contradiction`, `unowned_decision`, `env` — ed è il kind a decidere la risposta del loop. Memoria di run: viene potato quando il task passa la review, e raggiunge i learnings di progetto solo attraverso il Learner.
-_Avoid_: learning di fallimento, memory (quella è la memoria di progetto), issue
+What stopped an attempt, recorded per task in `state.blockers` and injected into the next attempt's prompt in a block separate from memory. It has a kind — `verified_fact`, `spec_contradiction`, `unowned_decision`, `env` — and the kind is what decides the loop's response. Run memory: pruned when the task passes review, and reaches the project learnings only through the Learner.
+_Avoid_: failure learning, memory (that one is project memory), issue
 
-**Muro ripetuto**:
-Lo stesso Blocker di kind `spec_contradiction` o `unowned_decision` in due tentativi consecutivi dello stesso task: nessun altro tentativo può risolverlo, quindi il task si chiude subito e l'operatore riceve il testo del blocker invece di pagare un'altra sessione agente.
-_Avoid_: escalation (troppo generico), blocco definitivo
+**Repeated wall**:
+The same blocker of kind `spec_contradiction` or `unowned_decision` in two consecutive attempts of the same task: no further attempt can resolve it, so the task closes immediately and the operator receives the blocker text instead of paying for another agent session.
+_Avoid_: escalation (too generic), definitive block
 
-**Riconciliazione del contesto**:
-Estensione opt-in del mandato della fase sync: quando `run.reconcile_context` è attivo e ci sono learnings consolidati, sync corregge la singola istruzione contraddetta in un documento sorgente (AGENTS.md, architecture.md, ontology.md, .pi/rules) e riporta ogni correzione nel suo summary. Di default i documenti autorevoli non vengono modificati dal loop.
-_Avoid_: self-heal / heal (già usato per il ciclo implementation↔review), auto-fix
+**Context reconciliation**:
+Opt-in extension of the sync phase's mandate: when `run.reconcile_context` is on and there are consolidated learnings, sync patches the single contradicted instruction in a source document (AGENTS.md, architecture.md, ontology.md, .pi/rules) and reports every patch in its summary. By default the authoritative documents are not modified by the loop.
+_Avoid_: self-heal / heal (already used for the implementation↔review loop), auto-fix
 
 **graphify**:
-Skill esterna che indicizza il codebase nel grafo della conoscenza `graphify-out/graph.json`. È la sola fonte del grafo del codebase: ogni fase lo legge direttamente, non esiste un file per-spec proiettato. Non è inclusa in questa estensione: va installata a parte (`~/.agents/skills/graphify` o `~/.pi/agent/skills/graphify`). L'estensione avverte all'avvio del loop se non la trova; la fase sync la rinfresca (`/graphify --update`) prima di consumarla.
-_Avoid_: codebase indexer, KG builder, grafo del codice
+External skill that indexes the codebase into the knowledge graph `graphify-out/graph.json`. It is the only source of the codebase graph: every phase reads it directly, there is no per-spec projected knowledge graph file. It is not bundled in this extension: install it separately (`~/.agents/skills/graphify` or `~/.pi/agent/skills/graphify`). The extension warns at loop start if it cannot find it; the sync phase refreshes it (`/graphify --update`) before consuming it.
+_Avoid_: codebase indexer, KG builder, code graph
 
 **Knowledge Graph (KG)**:
-Il grafo della conoscenza del codebase, prodotto da graphify in `graphify-out/graph.json` a livello di progetto. È la sola mappa del codebase e l'unico file di grafo: non esiste un `knowledge-graph.json` per-spec proiettato. La fase sync lo rinfresca (`/graphify --update`); la validazione tecnica dei task e la generazione dei task lo leggono direttamente. Senza graphify è assente e la validazione tecnica salta.
-_Avoid_: knowledge-graph.json, proiezione, KG per-spec
+The knowledge graph of the codebase, produced by graphify in `graphify-out/graph.json` at project level. It is the only map of the codebase and the only graph file: there is no projected `knowledge-graph.json` per spec. The sync phase refreshes it (`/graphify --update`); task technical validation and task generation read it directly. Without graphify it is missing and technical validation is skipped.
+_Avoid_: knowledge-graph.json, projection, per-spec KG
 
-**Sync parziale**:
-Esito di una fase sync eseguita senza il Knowledge Graph (graphify assente o grafo non materializzato): il sync completa i suoi doveri documentali, ma la validazione delle dipendenze basata sul grafo salta. Il loop lo marca nel `state.graphPartialSync` del fix plan e lo segnala nel riepilogo finale, invece di degradare in silenzio.
-_Avoid_: sync fallito, sync degradato
+**Partial sync**:
+Outcome of a sync phase run without the knowledge graph (graphify missing or graph not materialised): sync completes its documentary duties but the graph-based dependency validation is skipped. The loop marks this in the fix plan's `state.graphPartialSync` and reports it in the closing summary, instead of degrading silently.
+_Avoid_: failed sync, degraded sync
 
-**Suggerimento routed**:
-Fix che un reviewer rinvia a un task successivo invece che a quello appena recensito: vive nel frontmatter del report di review come voce `{ to, text }` sotto `routed`, e il loop lo inietta nel prompt di implementazione del task di destinazione come blocco `<routed_suggestions>`. Evita che un handoff tra task venga perso perché sepolto nel prosa di una review precedente.
-_Avoid_: deferred suggestion, handoff testuale
+**Routed suggestion**:
+A fix a reviewer defers to a later task instead of the one just reviewed: it lives in the review report's frontmatter as a `{ to, text }` entry under `routed`, and the loop injects it into the implementation prompt of the target task as a `<routed_suggestions>` block. Prevents a task-to-task handoff from getting lost because it was buried in the prose of a previous review.
+_Avoid_: deferred suggestion, textual handoff
 
-**Verdetto della review**:
-L'esito strutturato che la fase review proietta al loop alla fine del suo sub-ciclo: passed, failed (con feedback), attemptFailed, reportUnusable o stopped. Vive nel frontmatter del report; il loop ne instrada le transizioni del task.
-_Avoid_: esito review, report (è il file, non l'esito)
+**Review verdict**:
+The structured outcome the review phase projects back to the loop at the end of its sub-cycle: passed, failed (with feedback), attemptFailed, reportUnusable or stopped. It lives in the report's frontmatter; the loop routes the task's transitions on it.
+_Avoid_: review outcome, report (it is the file, not the outcome)
 
-**Archivio delle review per tentativo**:
-Copia del report di review precedente, salvata come `tasks/<TASK>--review.attempt-N.md` prima che un retry sovrascriva il report canonico `<TASK>--review.md`. Preserva la cronologia dei verdetti (anche FAILED) per audit e debug; il file canonico resta sempre l'ultimo verdetto.
-_Avoid_: review backup, snapshot di review
+**Per-attempt review archive**:
+A copy of a previous review report, saved as `tasks/<TASK>--review.attempt-N.md` before a retry overwrites the canonical report `<TASK>--review.md`. Preserves the verdict history (including FAILED) for audit and debug; the canonical file is always the latest verdict.
+_Avoid_: review backup, review snapshot
 
-**Documenti di misura**:
-I documenti contro cui l'implementazione viene giudicata: la specifica funzionale della spec e i file sotto `contracts/`. Il loop ne confronta l'impronta prima e dopo ogni fase di implementazione (`run.protect_spec_artifacts`, attivo di default) e rifiuta il tentativo che ne ha riscritto uno, nominando i file. I documenti di lavoro (decision log, task file, piano tecnico) restano scrivibili.
-_Avoid_: file protetti (generico), read-only files
+**Measurement documents**:
+The documents the implementation is judged against: the functional specification of the spec and the files under `contracts/`. The loop compares their fingerprint before and after each implementation phase (`run.protect_spec_artifacts`, on by default) and rejects the attempt that rewrote one, naming the files. Working documents (decision log, task file, technical plan) stay writable.
+_Avoid_: protected files (generic), read-only files
 
-**Conflitto di specifica**:
-Contraddizione fra ciò che un requisito, un criterio di accettazione o un contratto prescrive e ciò che l'implementazione fa. Il reviewer lo elenca in `spec_conflicts` nel frontmatter del report; una lista non vuota vale come rifiuto qualunque cosa dica `review_status`, perché descrivere il conflitto spetta alla review e decidere quanto costa spetta al loop.
-_Avoid_: tensione, chiarimento, nota di review
+**Spec conflict**:
+A contradiction between what a requirement, an acceptance criterion or a contract prescribes and what the implementation does. The reviewer lists it in `spec_conflicts` in the report's frontmatter; a non-empty list counts as a rejection no matter what `review_status` says, because describing the conflict is the reviewer's job and deciding what it costs is the loop's.
+_Avoid_: tension, clarification, review note
 
-**Verifica di chiusura del range**:
-Controllo programmatico eseguito quando il range si chiude, senza chiamate a modello: le citazioni della matrice di copertura devono puntare a file di test esistenti (e, quando nominano un test, a un nome presente nel file), e nessun suggerimento routed deve restare a carico di un task mai completato. Produce avvisi, non blocchi.
-_Avoid_: gate finale, validazione della matrice
+**Range close audit**:
+Programmatic check run when a range closes, with no model calls: every coverage-matrix citation must point at an existing test file (and, when it names a test, at a name present in the file), and no routed suggestion may stay attached to a task that never completed. Produces warnings, never blocks.
+_Avoid_: final gate, matrix validation
 
 **Knowledge base**:
-Lista di file di contesto (da `specs-kit.yaml`) iniettata nel prompt di ogni fase.
-_Avoid_: context files, KB generico
+List of context files (from `specs-kit.yaml`) injected into every phase's prompt.
+_Avoid_: context files, generic KB
 
 **Reference documents**:
-Lista di path di documenti aggiuntivi (`reference_documents.files` in `specs-kit.yaml`) iniettata nel prompt di ogni fase, prima dei file knowledge base, nello stesso blocco `<knowledge_base>`. I file mancanti vengono omessi in silenzio.
+List of additional document paths (`reference_documents.files` in `specs-kit.yaml`) injected into every phase's prompt, before the knowledge-base files, in the same `<knowledge_base>` block. Missing files are silently omitted.
 _Avoid_: context files, extra docs
 
-**Trascrizione**:
-La resa leggibile di ciò che l'agente sta facendo nella fase in corso, renderizzata come nella sessione interattiva. Si apre e si chiude senza toccare il loop, che prosegue indipendentemente.
+**Transcript**:
+A readable rendering of what the agent is doing in the current phase, rendered like the interactive session. Opens and closes without touching the loop, which proceeds independently.
 _Avoid_: stream view, attach view, log, output
 
-**Registro delle misure**:
-File append-only accanto alle spec, versionato col progetto, in cui confluiscono le misure di consumo e durata: una riga per fase del loop e una per finestra di authoring. Non è stato del loop: perderlo non impedisce di ripartire.
-_Avoid_: metriche (generico), log
+**Measurement ledger**:
+Append-only file next to the specs, versioned with the project, where consumption and duration measurements accumulate: one row per loop phase and one per authoring window. It is not loop state: losing it does not prevent resuming.
+_Avoid_: metrics (generic), log
 
-**Finestra di authoring**:
-Intervallo della sessione interattiva attribuito alla creazione di una spec: si apre con un comando di authoring e si chiude al comando specs-kit successivo o alla chiusura della sessione. La prima finestra viene attribuita alla spec retroattivamente, quando la spec diventa attiva.
-_Avoid_: sessione, turno
+**Authoring window**:
+A slice of the interactive session attributed to the creation of a spec: it opens with an authoring command and closes at the next specs-kit command or at session close. The first window is attributed to the spec retroactively, when the spec becomes active.
+_Avoid_: session, turn
 
-**Costo del loop**:
-Token consumati e spesa dei sottoprocessi agente che il loop esegue per una spec: tutte le fasi di tutti i task, retry compresi. È un totale per spec, non per fase né per task.
-_Avoid_: token di implementazione, costo della fase implementation
+**Loop cost**:
+Tokens consumed and spend of the agent subprocesses the loop executes for a spec: every phase of every task, retries included. It is a total per spec, not per phase or per task.
+_Avoid_: implementation tokens, implementation phase cost
 
-**Durata del loop**:
-Somma delle durate delle esecuzioni del loop su una spec, hook e checkpoint inclusi. Le pause tra un'esecuzione e la successiva non contano.
-_Avoid_: tempo di implementazione, wall clock
+**Loop duration**:
+Sum of the durations of the loop's executions on a spec, hooks and checkpoints included. The pauses between successive executions do not count.
+_Avoid_: implementation time, wall clock
 
 **Fast mode**:
-Modalità del loop che salta cleanup e la scrittura del frontmatter `reviewed`, e sincronizza solo l'ultimo task del range. I task completati restano comunque registrati come done e il checkpoint git viene creato.
+Loop mode that skips cleanup and the `reviewed` frontmatter write, and syncs only the last task of the range. Completed tasks are still recorded as done and the git checkpoint is still created.
 _Avoid_: quick mode
 
-**Grafo dichiarato**:
-La topologia del loop espressa come dato — nodi, edge e condizioni — separata dal piccolo interprete che la esegue. Il loop l'ha sempre eseguita; dichiararla la rende ispezionabile e testabile.
-_Avoid_: state machine, pipeline cablata, grafo implicito
+**Declared graph**:
+The loop's topology expressed as data — nodes, edges and conditions — separate from the small interpreter that runs it. The loop always ran it; declaring it makes it inspectable and testable.
+_Avoid_: state machine, hard-wired pipeline, implicit graph
 
-**Nodo**:
-Unità del grafo dichiarato, di due generi: agentic (una Fase o il learner, eseguita da un sottoprocesso agente) o deterministica (gate, funnel e scritture di stato, logica pura del loop senza agente).
-_Avoid_: step, stage, fase (per i deterministici)
+**Node**:
+Unit of the declared graph, of two kinds: agentic (a phase or the learner, run by an agent subprocess) or deterministic (gates, funnels and state writes, pure loop logic with no agent).
+_Avoid_: step, stage, phase (for the deterministic ones)
 
 **Edge**:
-Transizione dichiarata tra due nodi, con condizione e tipo. Il payload di un'edge è ciò che il nodo a valle legge (es. il feedback della review sul back-edge verso implementation).
-_Avoid_: transizione, salto, branch
+Declared transition between two nodes, with condition and type. The edge's payload is what the downstream node reads (e.g. the review feedback on the back-edge into implementation).
+_Avoid_: transition, jump, branch
 
-**Tipo di edge**:
-La classificazione di un'edge, assegnata solo quando determina una decisione di instradamento. Quattro famiglie: advance, verdetto (i kind del verdetto della review), derivate (stall guard, tentativi esauriti, pre-hook o spawn falliti) e config/ambiente (salto per modalità, continue-on-failure, stop dell'operatore, budget esaurito).
-_Avoid_: etichette generiche ok/failed, tipi per eventi che non instradano
+**Edge type**:
+An edge's classification, assigned only when it drives a routing decision. Four families: advance, verdict (the kinds of the review verdict), derived (stall guard, exhausted attempts, failed pre-hook or spawn) and config/environment (jump for mode, continue-on-failure, operator stop, exhausted budget).
+_Avoid_: generic ok/failed labels, types for events that do not route
 
-**Funnel dei fallimenti del task**:
-Nodo deterministico su cui convergono tutti gli esiti di non-pass di un task (stall guard, report inutilizzabile, tentativi esauriti); decide una volta sola se il run prosegue col task successivo o si ferma.
-_Avoid_: halt, halt diretto
+**Task failure funnel**:
+Deterministic node on which every non-pass outcome of a task converges (stall guard, unusable report, exhausted attempts); it decides only once whether the run continues with the next task or stops.
+_Avoid_: halt, direct halt
 
 **Stall guard**:
-Guardia che dichiara fallito il task quando la review respinge due volte consecutive con feedback identico: l'implementazione non sta agendo sul feedback.
+Guard that declares the task failed when review rejects it twice in a row with identical feedback: the implementation is not acting on the feedback.
 _Avoid_: anti-loop, feedback loop
 
-**Stato di runtime del task**:
-Le variabili in-flight del ciclo di un task (feedback della review, suggerimenti routed, avanzamento del run), dichiarate nel grafo ma non persistite nel fix plan: muoiono col processo e il resume le ricomputa.
-_Avoid_: stato del loop (quello è il fix plan), sessione
+**Task runtime state**:
+The in-flight variables of a task's cycle (review feedback, routed suggestions, run progress), declared in the graph but not persisted in the fix plan: they die with the process and resume recomputes them.
+_Avoid_: loop state (that one is the fix plan), session
 
-**Sync finale**:
-La sync che il run esegue a fine range quando nessun task l'ha eseguita (es. coda fallita in fast mode), seguita dalla compazione dei learnings di progetto. Garantisce almeno un sync documentale per run.
-_Avoid_: final sync, sync di chiusura
+**Final sync**:
+The sync the run performs at range end when no task has run one (e.g. a queue failed in fast mode), followed by compaction of the project learnings. Guarantees at least one documentary sync per run.
+_Avoid_: final sync, closing sync

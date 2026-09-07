@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# Sincronizza le skill di questo progetto (./skills/) verso le directory locali
-# usate dagli agenti.
+# Sync this project's skills (./skills/) into the local agent folders.
 #
-# In push ogni sottocartella di ./skills/ viene sincronizzata verso entrambe le
-# directory di destinazione. In pull resta invariata la direzione storica da
-# ~/.agents/skills verso ./skills/.
+# On push every subfolder of ./skills/ is synced into both destinations. On
+# pull the historical direction is preserved (from ~/.agents/skills into
+# ./skills/).
 #
-# Uso:
-#   ./sync-skills.sh            # sincronizza verso ~/.agents/skills e ~/.claude/skills
-#   ./sync-skills.sh --dry-run  # mostra cosa farebbe senza scrivere nulla
-#   ./sync-skills.sh --pull     # direzione inversa (~/.agents/skills -> progetto)
+# Usage:
+#   ./sync-skills.sh            # sync into ~/.agents/skills and ~/.claude/skills
+#   ./sync-skills.sh --dry-run  # show what would happen without writing
+#   ./sync-skills.sh --pull     # reverse direction (~/.agents/skills -> project)
 
 set -euo pipefail
 
@@ -28,7 +27,7 @@ for arg in "$@"; do
       exit 0
       ;;
     *)
-      echo "Opzione sconosciuta: ${arg}" >&2
+      echo "Unknown option: ${arg}" >&2
       exit 1
       ;;
   esac
@@ -37,7 +36,7 @@ done
 DRY_RUN="${DRY_RUN:-}"
 
 if [[ ! -d "${SRC_DIR}" ]]; then
-  echo "Cartella sorgente assente: ${SRC_DIR}" >&2
+  echo "Source directory not found: ${SRC_DIR}" >&2
   exit 1
 fi
 mkdir -p "${AGENTS_DEST_DIR}"
@@ -55,7 +54,7 @@ else
   echo ">> Push: ${FROM} -> ${CLAUDE_DEST_DIR}"
 fi
 
-# Esclude i metadata macOS e i file di sistema: non devono propagarsi.
+# Exclude macOS metadata and system files: they must not propagate.
 EXCLUDES=(--exclude '.DS_Store' --exclude '._*' --exclude '__MACOSX')
 
 synced=0
@@ -66,7 +65,7 @@ for skill_dir in "${SRC_DIR}"/*/; do
   if [[ "${MODE}" == "pull" ]]; then
     src="${AGENTS_DEST_DIR}/${skill_name}/"
     dst="${SRC_DIR}/${skill_name}/"
-    [[ -d "${src}" ]] || { echo "-- salto ${skill_name}: non presente in ${AGENTS_DEST_DIR}"; continue; }
+    [[ -d "${src}" ]] || { echo "-- skipping ${skill_name}: not in ${AGENTS_DEST_DIR}"; continue; }
 
     echo "-- ${skill_name}"
     rsync -a --delete "${EXCLUDES[@]}" ${DRY_RUN} "${src}" "${dst}"
@@ -81,8 +80,8 @@ for skill_dir in "${SRC_DIR}"/*/; do
 done
 
 if (( synced == 0 )); then
-  echo "Nessuna skill trovata in ${SRC_DIR}" >&2
+  echo "No skills found in ${SRC_DIR}" >&2
   exit 1
 fi
 
-echo "Fatto: ${synced} skill sincronizzate."
+echo "Done: ${synced} skill(s) synced."

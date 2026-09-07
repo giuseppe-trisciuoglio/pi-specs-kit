@@ -86,7 +86,10 @@ function truncate(text: string): string {
 export function parseBlockers(text: string, task: string, attempt: number): Blocker[] {
   const found: Blocker[] = [];
   const seen = new Set<string>();
-  const line = /^(?:[-*•]|\d+[.)])?[ \t]*([A-Z_]+)[ \t]*[:\-—][ \t]*(.+)$/;
+  // The list marker and its trailing whitespace live in the same optional
+  // group, so the alternation does not also have to backtrack against the
+  // whitespace that follows it.
+  const line = /^(?:[-*•][ \t]*|\d+[.)][ \t]*)?([A-Z_]+)[ \t]*[:\-—][ \t]*(\S.*?)$/;
   for (const raw of text.split("\n")) {
     const match = line.exec(raw.trim());
     if (!match) continue;
@@ -139,7 +142,7 @@ export function injectableBlockers(blockers: readonly Blocker[]): Blocker[] {
     keep.push(i);
     spent += cost;
   }
-  return keep.sort((a, b) => a - b).map((i) => blockers[i]);
+  return keep.toSorted((a, b) => a - b).map((i) => blockers[i]);
 }
 
 /**
@@ -196,13 +199,13 @@ export function normalizeBlockers(value: unknown): Blocker[] | undefined {
   for (const entry of value) {
     if (typeof entry !== "object" || entry === null) continue;
     const raw = entry as Record<string, unknown>;
-    const kind = String(raw.kind ?? "");
+    if (typeof raw.kind !== "string") continue;
     if (typeof raw.task !== "string" || typeof raw.text !== "string") continue;
-    if (!Object.values(KIND_BY_LABEL).includes(kind as BlockerKind)) continue;
+    if (!Object.values(KIND_BY_LABEL).includes(raw.kind as BlockerKind)) continue;
     blockers.push({
       task: raw.task,
       attempt: typeof raw.attempt === "number" ? raw.attempt : 1,
-      kind: kind as BlockerKind,
+      kind: raw.kind as BlockerKind,
       text: truncate(raw.text),
       resolved: raw.resolved === true,
     });
