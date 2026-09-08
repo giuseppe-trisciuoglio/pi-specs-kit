@@ -5,7 +5,9 @@
  * final stop reason reported by the agent.
  */
 
+import { fileURLToPath } from "node:url";
 import { spawnProcess } from "../util/process.ts";
+import { AUTO_COMPACT_ENV } from "./compaction-plan.ts";
 import { createJsonlParser, type PiStreamEvent } from "./json-stream.ts";
 import { agentEndOutcome } from "./stream-format.ts";
 
@@ -26,6 +28,12 @@ export interface PhaseSpawnOptions {
   env?: NodeJS.ProcessEnv;
   /** Agent CLI binary; defaults to "pi" on PATH. */
   piBin?: string;
+  /**
+   * Share of the model context window at which the phase compacts itself.
+   * Undefined leaves the agent CLI's own behavior in place: no extension is
+   * loaded and the subprocess environment is untouched.
+   */
+  autoCompactPercent?: number;
   onEvent?: (e: PiStreamEvent) => void;
   onStderrLine?: (line: string) => void;
 }
@@ -59,12 +67,25 @@ export interface PhaseRunOutcome {
  */
 export const WITHHELD_TOOLS: readonly string[] = ["ask_user_question", "ask_question"];
 
+/**
+ * The extension that compacts a phase from inside its own subprocess. Resolved
+ * from this module so it follows the package wherever it is installed.
+ */
+export const AUTO_COMPACT_EXTENSION = fileURLToPath(new URL("./autocompact-extension.ts", import.meta.url));
+
 export async function runAgentPhase(opts: PhaseSpawnOptions): Promise<PhaseRunOutcome> {
   const args = ["--print", "--mode", "json", "--no-session", "--exclude-tools", WITHHELD_TOOLS.join(",")];
   if (opts.model && opts.model !== "auto") args.push("--model", opts.model);
   if (opts.thinkingLevel) args.push("--thinking", opts.thinkingLevel);
   if (opts.systemPrompt) args.push("--system-prompt", opts.systemPrompt);
   if (opts.appendSystemPrompt) args.push("--append-system-prompt", opts.appendSystemPrompt);
+  // The threshold travels in the environment: the CLI hands no arguments to a
+  // loaded extension, and the extension reads nothing else.
+  let env = opts.env;
+  if (opts.autoCompactPercent !== undefined) {
+    args.push("--extension", AUTO_COMPACT_EXTENSION);
+    env = { ...(env ?? process.env), [AUTO_COMPACT_ENV]: String(opts.autoCompactPercent) };
+  }
   args.push(opts.prompt);
 
   let stopReason: string | null = null;
@@ -100,7 +121,7 @@ export async function runAgentPhase(opts: PhaseSpawnOptions): Promise<PhaseRunOu
 
   const res = await spawnProcess(opts.piBin ?? "pi", args, {
     cwd: opts.cwd,
-    env: opts.env,
+    env,
     signal: opts.signal,
     timeoutMs: opts.timeoutMs,
     onStdout: (chunk) => parser.push(chunk),

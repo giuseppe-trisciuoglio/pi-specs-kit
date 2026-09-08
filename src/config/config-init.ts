@@ -56,6 +56,11 @@ export function defaultConfigYaml(): string {
       // consolidated learning contradicts. Editing the project's own
       // instructions is a trust-boundary change, so it stays opt-in.
       reconcile_context: run.reconcileContext,
+      // Lets a phase summarize its own conversation once it passes the share of
+      // the model context window below, instead of running to the edge of the
+      // window. Each compaction costs one extra request.
+      auto_compact: run.autoCompact,
+      auto_compact_threshold: run.autoCompactThresholdPercent,
       // Refuses an attempt that rewrote the spec's requirement document or one
       // of its contracts: what the work is measured against is not the work's
       // to edit.

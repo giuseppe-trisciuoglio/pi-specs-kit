@@ -163,3 +163,7 @@ _Avoid_: loop state (that one is the fix plan), session
 **Final sync**:
 The sync the run performs at range end when no task has run one (e.g. a queue failed in fast mode), followed by compaction of the project learnings. Guarantees at least one documentary sync per run.
 _Avoid_: final sync, closing sync
+
+**Phase compaction**:
+The summary a phase makes of its own conversation once it passes `run.auto_compact_threshold` percent of the model context window, when `run.auto_compact` is on: the phase prompt and the recent turns stay whole, everything before them becomes a summary written by the phase model, and every later request of that phase reuses it. It is not the compaction of the project learnings, which is the learner rewriting the memory list at range end.
+_Avoid_: auto-compact (as a noun), truncation, pruning, context window management

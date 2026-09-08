@@ -70,6 +70,16 @@ export interface RunConfig {
    */
   reconcileContext: boolean;
   /**
+   * Let each phase summarize its own conversation once it has grown past a
+   * share of the model context window, instead of waiting for the agent CLI to
+   * compact at the edge of overflow. Off by default: the summary costs one
+   * request per compaction, and it is the run that decides whether a long phase
+   * is worth that.
+   */
+  autoCompact: boolean;
+  /** Share of the context window at which a phase compacts, in percent. */
+  autoCompactThresholdPercent: number;
+  /**
    * Refuse an implementation attempt that rewrote the requirement document or
    * an interface contract of the spec. On by default: an agent allowed to edit
    * what it is measured against can close any mismatch by moving the target.
@@ -175,6 +185,8 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
   maxSpawnsPerRun: 60,
   maxRunDurationMs: 6 * 60 * 60 * 1000,
   reconcileContext: false,
+  autoCompact: false,
+  autoCompactThresholdPercent: DEFAULT_AUTO_COMPACT_PERCENT,
   protectSpecArtifacts: true,
 };
 
@@ -198,6 +210,7 @@ export function defaultHooks(): HooksConfig {
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
+import { DEFAULT_AUTO_COMPACT_PERCENT, isThresholdPercent } from "../agent/compaction-plan.ts";
 import { parseDurationMs } from "../util/duration.ts";
 
 /** Default config file name, looked up directly under the project root. */
@@ -231,6 +244,18 @@ function count(value: unknown, min = 0): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   const floored = Math.floor(value);
   return floored < min ? undefined : floored;
+}
+
+/**
+ * A compaction threshold from the config file. A value outside the supported
+ * band is treated as absent rather than clamped: a phase compacting at 1% or at
+ * 99% of the window is not what the operator meant by either number, and the
+ * default is a behavior they can recognize.
+ */
+function thresholdPercent(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const floored = Math.floor(value);
+  return isThresholdPercent(floored) ? floored : undefined;
 }
 
 /**
@@ -369,6 +394,8 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
   run.maxSpawnsPerRun = count(src.max_spawns_per_run, 1) ?? run.maxSpawnsPerRun;
   run.maxRunDurationMs = positiveDuration(src.max_run_duration, file, "run.max_run_duration") ?? run.maxRunDurationMs;
   run.reconcileContext = flag(src.reconcile_context) ?? run.reconcileContext;
+  run.autoCompact = flag(src.auto_compact) ?? run.autoCompact;
+  run.autoCompactThresholdPercent = thresholdPercent(src.auto_compact_threshold) ?? run.autoCompactThresholdPercent;
   run.protectSpecArtifacts = flag(src.protect_spec_artifacts) ?? run.protectSpecArtifacts;
   const fromTask = text(src.from_task);
   if (fromTask !== undefined) run.fromTask = fromTask;

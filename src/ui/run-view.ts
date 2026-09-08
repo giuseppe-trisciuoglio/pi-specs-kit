@@ -7,12 +7,17 @@
  */
 
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import {
+  MAX_AUTO_COMPACT_PERCENT,
+  MIN_AUTO_COMPACT_PERCENT,
+  isThresholdPercent,
+} from "../agent/compaction-plan.ts";
 import { updateRunConfig, type RunField } from "../config/config-writer.ts";
 import type { RunConfig, SpecsKitConfig } from "../config/specs-kit-config.ts";
 import type { LoopController } from "../loop/loop-controller.ts";
 import { formatDurationMs, parseDurationMs } from "../util/duration.ts";
 
-type FieldKind = "boolean" | "duration" | "number";
+type FieldKind = "boolean" | "duration" | "number" | "percent";
 
 interface RunFieldDef {
   field: RunField;
@@ -40,6 +45,8 @@ const FIELDS: readonly RunFieldDef[] = [
   { field: "max_spawns_per_run", kind: "number", label: "max agent sessions per run", display: (r) => String(r.maxSpawnsPerRun) },
   { field: "max_run_duration", kind: "duration", label: "max run duration", display: (r) => formatDurationMs(r.maxRunDurationMs) },
   { field: "reconcile_context", kind: "boolean", label: "sync may fix context docs", display: (r) => String(r.reconcileContext) },
+  { field: "auto_compact", kind: "boolean", label: "compact a phase mid-run", display: (r) => String(r.autoCompact) },
+  { field: "auto_compact_threshold", kind: "percent", label: "compact at (% of context window)", display: (r) => String(r.autoCompactThresholdPercent) },
   { field: "protect_spec_artifacts", kind: "boolean", label: "guard spec artifacts", display: (r) => String(r.protectSpecArtifacts) },
 ];
 
@@ -80,10 +87,11 @@ async function editField(
     return writeField(ctx, controller, config, def, value, String(value));
   }
 
-  const placeholder =
-    def.kind === "duration"
-      ? `current ${current} — e.g. 40m, 1h, 240s`
-      : `current ${current} — e.g. 5`;
+  let placeholder = `current ${current} — e.g. 5`;
+  if (def.kind === "duration") placeholder = `current ${current} — e.g. 40m, 1h, 240s`;
+  if (def.kind === "percent") {
+    placeholder = `current ${current} — ${MIN_AUTO_COMPACT_PERCENT} to ${MAX_AUTO_COMPACT_PERCENT}`;
+  }
   const input = await ctx.ui.input(`${def.label}:`, placeholder);
   if (input === undefined) return config;
   const trimmed = input.trim();
@@ -103,6 +111,14 @@ async function editField(
     return config;
   }
   const num = Number.parseInt(trimmed, 10);
+  if (def.kind === "percent" && !isThresholdPercent(num)) {
+    ctx.ui.notify(
+      `[specs-kit] Invalid percentage "${trimmed}"; use a whole number between ` +
+        `${MIN_AUTO_COMPACT_PERCENT} and ${MAX_AUTO_COMPACT_PERCENT}.`,
+      "error",
+    );
+    return config;
+  }
   return writeField(ctx, controller, config, def, num, String(num));
 }
 

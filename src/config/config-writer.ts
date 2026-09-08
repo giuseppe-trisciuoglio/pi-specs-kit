@@ -45,6 +45,8 @@ export type RunField =
   | "max_spawns_per_run"
   | "max_run_duration"
   | "reconcile_context"
+  | "auto_compact"
+  | "auto_compact_threshold"
   | "protect_spec_artifacts";
 
 export interface RunFieldUpdate {

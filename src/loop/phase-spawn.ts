@@ -247,6 +247,9 @@ export class PhaseSpawner {
         systemPrompt: systemPromptOverride?.mode === "replace" ? systemPromptOverride.content : undefined,
         cwd: config.projectRoot,
         timeoutMs: config.run.timeoutMs,
+        // Read per spawn, not per run: the configuration is re-read between
+        // phases, so turning the option on reaches the next phase.
+        autoCompactPercent: config.run.autoCompact ? config.run.autoCompactThresholdPercent : undefined,
         signal,
         onEvent: (event) => {
           if (meterHandle) this.#deps.meter?.recordEvent(meterHandle, event);
