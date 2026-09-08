@@ -45,7 +45,10 @@ export type EdgeType =
   | "protected-paths"
   | "mode-skip"
   | "continue-on-failure"
-  | "halt-on-failure";
+  | "halt-on-failure"
+  /** The task needs an action only a person can perform: it ends, the run
+   * continues whatever continue-on-failure says. */
+  | "operator-escalation";
 
 /** Every node of the per-task graph, including the start marker and sinks. */
 export type TaskNodeId =
@@ -87,7 +90,9 @@ export type RoutingVerdict =
   | { kind: "attemptFailed" }
   // The review step always attaches the detail; it is optional only so that
   // routing-only constructions of the verdict need not invent one.
-  | { kind: "reportUnusable"; detail?: string };
+  | { kind: "reportUnusable"; detail?: string }
+  /** The review named work only a person can do: no attempt closes it. */
+  | { kind: "escalated"; detail?: string };
 
 /** How the task entered this run: fresh, or resumed at a persisted step. */
 export interface TaskEntry {
@@ -124,6 +129,11 @@ export interface TaskRuntime {
   /** Text of a blocker the task hit twice in a row, set by the failure
    * learner: the loop stops the task instead of spending the next spawn. */
   blockerWall: string | null;
+  /** Text of the operator action this task turned out to need, from a review
+   * escalation or from an operator_action blocker hit twice. It ends the task
+   * and, unlike every other failure, never halts the run: the tasks after it
+   * are not the ones missing a credential. */
+  operatorWall: string | null;
   runState: RunState;
 }
 
@@ -147,6 +157,9 @@ export interface RoutingContext {
   /** Set once the failure learner found the same unresolvable blocker in two
    * consecutive attempts: no retry can clear it, so the task ends here. */
   readonly blockerWall: boolean;
+  /** Set once the task is known to need an action only a person can perform.
+   * The task ends, the run does not. */
+  readonly operatorWall: boolean;
   /** Run-level facts, read by the end-of-range sync condition. */
   readonly syncRan: boolean;
   readonly hasLastCompleted: boolean;

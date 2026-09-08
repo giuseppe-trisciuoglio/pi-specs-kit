@@ -447,6 +447,81 @@ test("the same wall in two consecutive attempts ends the task without spending t
   assert.deepEqual(run.plan.done, ["TASK-002", "TASK-003"]);
 });
 
+test("an operator action hit twice ends the task and lets the run walk on", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(
+    root,
+    specDir,
+    (call) => {
+      if (call.phase === "failure_learner") {
+        return { text: "- OPERATOR_ACTION: the provider credential has to be written into the vault\n" };
+      }
+      return call.task === "TASK-001" && call.phase === "implementation" ? { fail: true } : {};
+    },
+    (config) => {
+      config.mode = "fast";
+      config.run.maxAttempts = 5;
+      // Halting is what the setting asks for, and what the run does for every
+      // other failure. A missing credential says nothing about the tasks after
+      // this one, so it is the one wall that does not stop them.
+      config.run.continueOnFailure = false;
+    },
+  );
+
+  assert.equal(countCalls(run.calls, "TASK-001", "implementation"), 2);
+  assert.equal(run.result.reason, "completed");
+  assert.deepEqual(run.plan.done, ["TASK-002", "TASK-003"]);
+  assert.ok(
+    run.notifications.some((n) => n.message.includes("needs an operator action") && n.message.includes("vault")),
+    "the halt names the operator action, not the budget",
+  );
+});
+
+test("a review escalation ends its task without spending another attempt", async () => {
+  const { root, specDir } = await createSpec();
+  const escalated = [
+    "---",
+    "review_status: FAILED",
+    'summary: "blocked on an operator step"',
+    "issues: []",
+    "spec_conflicts: []",
+    "escalation:",
+    '  - "the vault credential and the live provider check need an operator"',
+    "routed: []",
+    "---",
+    "",
+    "See above.",
+    "",
+  ].join("\n");
+
+  const run = await runLoop(
+    root,
+    specDir,
+    async (call, ctx) => {
+      if (call.phase === "review" && call.task === "TASK-001") {
+        await writeFile(reviewFilePath(ctx.specDir, call.task), escalated, "utf8");
+        return { review: "missing" };
+      }
+      return {};
+    },
+    (config) => {
+      config.mode = "fast";
+      config.run.maxAttempts = 5;
+      config.run.continueOnFailure = false;
+    },
+  );
+
+  // One implementation, one review: nothing the next pair could do differently.
+  assert.equal(countCalls(run.calls, "TASK-001", "implementation"), 1);
+  assert.equal(countCalls(run.calls, "TASK-001", "review"), 1);
+  assert.equal(run.result.reason, "completed");
+  assert.deepEqual(run.plan.done, ["TASK-002", "TASK-003"]);
+  assert.ok(
+    run.notifications.some((n) => n.message.includes("escalated to the operator")),
+    "the escalation is surfaced",
+  );
+});
+
 test("halt after max attempts with state.error and reason halted", async () => {
   const { root, specDir } = await createSpec();
   const run = await runLoop(

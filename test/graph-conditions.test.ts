@@ -14,6 +14,7 @@ function makeCtx(overrides: Partial<RoutingContext> = {}): RoutingContext {
     isLastTask: false,
     continueOnFailure: false,
     blockerWall: false,
+    operatorWall: false,
     stopping: false,
     syncRan: false,
     hasLastCompleted: false,
@@ -53,9 +54,11 @@ test("the registry contains exactly the declared routing predicates", () => {
     "impl_pre_hook_failed",
     "impl_protected_paths_touched",
     "impl_spawn_failed",
+    "operator_wall",
     "sync_not_wanted",
     "sync_wanted",
     "verdict_attempt_failed",
+    "verdict_escalated",
     "verdict_failed_new_feedback",
     "verdict_failed_same_feedback",
     "verdict_passed_fast_mode",
@@ -231,6 +234,21 @@ test("funnel predicates are mutually exclusive on continue-on-failure", () => {
   truth("halt_on_failure", [
     [{ continueOnFailure: false }, true],
     [{ continueOnFailure: true }, false],
+  ]);
+});
+
+test("an operator wall ends the task and leaves the run walking", () => {
+  // The task needs a person; the tasks after it do not. Halting the run on it
+  // costs every one of them, so this predicate answers ahead of the setting.
+  truth("operator_wall", [
+    [{ operatorWall: true }, true],
+    [{ operatorWall: true, continueOnFailure: false }, true],
+    [{ operatorWall: false }, false],
+  ]);
+  truth("verdict_escalated", [
+    [{ verdict: { kind: "escalated", detail: "the vault write is an operator step" } }, true],
+    [{ verdict: { kind: "failed", feedback: "fix it" } }, false],
+    [{ verdict: null }, false],
   ]);
 });
 

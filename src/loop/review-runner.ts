@@ -35,13 +35,17 @@ import type { TaskRunnerDeps } from "./task-runner.ts";
  * What the review step reports back to the task state machine.
  * `attemptFailed` is a lost attempt worth repeating from the implementation;
  * `reportUnusable` is a reviewer that cannot state a verdict at all, which
- * repeating the implementation would not fix.
+ * repeating the implementation would not fix; `escalated` is a finding no
+ * implementation pass can close, whoever writes it.
  */
 export type ReviewVerdict =
   | { kind: "passed" }
   | { kind: "failed"; feedback: string }
   | { kind: "attemptFailed" }
   | { kind: "reportUnusable"; detail: string }
+  /** The review found work no implementation pass can close: it needs a
+   * person. The task ends on it and the run continues with the next one. */
+  | { kind: "escalated"; detail: string }
   | { kind: "stopped" };
 
 /** The slice of the task runner dependencies the review step needs. */
@@ -197,6 +201,15 @@ async function onReportMissing(
  */
 function judgeReport(deps: ReviewStepDeps, plan: FixPlan, id: string, report: ReviewReport): ReviewVerdict {
   const { notify } = deps;
+  // Escalation comes first: a finding that needs an account, a credential or
+  // a signature is not made closable by anything else the report says, and
+  // sending the same tree back to the same reviewer only spends the task's
+  // remaining attempts to reach the identical verdict.
+  if (report.escalation.length > 0) {
+    const detail = report.escalation.join("; ");
+    notify(`review of ${id} escalated to the operator: ${report.escalation[0]}`, "warning");
+    return { kind: "escalated", detail };
+  }
   // A review that reports a requirement contradicted by the implementation
   // cannot also wave it through: the reviewer describes the conflict, the
   // loop decides what it costs. Without this the same session both raises

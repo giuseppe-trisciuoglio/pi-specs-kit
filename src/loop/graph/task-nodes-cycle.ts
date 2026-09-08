@@ -21,6 +21,7 @@ import {
   snapshotProtectedPaths,
 } from "../protected-paths.ts";
 import { blockersForTask, injectableBlockers } from "../blockers.ts";
+import { operatorWallMessage } from "./task-nodes-failure.ts";
 import { runReviewStep } from "../review-runner.ts";
 import { collectRoutedSuggestions } from "../routed-suggestions.ts";
 import { loopArtifactExclusions } from "../workspace.ts";
@@ -236,6 +237,15 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
       // The reviewer never managed to state a verdict. Nothing the
       // implementation could do differently would change that, so the
       // remaining attempts are not spent re-implementing working code.
+      // The reviewer named work only a person can do. The remaining attempts
+      // cannot buy it, so the task ends here carrying the escalation, and the
+      // funnel lets the run walk on to the tasks that need no credential.
+      if (verdict.kind === "escalated") {
+        const detail = verdict.detail ?? "the review escalated to the operator";
+        io.runtime.operatorWall = detail;
+        state.review_file_error = operatorWallMessage(id, detail);
+        return { kind: "ok" };
+      }
       if (verdict.kind === "reportUnusable") {
         state.review_file_error = verdict.detail ?? null;
         return { kind: "ok" };
@@ -255,11 +265,18 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
       return { kind: "ok" };
     },
 
-    task_failed: async () => {
+    task_failed: async (io) => {
       const detail = state.review_file_error ?? `task not completed after ${maxAttempts} attempts`;
       state.error = `${id}: ${detail}`;
       state.step = "failed";
       await persist();
+      // An operator wall is not an agent that failed, and reading it as one is
+      // what sent operators looking for a bug in the implementation. It says
+      // what is missing and that the run goes on without it.
+      if (io.runtime.operatorWall !== null) {
+        notify(`${state.error}; the run continues with the next task`, "warning");
+        return { kind: "ok" };
+      }
       notify(
         config.run.continueOnFailure ? `${state.error}; continuing with the next task` : `loop stopped: ${state.error}`,
         "error",

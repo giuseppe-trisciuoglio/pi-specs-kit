@@ -105,6 +105,22 @@ test("a wall repeated in two consecutive attempts is found, a fact is not", () =
   assert.equal(repeatedWall(stored.slice(2), "TASK-005", 2), null);
 });
 
+test("an action only a person can perform is a wall, and is labelled as one", () => {
+  // What ENV used to stand in for: a credential, an account, a signature. ENV
+  // is a build or a network, which a retry may legitimately clear; this never
+  // is, so the second hit ends the task instead of buying another spawn.
+  const stored = [
+    blocker({ attempt: 1, kind: "operator_action", text: "no vault write access for the provider credential" }),
+    blocker({ attempt: 2, kind: "operator_action", text: "No vault write access for the provider credential." }),
+  ];
+
+  assert.equal(repeatedWall(stored, "TASK-005", 2)?.kind, "operator_action");
+  assert.deepEqual(
+    parseBlockers("- OPERATOR_ACTION: the account has to be bought by a person", "TASK-005", 1).map((b) => b.kind),
+    ["operator_action"],
+  );
+});
+
 test("a wall of another task, or of a non-consecutive attempt, is not a repeat", () => {
   const first = blocker({ attempt: 1, kind: "unowned_decision", text: "who owns the schedule" });
   const third = blocker({ attempt: 3, kind: "unowned_decision", text: "who owns the schedule" });
@@ -159,7 +175,7 @@ test("the failure learner is told what failed, the labels, and what earlier atte
 
   assert.match(prompt, /Attempt 2 of the task TASK-005 "Provider health probes"/);
   assert.match(prompt, /What the loop observed: implementation timeout/);
-  for (const label of ["SPEC_CONTRADICTION", "VERIFIED_FACT", "UNOWNED_DECISION", "ENV"]) {
+  for (const label of ["SPEC_CONTRADICTION", "VERIFIED_FACT", "UNOWNED_DECISION", "OPERATOR_ACTION", "ENV"]) {
     assert.ok(prompt.includes(label), `missing label ${label}`);
   }
   assert.ok(prompt.includes("getPhase() returns MAX_VALUE - 1024"));

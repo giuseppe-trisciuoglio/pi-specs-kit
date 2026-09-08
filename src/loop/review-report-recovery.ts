@@ -10,7 +10,7 @@
  * a time instead, with no YAML involved: a shape the loop understands is worth
  * more than a shape the loop can validate.
  *
- * Deliberately conservative — it recognises the four keys the loop consumes and
+ * Deliberately conservative — it recognises the five keys the loop consumes and
  * ignores everything else, so a report that also happens to be valid YAML is
  * never routed through here.
  */
@@ -26,12 +26,18 @@ export interface RecoveredFrontmatter {
   issues: string[];
   routed: RecoveredEntry[];
   specConflicts: string[];
+  escalation: string[];
 }
 
 /** Keys whose value is a list of lines rather than a scalar. */
-type ListKey = "issues" | "routed" | "spec_conflicts";
+type ListKey = "issues" | "routed" | "spec_conflicts" | "escalation";
 
-const LIST_KEYS: ReadonlySet<string> = new Set<ListKey>(["issues", "routed", "spec_conflicts"]);
+const LIST_KEYS: ReadonlySet<string> = new Set<ListKey>([
+  "issues",
+  "routed",
+  "spec_conflicts",
+  "escalation",
+]);
 
 /** Strip the quoting and the trailing inline comment a hand-written value carries. */
 function scalar(raw: string): string {
@@ -74,6 +80,7 @@ interface Scan {
   issues: string[];
   routed: RecoveredEntry[];
   specConflicts: string[];
+  escalation: string[];
   /** The list section currently being filled, when any. */
   list: ListKey | null;
   /** The routed entry currently open, when inside one. */
@@ -100,6 +107,7 @@ function readEntryField(scan: Scan, key: string | undefined, value: string | und
 function addToList(scan: Scan, key: string, value: string): void {
   if (key === "issues") scan.issues.push(value);
   else if (key === "spec_conflicts") scan.specConflicts.push(value);
+  else if (key === "escalation") scan.escalation.push(value);
 }
 
 /** Apply one `- ` bullet line to the active list section. */
@@ -165,6 +173,7 @@ export function recoverFrontmatter(block: string): RecoveredFrontmatter | null {
     issues: [],
     routed: [],
     specConflicts: [],
+    escalation: [],
     list: null,
     entry: null,
   };
@@ -190,5 +199,6 @@ export function recoverFrontmatter(block: string): RecoveredFrontmatter | null {
     issues: scan.issues,
     routed: scan.routed,
     specConflicts: scan.specConflicts,
+    escalation: scan.escalation,
   };
 }

@@ -334,6 +334,20 @@ test("a review that reports a contradicted requirement cannot also pass it", asy
   assert.match(verdict.kind === "failed" ? verdict.feedback : "", /never\s+reword the requirement/);
 });
 
+test("a review that escalates to the operator ends the task instead of retrying it", async () => {
+  // The finding needs a person: an account, a credential, a signature. Sending
+  // the same tree back to the same reviewer reaches the same verdict and the
+  // task allowance pays for every round of it.
+  const h = await reportingHarness([
+    '---\nreview_status: FAILED\nsummary: "blocked"\nissues: []\nspec_conflicts: []\nescalation:\n  - "the credential has to be written into the vault by an operator"\nrouted: []\n---\n\nbody\n',
+  ]);
+
+  const verdict = await runReviewStep(h.deps, h.plan, TASK);
+
+  assert.equal(verdict.kind, "escalated");
+  assert.match(verdict.kind === "escalated" ? verdict.detail : "", /vault/);
+});
+
 test("a fix routed to a task that will not run is refused, not deferred", async () => {
   const h = await reportingHarness([
     '---\nreview_status: PASSED\nsummary: ok\nissues: []\nrouted:\n  - to: TASK-404\n    text: "align the contract"\n---\n\nbody\n',

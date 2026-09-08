@@ -5,6 +5,7 @@
 
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
+import { operatorOnlyFindings, operatorOnlyMessage } from "./agent-executability.ts";
 import { isTaskFileName } from "./task-files.ts";
 import { parseTaskFile, taskIdNumber, TaskParseError, type TaskFile } from "./task-parser.ts";
 
@@ -52,6 +53,14 @@ export async function loadTasks(specDir: string): Promise<TaskFile[]> {
       );
     }
     byId.set(task.frontmatter.id, name);
+    // A task no agent can close is refused here, with the other malformed
+    // files: the loop would otherwise discover it only after spending every
+    // attempt of the task on it, and the review would be right every time.
+    const operatorOnly = operatorOnlyFindings(task.frontmatter.title, task.body);
+    if (operatorOnly.length > 0) {
+      parseErrors.push(new Error(operatorOnlyMessage(filePath, operatorOnly)));
+      continue;
+    }
     tasks.push(task);
   }
   if (parseErrors.length > 0) {

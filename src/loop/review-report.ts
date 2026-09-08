@@ -15,6 +15,13 @@
  * to a later task rather than to the current one. They ride in the same
  * frontmatter so the loop can feed them to that later task's prompt without
  * the agent having to dig through earlier reviews by hand.
+ *
+ * And it may escalate. A finding no implementation pass can close — an
+ * account, a credential, a signature, access the agent does not have — used to
+ * travel as an ordinary issue, which sends the same tree back to the same
+ * reviewer until the task allowance is gone and the run stops on it. The
+ * `escalation` list is that finding's own channel: the loop ends the task on
+ * it and walks on to the next one.
  */
 
 import { readdir, readFile } from "node:fs/promises";
@@ -48,6 +55,11 @@ export interface ReviewReport {
    * a contradiction it reported itself.
    */
   specConflicts: string[];
+  /**
+   * Findings the reviewer says no implementation pass can close: they need a
+   * person. The loop ends the task on the first one and continues the run.
+   */
+  escalation: string[];
   /** Markdown body after the frontmatter. */
   body: string;
   /** True when the verdict was salvaged from a block that is not valid YAML. */
@@ -179,6 +191,7 @@ export function reviewFormatReminder(
     'summary: "one line on the outcome"',
     "issues: []",
     "spec_conflicts: []",
+    "escalation: []",
     "routed: []",
     "---",
     "",
@@ -235,6 +248,7 @@ export function parseReviewReport(content: string): ReviewReport | null {
         issues,
         routed: parseRouted(fm.routed),
         specConflicts: parseStringList(fm.spec_conflicts),
+        escalation: parseStringList(fm.escalation),
         body,
         recovered: false,
       };
@@ -249,6 +263,7 @@ export function parseReviewReport(content: string): ReviewReport | null {
     issues: salvaged.issues,
     routed: salvaged.routed.map((entry) => ({ to: entry.to, text: entry.text })),
     specConflicts: salvaged.specConflicts,
+    escalation: salvaged.escalation,
     body,
     recovered: true,
   };
@@ -282,6 +297,12 @@ export function reviewFeedback(report: ReviewReport): string {
         "honour them, or stop and report that the requirement itself has to change — never " +
         "reword the requirement or the contract to match the code:\n" +
         report.specConflicts.map((conflict) => `- ${conflict}`).join("\n"),
+    );
+  }
+  if (report.escalation.length > 0) {
+    parts.push(
+      "Findings the review escalated to the operator:\n" +
+        report.escalation.map((entry) => `- ${entry}`).join("\n"),
     );
   }
   if (parts.length === 0 && report.body) parts.push(report.body);

@@ -383,6 +383,15 @@ is the cheapest place to intervene.
    the escalation in the first `issues` entry rather than inventing a status
    for it. Automation reads this field and understands nothing else.
 
+   One kind of finding has its own list. When what blocks the task is an action
+   only a person can perform — an account, a credential written into a vault, a
+   signature, a purchase, physical or console access — the verdict stays
+   `FAILED` and the finding goes into `escalation`, one line each. No
+   implementation pass can close it, so the loop ends that task on the first
+   entry and continues with the next one instead of spending its remaining
+   attempts reaching the same verdict. Use it only for that: a fix the next
+   implementation could make is an `issues` entry, not an escalation.
+
    A non-blocking suggestion you route to a *later* task does not by itself flip
    the verdict, but a suggestion a prior review routed to *this* task that the
    implementation left unactioned is a blocking issue (`FAILED`) — unless a
@@ -406,7 +415,8 @@ is the cheapest place to intervene.
    The file **must open with the YAML frontmatter block of the template**,
    before the first heading, carrying `review_status`, a one-line `summary`, an
    `issues` list (`issues: []` when the review passes), a `spec_conflicts` list
-   (`[]` when nothing contradicts the spec) and an optional `routed` list.
+   (`[]` when nothing contradicts the spec), an `escalation` list (`[]` unless
+   the task needs an operator action) and an optional `routed` list.
    Every required fix listed in the body has a matching `issues` entry: that
    list is what the next implementation pass is given to work from.
 

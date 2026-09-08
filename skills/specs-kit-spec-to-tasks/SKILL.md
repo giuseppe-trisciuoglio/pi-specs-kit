@@ -621,6 +621,27 @@ Provide a summary that will inform task generation with the detected stack's spe
          ```
      - Example: TASK-007 depends on `BranchCreator.EnsureBranch(specID, specName)` from ADR-038. If ADR-038 is not yet implemented, this task must be flagged.
 
+1.5. **AGENT-EXECUTABILITY GATE (prevents tasks no agent can close)**:
+   - For every candidate task, each acceptance criterion and each Definition of Done item must be
+     satisfiable by an agent working in the repository — by writing a file, running a command, or
+     asserting a test.
+   - If any item requires an account, a credential, a signature, a purchase, a human decision or
+     access the agent does not have, **the task is not emitted**. There is no tag that makes such a
+     task runnable: a title carrying `[PROCUREMENT]` or `[MANUAL]` is the signal that the task
+     should not have been generated at all.
+   - The underlying need does not disappear, it moves out of the loop's reach:
+     - record it in the `## Preconditions (operator)` section of the tasks document, one line per
+       action a person must have completed before the run starts;
+     - the agent-executable residue of that work, if any, becomes an ordinary task — "author the ADR
+       recording the chosen provider and its verification" is a good task; "put the credential in the
+       vault" is not, and belongs in the preconditions;
+     - a task that consumes a precondition states its resolution in its DoR, exactly as it does for a
+       task dependency.
+   - Why this matters: the implementation cannot satisfy such a criterion, the review is right to
+     reject it every time, and the retries spend the task's whole spawn allowance before the run
+     stops on it — taking every task after it with it. A task file that carries operator-only work is
+     also refused at load, before a single agent session is spent.
+
 1.4. **If Ontology context is available** (from Phase 1.5):
    - Use domain terms from `docs/specs/ontology.md` consistently in task titles, descriptions, and acceptance criteria
    - Ensure task descriptions use the canonical term from the glossary (avoid synonyms not defined in the ontology)
@@ -643,6 +664,9 @@ Provide a summary that will inform task generation with the detected stack's spe
    - **Dependencies**: List task IDs this depends on (if any)
    - **Cross-Boundary**: YES/NO — whether this task modifies files outside the feature's primary bounded context
    - **External Dependency Risk**: YES/NO — whether this task depends on an unverified external interface
+   - **Agent-Executable**: every AC and DoD item is satisfiable by an agent (see 1.5). A task that is
+     not agent-executable is not emitted: its operator half goes to `## Preconditions (operator)` and
+     its agent half, if any, becomes an ordinary task
 
 3. Map dependencies explicitly:
    - Identify which tasks must complete before others can start
@@ -935,7 +959,13 @@ Provide a summary that will inform task generation with the detected stack's spe
 
 5. Create the task list index file: `docs/specs/[id]/YYYY-MM-DD--feature-name--tasks.md`
 
-   Read the task-list template at `templates/task-list.md` (in this skill directory) and use it as the document structure. Fill in the task index, codebase analysis summary, and task type summary.
+   Read the task-list template at `templates/task-list.md` (in this skill directory) and use it as the document structure. Fill in the task index, codebase analysis summary, operator preconditions, and task type summary.
+
+   **`## Preconditions (operator)`** carries everything the agent-executability gate (Phase 4, 1.5)
+   kept out of the task list: one line per action a person must have completed before the run starts
+   (an account, a credential in the vault, a signed contract, console access), naming which tasks
+   depend on it. Write "None." when there is nothing. This section is never a task and never gets a
+   task file: the loop does not read it, the operator does.
 
    <details>
    <summary>Legacy task-list template reference (deprecated — primary template path: templates/task-list.md)</summary>

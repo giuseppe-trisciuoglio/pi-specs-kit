@@ -29,6 +29,10 @@ imp-requirements: [${IMP_REQUIREMENTS}]
 
 ## Acceptance Criteria
 
+<!-- Every criterion below is satisfiable by an agent in this repository: writing a file, running a
+     command, asserting a test. Anything needing an account, a credential, a signature or human
+     access belongs to "Preconditions (operator)" in the tasks document, not here. -->
+
 - [ ] ${ACCEPTANCE_CRITERION_1}
 - [ ] ${ACCEPTANCE_CRITERION_2}
 - [ ] ${ACCEPTANCE_CRITERION_3}
@@ -40,6 +44,7 @@ Before starting this task, ensure:
 - [ ] Technical context, patterns, and integration points are understood.
 - [ ] Files to create/modify are identified and accessible.
 - [ ] Required tooling, commands, and local prerequisites are available.
+- [ ] Operator preconditions this task consumes (see "Preconditions (operator)" in the tasks document) are resolved.
 - [ ] Open questions or blockers have been resolved.
 
 ## Technical Context (from Codebase Analysis)
@@ -90,6 +95,9 @@ This section describes **what** to test, not **how** to implement test code.
    - [ ] Test coverage for classes with business logic is >= 80%.
 
 ## Definition of Done (DoD)
+
+<!-- Same rule as the acceptance criteria: every item is closable by an agent. No item may depend on
+     an operator action, a credential, a purchase or a signature. -->
 
 This task is complete when:
 - [ ] Functional description is implemented end-to-end.

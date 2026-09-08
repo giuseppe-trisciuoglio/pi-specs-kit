@@ -82,6 +82,7 @@ const EDGE_DECLARATIONS: readonly TaskEdge[] = [
 
   { from: "review", to: "review_gate", type: "advance", when: "always" },
 
+  { from: "review_gate", to: "task_failed", type: "operator-escalation", when: "verdict_escalated" },
   { from: "review_gate", to: "task_failed", type: "report-unusable", when: "verdict_report_unusable" },
   { from: "review_gate", to: "task_failed", type: "stall-guard", when: "verdict_failed_same_feedback" },
   { from: "review_gate", to: "task_failed", type: "attempts-exhausted", when: "verdict_retry_attempts_exhausted" },
@@ -97,6 +98,7 @@ const EDGE_DECLARATIONS: readonly TaskEdge[] = [
   { from: "update_done", to: "checkpoint", type: "advance", when: "always" },
   { from: "checkpoint", to: "task_done", type: "advance", when: "always" },
 
+  { from: "task_failed", to: "task_done", type: "operator-escalation", when: "operator_wall" },
   { from: "task_failed", to: "task_done", type: "continue-on-failure", when: "continue_on_failure" },
   { from: "task_failed", to: "task_halted", type: "halt-on-failure", when: "halt_on_failure" },
 ];
