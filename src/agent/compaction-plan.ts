@@ -154,25 +154,29 @@ export function messageText(message: PlanMessage | undefined): string {
     .join("");
 }
 
+/** One block as text: its own text when it has one, its serialized form otherwise. */
+function renderBlock(block: PlanBlock): string {
+  const text = typeof block.text === "string" ? block.text : safeJson(block);
+  return block.type && block.type !== "text" ? `[${block.type}] ${text}` : text;
+}
+
 /**
- * The elided conversation as text for the summarizer. Blocks are capped
- * individually: a single tool result of half a million characters would
- * otherwise decide the size of the summarization request on its own.
+ * The body of one message, capped: a single tool result of half a million
+ * characters would otherwise decide the size of the summarization request on
+ * its own.
  */
+function renderMessage(message: PlanMessage): string {
+  const { content } = message;
+  if (typeof content === "string") return truncate(content, RENDERED_BLOCK_CHARS);
+  if (!Array.isArray(content)) return "";
+  return truncate(content.map(renderBlock).join("\n"), RENDERED_BLOCK_CHARS);
+}
+
+/** The elided conversation as text for the summarizer. */
 export function renderConversation(messages: readonly PlanMessage[]): string {
   const lines: string[] = [];
   for (const message of messages) {
-    const { content } = message;
-    const parts: string[] = [];
-    if (typeof content === "string") {
-      parts.push(content);
-    } else if (Array.isArray(content)) {
-      for (const block of content) {
-        const text = typeof block.text === "string" ? block.text : safeJson(block);
-        parts.push(block.type && block.type !== "text" ? `[${block.type}] ${text}` : text);
-      }
-    }
-    const body = truncate(parts.join("\n"), RENDERED_BLOCK_CHARS);
+    const body = renderMessage(message);
     if (body.trim() !== "") lines.push(`## ${message.role}\n${body}`);
   }
   return lines.join("\n\n");
