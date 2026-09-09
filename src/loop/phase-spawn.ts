@@ -153,6 +153,14 @@ export interface PhaseSpawnerDeps {
 /** Spawns agent subprocesses and runs the learner and hook subroutines. */
 export class PhaseSpawner {
   readonly #deps: PhaseSpawnerDeps;
+  /**
+   * Roles whose primary model already died of an environment failure in this
+   * run, mapped to the model that died. Run-scoped memory: it is never
+   * written to the fix plan, so a fresh run re-probes the primary in case the
+   * access it lost has come back. Keyed by the model string too, so a
+   * configuration reload that names a different primary is probed again.
+   */
+  readonly #deadPrimary = new Map<RoleName, string>();
 
   constructor(deps: PhaseSpawnerDeps) {
     this.#deps = deps;
@@ -168,6 +176,16 @@ export class PhaseSpawner {
     const { taskId, label, role } = request;
     const roleConfig = this.#deps.config.roles[role];
     if (!roleConfig.model || roleConfig.model === "auto") this.#deps.warnAutoModel(role);
+    const escalation = this.#escalationModel(role, roleConfig.model);
+    // The run already paid for this diagnosis: a primary that answered with an
+    // environment failure will answer the next phase the same way, so the
+    // attempt against it is skipped for the rest of the run and only the
+    // fallback is spawned.
+    if (escalation !== null && this.#deadPrimary.get(role) === roleConfig.model) {
+      return await this.#spawnOnce(
+        request, escalation, systemPromptOverride, signal, captureText, meterHandle,
+      );
+    }
     const first = await this.#spawnOnce(
       request, roleConfig.model, systemPromptOverride, signal, captureText, meterHandle,
     );
@@ -177,13 +195,22 @@ export class PhaseSpawner {
     // about the prompt. When the role declares a second model, exactly one
     // spawn goes to it before the usual routing takes over — a ladder of
     // fallbacks would spend the run budget proving the same outage per task.
-    const fallback = this.#escalationModel(role, roleConfig.model);
-    if (fallback === null) return first;
-    this.#deps.onNotify(await this.#escalationNotice(taskId, label, failure, roleConfig.model, fallback), "warning");
+    if (escalation === null) return first;
+    this.#deps.onNotify(await this.#escalationNotice(taskId, label, failure, roleConfig.model, escalation), "warning");
     const second = await this.#spawnOnce(
-      request, fallback, systemPromptOverride, signal, captureText, meterHandle,
+      request, escalation, systemPromptOverride, signal, captureText, meterHandle,
     );
-    return classifyPhaseFailure(second.outcome) === null ? second : first;
+    if (classifyPhaseFailure(second.outcome) !== null) return first;
+    // Only an environment failure earns the memory: a prompt the primary
+    // could not answer says nothing about the next phase's prompt.
+    if (failure.environment && roleConfig.model) {
+      this.#deadPrimary.set(role, roleConfig.model);
+      this.#deps.onNotify(
+        `the ${role} role stays on the fallback model ${escalation} for the rest of this run: ${roleConfig.model} failed with ${failure.kind}`,
+        "warning",
+      );
+    }
+    return second;
   }
 
   /** The role's escalation model, when it differs from the one just tried. */
