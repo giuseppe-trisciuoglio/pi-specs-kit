@@ -123,6 +123,8 @@ run:
   max_spawns_per_task: 8
   max_spawns_per_run: 60
   max_run_duration: 6h
+  auto_compact: false
+  auto_compact_threshold: 50
   protect_spec_artifacts: true
 hooks:
   timeout: 240s
@@ -172,6 +174,17 @@ target. The attempt comes back naming the files, with the two ways out —
 change the code, or report the conflict for a decision taken outside the
 session. Working documents (decision log, task files, plan, README) stay
 writable. Turn the flag off for a run whose job is to revise those documents.
+
+**Compacting a phase mid-run.** `run.auto_compact` (off by default) lets each
+phase summarize its own conversation once it passes `run.auto_compact_threshold`
+percent of the model context window, instead of running to the edge of the
+window as the agent CLI would. The phase prompt and the recent turns are kept
+whole, everything before them is replaced by a summary written by the phase
+model, and each later request reuses that summary. It costs one extra request
+per compaction, which is why it is opt-in; the threshold is a whole number
+between 10 and 90, and anything outside that band falls back to 50. A phase that
+cannot compact — no summary, a failing provider — keeps running on its full
+context and says so on its log.
 
 **When a review contradicts the spec.** A review report may carry a
 `spec_conflicts` list. A non-empty list is read as a rejection whatever

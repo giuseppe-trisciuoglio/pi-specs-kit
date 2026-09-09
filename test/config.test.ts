@@ -615,3 +615,40 @@ test("the generated config documents the spec artifacts guard", async () => {
     assert.equal(doc.run.protect_spec_artifacts, DEFAULT_RUN_CONFIG.protectSpecArtifacts);
   });
 });
+
+test("the auto-compact threshold defaults, and out-of-band values fall back", async () => {
+  // A phase compacting at 1% would spend its run summarizing, and one
+  // compacting at 99% never gets there before the agent CLI does: neither
+  // number is what the operator meant, so the default answers for both.
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, CONFIG_FILE_NAME);
+
+    await writeFile(file, "version: \"1\"\n");
+    const fresh = (await loadSpecsKitConfig(dir)).run;
+    assert.equal(fresh.autoCompact, false);
+    assert.equal(fresh.autoCompactThresholdPercent, 50);
+
+    await writeFile(file, "run:\n  auto_compact: true\n  auto_compact_threshold: 70\n");
+    const configured = (await loadSpecsKitConfig(dir)).run;
+    assert.equal(configured.autoCompact, true);
+    assert.equal(configured.autoCompactThresholdPercent, 70);
+
+    for (const bad of ["0", "5", "95", "'50'", "[]"]) {
+      await writeFile(file, `run:\n  auto_compact_threshold: ${bad}\n`);
+      assert.equal((await loadSpecsKitConfig(dir)).run.autoCompactThresholdPercent, 50, bad);
+    }
+  });
+});
+
+test("the generated config documents the auto-compact option", async () => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, CONFIG_FILE_NAME);
+    await ensureConfigFile(file);
+    const doc = YAML.parse(await readFile(file, "utf8")) as {
+      run: { auto_compact: boolean; auto_compact_threshold: number };
+    };
+
+    assert.equal(doc.run.auto_compact, DEFAULT_RUN_CONFIG.autoCompact);
+    assert.equal(doc.run.auto_compact_threshold, DEFAULT_RUN_CONFIG.autoCompactThresholdPercent);
+  });
+});

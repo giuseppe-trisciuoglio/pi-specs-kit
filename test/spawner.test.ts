@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runAgentPhase, WITHHELD_TOOLS } from "../src/agent/spawner.ts";
+import { AUTO_COMPACT_EXTENSION, runAgentPhase, WITHHELD_TOOLS } from "../src/agent/spawner.ts";
 import type { PiStreamEvent } from "../src/agent/json-stream.ts";
 import { assistantText } from "../src/agent/stream-format.ts";
 
@@ -101,6 +101,33 @@ test("model 'auto' and unset thinking level omit the flags", async () => {
   assert.ok(!argv.includes("--model"));
   assert.ok(!argv.includes("--thinking"));
   assert.ok(!argv.includes("--append-system-prompt"));
+});
+
+test("the auto-compact threshold travels as an extension and an env var", async () => {
+  const piBin = writeFakePi(`
+process.stdout.write("ARGV:" + JSON.stringify(process.argv.slice(2)) + "\\n");
+process.stdout.write("ENV:" + JSON.stringify(process.env.SPECS_KIT_AUTO_COMPACT_PERCENT ?? null) + "\\n");
+`);
+  const echoed = async (autoCompactPercent?: number): Promise<{ argv: string[]; env: string | null }> => {
+    const events: PiStreamEvent[] = [];
+    await runAgentPhase({ prompt: "p", cwd: tmpdir(), timeoutMs: 10_000, piBin, autoCompactPercent, onEvent: (e) => events.push(e) });
+    const lines = events.filter((e) => e.type === "unparsed_line").map((e) => e.line);
+    return {
+      argv: JSON.parse(lines.find((l) => l.startsWith("ARGV:"))!.slice("ARGV:".length)) as string[],
+      env: JSON.parse(lines.find((l) => l.startsWith("ENV:"))!.slice("ENV:".length)) as string | null,
+    };
+  };
+
+  const on = await echoed(50);
+  assert.equal(on.argv[on.argv.indexOf("--extension") + 1], AUTO_COMPACT_EXTENSION);
+  assert.equal(on.env, "50");
+  // The prompt stays last whatever else was pushed onto the command line.
+  assert.equal(on.argv[on.argv.length - 1], "p");
+
+  // Off: the subprocess is byte-identical to a run that never heard of the option.
+  const off = await echoed();
+  assert.ok(!off.argv.includes("--extension"));
+  assert.equal(off.env, null);
 });
 
 test("stopReason error propagates to the outcome", async () => {
