@@ -12,6 +12,7 @@ import {
   type TaskFile,
 } from "../src/tasks/task-parser.ts";
 import { dependencyWarnings, filterRange, loadTasks, taskBoundNumber } from "../src/tasks/task-loader.ts";
+import { TaskValidationError, taskValidationLines } from "../src/tasks/task-validation.ts";
 
 const VALID = `---
 id: TASK-001
@@ -275,7 +276,13 @@ test("loadTasks rejects two files declaring the same task id", async () => {
     const dir = path.join(specDir, "tasks");
     await writeFile(path.join(dir, "TASK-001.md"), taskFile("TASK-001", "One"), "utf8");
     await writeFile(path.join(dir, "TASK-001--copy.md"), taskFile("TASK-001", "One again"), "utf8");
-    await assert.rejects(() => loadTasks(specDir), /duplicate task id TASK-001/);
+    await assert.rejects(() => loadTasks(specDir), (err: unknown) => {
+      assert.ok(err instanceof TaskValidationError);
+      assert.deepEqual(err.entries, [
+        "tasks/TASK-001--copy.md and tasks/TASK-001.md: duplicate task id TASK-001",
+      ]);
+      return true;
+    });
   });
 });
 
@@ -288,9 +295,12 @@ test("loadTasks reports every invalid task file in one error", async () => {
     await assert.rejects(
       () => loadTasks(specDir),
       (err: unknown) => {
-        const message = (err as Error).message;
-        assert.match(message, /TASK-002\.md.*invalid value: done/);
-        assert.match(message, /TASK-003\.md.*invalid value: blocked/);
+        // The caller receives the entries as a list: it never has to split a
+        // joined message back into the files it names.
+        assert.ok(err instanceof TaskValidationError);
+        assert.equal(err.entries.length, 2);
+        assert.match(err.entries[0], /^tasks\/TASK-002\.md: field "status": invalid value: done/);
+        assert.match(err.entries[1], /^tasks\/TASK-003\.md: field "status": invalid value: blocked/);
         return true;
       },
     );
@@ -326,4 +336,17 @@ test("loadTasks skips review reports and their per-attempt archives", async () =
     const tasks = await loadTasks(specDir);
     assert.deepEqual(tasks.map((t) => t.frontmatter.id), ["TASK-001"]);
   });
+});
+
+test("the refusal renders one line per entry, continuations indented under it", () => {
+  const lines = taskValidationLines([
+    'tasks/TASK-002.md: field "status": invalid value: done',
+    "tasks/TASK-007.md: this task cannot be completed by an agent:\n  - line 3 requires a human: [ ] A human signs off.",
+  ]);
+  assert.deepEqual(lines, [
+    "[specs-kit] 2 task file(s) failed validation, run not started:",
+    '  - tasks/TASK-002.md: field "status": invalid value: done',
+    "  - tasks/TASK-007.md: this task cannot be completed by an agent:",
+    "    - line 3 requires a human: [ ] A human signs off.",
+  ]);
 });

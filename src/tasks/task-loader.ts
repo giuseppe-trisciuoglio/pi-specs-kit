@@ -8,6 +8,7 @@ import path from "node:path";
 import { operatorOnlyFindings, operatorOnlyMessage } from "./agent-executability.ts";
 import { isTaskFileName } from "./task-files.ts";
 import { parseTaskFile, taskIdNumber, TaskParseError, type TaskFile } from "./task-parser.ts";
+import { TaskValidationError } from "./task-validation.ts";
 
 /**
  * Load every task file in `<specDir>/tasks/` (review reports and any other
@@ -26,7 +27,10 @@ export async function loadTasks(specDir: string): Promise<TaskFile[]> {
 
   const tasks: TaskFile[] = [];
   const byId = new Map<string, string>();
-  const parseErrors: Error[] = [];
+  // One entry per thing the operator has to fix, each naming its file with a
+  // path short enough to read in a notification.
+  const problems: string[] = [];
+  const relative = (name: string): string => path.join(path.basename(tasksDir), name);
   for (const name of entries) {
     if (!isTaskFileName(name)) continue;
     const filePath = path.join(tasksDir, name);
@@ -37,7 +41,7 @@ export async function loadTasks(specDir: string): Promise<TaskFile[]> {
       // One malformed file must not hide the others: report every invalid
       // file at once so the user can fix the whole batch in one pass.
       if (err instanceof TaskParseError) {
-        parseErrors.push(err);
+        problems.push(`${relative(name)}: field "${err.field}": ${err.reason}`);
         continue;
       }
       throw err;
@@ -47,10 +51,10 @@ export async function loadTasks(specDir: string): Promise<TaskFile[]> {
     // counts both. Fail loudly instead of silently dropping a task body.
     const previous = byId.get(task.frontmatter.id);
     if (previous !== undefined) {
-      throw new Error(
-        `duplicate task id ${task.frontmatter.id} in ${path.join(specDir, "tasks")}: ` +
-          `${previous} and ${name} declare the same id`,
+      problems.push(
+        `${relative(previous)} and ${relative(name)}: duplicate task id ${task.frontmatter.id}`,
       );
+      continue;
     }
     byId.set(task.frontmatter.id, name);
     // A task no agent can close is refused here, with the other malformed
@@ -58,13 +62,13 @@ export async function loadTasks(specDir: string): Promise<TaskFile[]> {
     // attempt of the task on it, and the review would be right every time.
     const operatorOnly = operatorOnlyFindings(task.frontmatter.title, task.body);
     if (operatorOnly.length > 0) {
-      parseErrors.push(new Error(operatorOnlyMessage(filePath, operatorOnly)));
+      problems.push(operatorOnlyMessage(relative(name), operatorOnly));
       continue;
     }
     tasks.push(task);
   }
-  if (parseErrors.length > 0) {
-    throw new Error(parseErrors.map((err) => err.message).join("\n"));
+  if (problems.length > 0) {
+    throw new TaskValidationError(problems);
   }
   return tasks.sort((a, b) => a.num - b.num);
 }

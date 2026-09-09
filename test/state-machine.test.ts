@@ -261,6 +261,38 @@ test("a spec whose tasks dir holds no task file halts with a clear error", async
   assert.match(result.error ?? "", /no task files under/);
 });
 
+test("a bundle with several invalid task files is reported one line at a time", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "state-machine-"));
+  tmpDirs.push(root);
+  const dir = path.join(root, "docs/specs/001-spec", "tasks");
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, "TASK-001.md"), taskContent(1), "utf8");
+  await writeFile(path.join(dir, "TASK-001--copy.md"), taskContent(1), "utf8");
+  await writeFile(path.join(dir, "TASK-002.md"), taskContent(2).replace("status: pending", "status: done"), "utf8");
+  await writeFile(path.join(dir, "TASK-003.md"), "no frontmatter here\n", "utf8");
+
+  const notices: string[] = [];
+  const config = await loadSpecsKitConfig(root);
+  const engine = new LoopEngine(
+    { config, runHooks: async () => [], now: () => FIXED_NOW },
+    { onNotify: (message, type) => notices.push(`${type}: ${message}`) },
+  );
+  const result = await engine.start({ specDir: path.join(root, "docs/specs/001-spec") });
+
+  assert.equal(result.reason, "halted");
+  assert.equal(result.error, "3 task file(s) failed validation, run not started");
+  assert.match(notices[0], /^error: \[specs-kit\] 3 task file\(s\) failed validation/);
+  // One notification per offending file, each carrying its own reason.
+  assert.ok(
+    notices.some((line) => /tasks\/TASK-001.* and tasks\/TASK-001.*: duplicate task id TASK-001/.test(line)),
+    notices.join("\n"),
+  );
+  assert.ok(notices.some((line) => /TASK-002\.md: field "status": invalid value: done/.test(line)));
+  assert.ok(notices.some((line) => /TASK-003\.md: field "frontmatter": --- delimiters not found/.test(line)));
+  // The blob the operator could not read must not be one of them.
+  assert.ok(notices.every((line) => line.split("\n").length === 1), notices.join("|"));
+});
+
 test("bare task numbers are accepted as range bounds", async () => {
   const { root, specDir } = await createSpec();
   const run = await runLoop(

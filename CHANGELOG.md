@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A refused task bundle is readable.** When a spec's task files fail
+  validation, the loop no longer reports one joined blob the notification
+  channel truncates: the individual entries travel as a list and are shown one
+  line at a time, each naming its file (relative to the spec) and its reason.
+  Duplicate ids and operator-only tasks use the same path, and a duplicate id
+  no longer hides the files loaded after it. The run itself reports the count.
+
 ### Added
 
 - **Failure memory.** A failed implementation attempt now goes through a

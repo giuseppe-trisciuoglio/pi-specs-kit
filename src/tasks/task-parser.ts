@@ -57,12 +57,16 @@ export interface TaskFile {
 export class TaskParseError extends Error {
   public readonly file: string;
   public readonly field: string;
+  /** The failure alone, without the file and field prefix, so a reporter
+   * can rebuild the message with a shorter path. */
+  public readonly reason: string;
 
   constructor(file: string, field: string, message: string) {
     super(`${file}: field "${field}": ${message}`);
     this.name = "TaskParseError";
     this.file = file;
     this.field = field;
+    this.reason = message;
   }
 }
 
