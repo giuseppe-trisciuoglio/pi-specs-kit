@@ -33,6 +33,7 @@ const EDGE_TYPE_VOCABULARY: readonly EdgeType[] = [
   "mode-skip",
   "continue-on-failure",
   "halt-on-failure",
+  "operator-escalation",
 ];
 
 test("every edge endpoint is a declared node", () => {

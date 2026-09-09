@@ -64,6 +64,11 @@ The command evaluates four main dimensions:
    - Presence of testable criteria
    - Measurability of criteria
    - Coverage of key functionalities
+   - **Agent-executability**: every criterion is satisfiable by an agent working in the
+     repository (writing a file, running a command, asserting a test). A criterion that
+     needs an account, a credential, a signature, a purchase, physical access or a human
+     decision cannot be closed by the loop: it belongs to the operator preconditions of the
+     tasks document, and the same rule applies to any generated task that carries it
 
 4. **Edge Cases Coverage**
    - Edge cases identified
@@ -276,7 +281,7 @@ The scan taxonomy is identical to v3.0:
 - Edge Cases and Error Handling
 - Constraints and Trade-offs
 - Terminology and Consistency
-- Completion Criteria (AC taxonomy, Bounded Context)
+- Completion Criteria (AC taxonomy, Bounded Context, agent-executability)
 - Architecture Alignment (if architecture.md exists)
 - Ontology Consistency (if ontology.md exists)
 

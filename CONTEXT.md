@@ -53,12 +53,20 @@ Agentic node that runs on a failed attempt, before the next one: it reads what s
 _Avoid_: failure learner, error learner
 
 **Blocker**:
-What stopped an attempt, recorded per task in `state.blockers` and injected into the next attempt's prompt in a block separate from memory. It has a kind — `verified_fact`, `spec_contradiction`, `unowned_decision`, `env` — and the kind is what decides the loop's response. Run memory: pruned when the task passes review, and reaches the project learnings only through the Learner.
+What stopped an attempt, recorded per task in `state.blockers` and injected into the next attempt's prompt in a block separate from memory. It has a kind — `verified_fact`, `spec_contradiction`, `unowned_decision`, `operator_action`, `env` — and the kind is what decides the loop's response. Run memory: pruned when the task passes review, and reaches the project learnings only through the Learner.
 _Avoid_: failure learning, memory (that one is project memory), issue
 
 **Repeated wall**:
-The same blocker of kind `spec_contradiction` or `unowned_decision` in two consecutive attempts of the same task: no further attempt can resolve it, so the task closes immediately and the operator receives the blocker text instead of paying for another agent session.
+The same blocker of kind `spec_contradiction`, `unowned_decision` or `operator_action` in two consecutive attempts of the same task: no further attempt can resolve it, so the task closes immediately and the operator receives the blocker text instead of paying for another agent session.
 _Avoid_: escalation (too generic), definitive block
+
+**Operator wall**:
+Work only a person can perform — an account, a credential, a signature, a purchase, physical or console access — discovered while a task runs, either through the review report's `escalation` list or through an `operator_action` blocker hit twice. It closes that task and, alone among the failures, never stops the run: the tasks that follow are not the ones missing a credential.
+_Avoid_: manual task, procurement task (such a task is never generated), blocked task
+
+**Operator precondition**:
+An action a person must have completed before the run starts, listed in the `## Preconditions (operator)` section of the tasks document. It is never a task and has no task file; the tasks that consume it name its resolution in their Definition of Ready, the way they name a dependency.
+_Avoid_: manual task, setup task, prerequisite task
 
 **Context reconciliation**:
 Opt-in extension of the sync phase's mandate: when `run.reconcile_context` is on and there are consolidated learnings, sync patches the single contradicted instruction in a source document (AGENTS.md, architecture.md, ontology.md, .pi/rules) and reports every patch in its summary. By default the authoritative documents are not modified by the loop.

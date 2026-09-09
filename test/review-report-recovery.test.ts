@@ -96,3 +96,19 @@ test("the reminder names the rule that breaks and the file to repair", () => {
     assert.match(text, /review_status: "PASSED"/, "the skeleton quotes every value, status included");
   }
 });
+
+test("an escalation survives a block that is not valid YAML", () => {
+  const recovered = recoverFrontmatter(
+    [
+      "review_status: FAILED",
+      "summary: blocked on an operator step",
+      "issues: []",
+      "escalation:",
+      "  - the credential has to be written into the vault: only an operator can",
+      "routed: []",
+    ].join("\n"),
+  );
+
+  assert.ok(recovered);
+  assert.deepEqual(recovered.escalation, ["the credential has to be written into the vault: only an operator can"]);
+});

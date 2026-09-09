@@ -18,10 +18,21 @@
  * or a decision nobody made cannot be solved by the agent trying harder — it
  * is escalated to the operator instead.
  */
-export type BlockerKind = "spec_contradiction" | "verified_fact" | "unowned_decision" | "env";
+export type BlockerKind =
+  | "spec_contradiction"
+  | "verified_fact"
+  | "unowned_decision"
+  | "operator_action"
+  | "env";
 
 /** The kinds no retry can resolve on its own: hitting one twice ends the task. */
-export const WALL_KINDS: readonly BlockerKind[] = ["spec_contradiction", "unowned_decision"];
+export const WALL_KINDS: readonly BlockerKind[] = [
+  "spec_contradiction",
+  "unowned_decision",
+  // An action only a person can perform is the purest of the three: no spawn
+  // of any model has the account, the credential or the hands to close it.
+  "operator_action",
+];
 
 export interface Blocker {
   /** Task the blocker belongs to; blockers are per task, never global. */
@@ -54,6 +65,7 @@ const KIND_BY_LABEL: Readonly<Record<string, BlockerKind>> = {
   SPEC_CONTRADICTION: "spec_contradiction",
   VERIFIED_FACT: "verified_fact",
   UNOWNED_DECISION: "unowned_decision",
+  OPERATOR_ACTION: "operator_action",
   ENV: "env",
 };
 
@@ -216,7 +228,7 @@ export function normalizeBlockers(value: unknown): Blocker[] | undefined {
 /**
  * Prompt of the failure learner. It runs on a dead attempt, so it is shown
  * what failed rather than a diff that passed: the point is to name the wall
- * before the next spawn walks into it, and to name it as one of the four
+ * before the next spawn walks into it, and to name it as one of the five
  * kinds, because the kind is what the loop routes on.
  */
 export function buildFailureLearnerPrompt(input: {
@@ -237,7 +249,9 @@ export function buildFailureLearnerPrompt(input: {
     `- ${BLOCKER_LABELS[1]}: a technical fact established at cost (a value, a signature, an`,
     "  API behaviour verified by reading the source), stated so it can be reused verbatim.",
     `- ${BLOCKER_LABELS[2]}: a design decision the task leaves to whoever implements it.`,
-    `- ${BLOCKER_LABELS[3]}: something about the environment (build, network, tooling).`,
+    `- ${BLOCKER_LABELS[3]}: an action only a human can perform: a credential, an account,`,
+    "  a signature, a purchase, physical or console access.",
+    `- ${BLOCKER_LABELS[4]}: something about the environment (build, network, tooling).`,
     "",
     "Report only what actually stopped this attempt. Do not propose a plan, do not modify",
     "any file, and do not restate the task.",

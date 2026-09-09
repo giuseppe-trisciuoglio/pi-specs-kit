@@ -102,6 +102,7 @@ export async function consumeRunNode(node: RunNode, facts: RunLevelFacts): Promi
     isLastTask: false,
     continueOnFailure: false,
     blockerWall: false,
+    operatorWall: false,
     stopping: facts.stopping,
     syncRan: facts.syncRan,
     hasLastCompleted: facts.hasLastCompleted,

@@ -10,6 +10,17 @@
 - **Key Patterns**: ${KEY_PATTERNS}
 - **Integration Points**: ${INTEGRATION_POINTS}
 
+## Preconditions (operator)
+
+Actions only a person can perform, done **before** the run starts. They are not tasks and have no
+task file: an agent cannot close them, and a task that waited on one would spend its whole attempt
+allowance failing review.
+
+- ${OPERATOR_PRECONDITION_1} — required by ${DEPENDENT_TASKS_1}
+- ${OPERATOR_PRECONDITION_2} — required by ${DEPENDENT_TASKS_2}
+
+<!-- Write "None." when the feature needs no operator action. -->
+
 ## Task Index
 
 | Task ID | Title | Technical Focus | Status | Dependencies |

@@ -20,6 +20,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consecutive attempts ends the task and names the wall to the operator
   instead of spending the next spawn.
 
+- **A task no agent can finish never reaches the loop.** The spec-to-tasks
+  skill gained an agent-executability gate: an acceptance criterion or a DoD
+  item that needs an account, a credential, a signature, a purchase or human
+  access does not become a task — it goes to a `## Preconditions (operator)`
+  section of the tasks document, while its agent-executable residue (an ADR, a
+  matrix row) stays an ordinary task. A task file that carries such work anyway
+  is refused at load, naming the line, before a single agent session is spent.
+  The review report gained an `escalation` list for the case discovered
+  mid-review, and the failure learner an `operator_action` blocker kind, which
+  is a wall: hitting it twice ends the task before the spawn budget does. Such
+  a task ends, the run continues whatever `continue_on_failure` says, and the
+  message names the missing operator action instead of an exhausted budget.
+
 - **Escalation model per role.** `agents.<role>_fallback_model` names a
   second model the phase is spawned on, once, when the primary comes back
   refused (quota, auth, unknown model) or silent. One attempt, not a ladder:

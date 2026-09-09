@@ -22,6 +22,7 @@ function makeRuntime(overrides: Partial<TaskRuntime> = {}): TaskRuntime {
     routedSuggestions: [],
     failureDetail: null,
     blockerWall: null,
+    operatorWall: null,
     runState: { syncRan: false, lastCompleted: null },
     ...overrides,
   };

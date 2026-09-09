@@ -64,6 +64,10 @@ const registry = {
   // Leaving the review gate, on the verdict it just dispatched. A rejection
   // with the same feedback as the previous round means the implementation is
   // not acting on it: another round would reproduce the same pair of outputs.
+  // An escalation is read before the rejection guards: the reviewer named
+  // something no implementation pass can close, so neither the feedback
+  // comparison nor the remaining attempts have anything to decide.
+  verdict_escalated: (ctx) => ctx.verdict?.kind === "escalated",
   verdict_report_unusable: (ctx) => ctx.verdict?.kind === "reportUnusable",
   verdict_failed_same_feedback: (ctx) =>
     ctx.verdict?.kind === "failed" && ctx.feedback !== null && ctx.feedback === ctx.verdict.feedback,
@@ -82,7 +86,10 @@ const registry = {
   sync_not_wanted: (ctx) => ctx.mode === "fast" && !ctx.isLastTask,
 
   // The failure funnel decides once, for every non-pass outcome, whether the
-  // run moves on or halts.
+  // run moves on or halts. An operator wall answers ahead of the setting: the
+  // task needs a person, the tasks after it do not, and halting the run on it
+  // costs every one of them.
+  operator_wall: (ctx) => ctx.operatorWall,
   continue_on_failure: (ctx) => ctx.continueOnFailure,
   halt_on_failure: (ctx) => !ctx.continueOnFailure,
 

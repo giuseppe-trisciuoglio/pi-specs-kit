@@ -242,6 +242,12 @@ the question is "does this specification hold together", not "does the code matc
 - Do not invent requirements the specification never claimed. Judge the work against
   what it says it does.
 - Do not report style, wording or formatting.
+- Report any task that no agent can complete: an acceptance criterion or a Definition of Done
+  item that needs an account, a credential in a vault, a signature, a purchase, physical or
+  console access, or a human decision. Such a task is a BLOCKER — the implementation cannot
+  satisfy it, the review is right to reject it every time, and the retries spend the whole task
+  allowance before the run stops on it. The operator half belongs to the "Preconditions
+  (operator)" section of the tasks document; only the part an agent can do stays a task.
 - If you conclude a section is sound, say which specific attack you tried on it and why
   it did not land — record it under attacks_that_did_not_land, do not simply omit it.
 - Severity: BLOCKER (implementation would produce wrong or unsafe behaviour, or a task
@@ -251,6 +257,7 @@ the question is "does this specification hold together", not "does the code matc
 # Acceptance criteria
 
 - [ ] Every file in the review surface has been read, tasks included
+- [ ] Every task has been checked for work only a person could perform
 - [ ] Every finding carries a concrete failure scenario
 - [ ] The answer is a single JSON object, nothing else
 

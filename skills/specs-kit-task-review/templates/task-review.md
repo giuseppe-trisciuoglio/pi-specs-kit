@@ -4,6 +4,7 @@ summary: "${REVIEW_SUMMARY}"
 issues:
   - "${ISSUE}"
 spec_conflicts: []
+escalation: []
 routed: []
 ---
 
@@ -36,6 +37,13 @@ routed: []
 > read as a rejection whatever `review_status` says: the conflict is described
 > here, and what it costs is not the reviewer's to decide. Never resolve one by
 > rewording the requirement or the contract.
+>
+> **`escalation`** lists what blocks the task and only a person can do: an account, a
+> credential written into a vault, a signature, a purchase, physical or console access.
+> Leave it `[]` in every other case. The verdict stays `FAILED`, and the loop ends the task
+> on the first entry and moves to the next one — no implementation pass can close such an
+> item, so retrying it only spends the task's attempts. Anything the next implementation
+> could fix is an `issues` entry, never an escalation.
 >
 > **`routed`** lists fixes you defer to a *later* task rather than to this one
 > (an optional suggestion that fits a known downstream task better). Each entry

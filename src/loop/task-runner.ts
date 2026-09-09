@@ -59,6 +59,7 @@ export class TaskRunner {
       routedSuggestions: [],
       failureDetail: null,
       blockerWall: null,
+      operatorWall: null,
       runState,
     };
     const env: TaskNodeEnv = { deps: this.#deps, plan, taskFile, selected };

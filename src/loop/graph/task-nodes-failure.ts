@@ -30,6 +30,16 @@ export function repeatedWallMessage(taskId: string, blocker: Blocker): string {
   );
 }
 
+/**
+ * Operator-facing message for a task that turned out to need a person: a
+ * credential, an account, a signature, access no agent has. It names the
+ * missing action rather than the budget the retries would have eaten, and
+ * says the run is not stopping on it.
+ */
+export function operatorWallMessage(taskId: string, detail: string): string {
+  return `${taskId} stopped: it needs an operator action, no implementation pass can close it: ${detail}`;
+}
+
 /** Bind the failure learner to one task: dependencies, plan and files. */
 export function makeFailureNodeActions(env: TaskNodeEnv): FailureNodeActions {
   const { deps, plan, taskFile } = env;
@@ -72,10 +82,22 @@ export function makeFailureNodeActions(env: TaskNodeEnv): FailureNodeActions {
       const wall = repeatedWall(state.blockers, id, attempt);
       if (wall) {
         io.runtime.blockerWall = wall.text;
-        state.review_file_error = repeatedWallMessage(id, wall);
+        // An action only a person can perform is the one wall that says
+        // nothing about the tasks after it: it ends this task, and the run
+        // walks on rather than halting on a missing credential.
+        const operator = wall.kind === "operator_action";
+        if (operator) io.runtime.operatorWall = wall.text;
+        state.review_file_error = operator
+          ? operatorWallMessage(id, wall.text)
+          : repeatedWallMessage(id, wall);
       }
       await persist();
-      if (wall) notify(repeatedWallMessage(id, wall), "error");
+      if (wall) {
+        notify(
+          state.review_file_error ?? repeatedWallMessage(id, wall),
+          wall.kind === "operator_action" ? "warning" : "error",
+        );
+      }
       return { kind: "ok" };
     },
   };
