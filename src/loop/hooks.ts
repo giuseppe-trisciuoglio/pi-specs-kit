@@ -1,3 +1,4 @@
+import { stripControlChars } from "../util/control-chars.ts";
 import { spawnProcess } from "../util/process.ts";
 import type { HooksConfig, PhaseName } from "../config/specs-kit-config.ts";
 
@@ -6,7 +7,7 @@ export interface HookResult {
   ok: boolean;
   exitCode: number | null;
   timedOut: boolean;
-  /** Combined stdout+stderr, trimmed. */
+  /** Combined stdout+stderr, trimmed and stripped of control characters. */
   output: string;
 }
 
@@ -35,7 +36,11 @@ export async function runHook(
     ok: !res.timedOut && res.exitCode === 0,
     exitCode: res.exitCode,
     timedOut: res.timedOut,
-    output: `${res.stdout}\n${res.stderr}`.trim(),
+    // Sanitized here, at the one place the output is composed, so every
+    // consumer gets text that can travel in an argv: a red gate feeds the next
+    // attempt's prompt, and a NUL from a tool printing binary would otherwise
+    // make the spawn of that attempt impossible.
+    output: stripControlChars(`${res.stdout}\n${res.stderr}`).trim(),
   };
 }
 

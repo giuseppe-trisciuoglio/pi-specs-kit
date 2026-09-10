@@ -79,3 +79,12 @@ test("runPhaseHooks propagates the timeout from the hooks config", async () => {
   assert.equal(results[0].timedOut, true);
   assert.equal(results[0].ok, false);
 });
+
+test("runHook strips NUL bytes and other control characters from the output", async () => {
+  const res = await runHook("printf 'Tests run: 3\\000\\000 failures\\033[31m\\n'", {
+    cwd: workDir(),
+    timeoutMs: 10_000,
+  });
+  assert.equal(res.output.includes("\0"), false, `NUL survived in: ${JSON.stringify(res.output)}`);
+  assert.equal(res.output, "Tests run: 3 failures[31m");
+});

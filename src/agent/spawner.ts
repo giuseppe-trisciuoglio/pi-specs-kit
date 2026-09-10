@@ -6,6 +6,7 @@
  */
 
 import { fileURLToPath } from "node:url";
+import { stripControlChars } from "../util/control-chars.ts";
 import { spawnProcess } from "../util/process.ts";
 import { AUTO_COMPACT_ENV } from "./compaction-plan.ts";
 import { createJsonlParser, type PiStreamEvent } from "./json-stream.ts";
@@ -77,8 +78,12 @@ export async function runAgentPhase(opts: PhaseSpawnOptions): Promise<PhaseRunOu
   const args = ["--print", "--mode", "json", "--no-session", "--exclude-tools", WITHHELD_TOOLS.join(",")];
   if (opts.model && opts.model !== "auto") args.push("--model", opts.model);
   if (opts.thinkingLevel) args.push("--thinking", opts.thinkingLevel);
-  if (opts.systemPrompt) args.push("--system-prompt", opts.systemPrompt);
-  if (opts.appendSystemPrompt) args.push("--append-system-prompt", opts.appendSystemPrompt);
+  // Every text argument carries material composed from external output, and an
+  // argv entry with a NUL byte is one Node refuses to spawn. Sanitizing here,
+  // at the last point before the spawn, means no future path into the prompt
+  // can resurrect that abort, whatever its own hygiene.
+  if (opts.systemPrompt) args.push("--system-prompt", stripControlChars(opts.systemPrompt));
+  if (opts.appendSystemPrompt) args.push("--append-system-prompt", stripControlChars(opts.appendSystemPrompt));
   // The threshold travels in the environment: the CLI hands no arguments to a
   // loaded extension, and the extension reads nothing else.
   let env = opts.env;
@@ -86,7 +91,7 @@ export async function runAgentPhase(opts: PhaseSpawnOptions): Promise<PhaseRunOu
     args.push("--extension", AUTO_COMPACT_EXTENSION);
     env = { ...(env ?? process.env), [AUTO_COMPACT_ENV]: String(opts.autoCompactPercent) };
   }
-  args.push(opts.prompt);
+  args.push(stripControlChars(opts.prompt));
 
   let stopReason: string | null = null;
   let errorMessage: string | null = null;
@@ -119,14 +124,36 @@ export async function runAgentPhase(opts: PhaseSpawnOptions): Promise<PhaseRunOu
     }
   };
 
-  const res = await spawnProcess(opts.piBin ?? "pi", args, {
-    cwd: opts.cwd,
-    env,
-    signal: opts.signal,
-    timeoutMs: opts.timeoutMs,
-    onStdout: (chunk) => parser.push(chunk),
-    onStderr,
-  });
+  const startedAt = Date.now();
+  let res;
+  try {
+    res = await spawnProcess(opts.piBin ?? "pi", args, {
+      cwd: opts.cwd,
+      env,
+      signal: opts.signal,
+      timeoutMs: opts.timeoutMs,
+      onStdout: (chunk) => parser.push(chunk),
+      onStderr,
+    });
+  } catch (err) {
+    // A rejected spawn is this phase's failure, not the run's: argv validation
+    // (an invalid argument the sanitizer above did not cover) used to travel up
+    // as an exception and halt the loop. Reported as an outcome, it classifies
+    // like any other failed phase — the attempt is spent and the retry logic
+    // decides what happens next.
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      exitCode: null,
+      signal: null,
+      timedOut: false,
+      aborted: opts.signal?.aborted ?? false,
+      stopReason: "error",
+      errorMessage: `the phase could not be spawned: ${message}`,
+      elapsedMs: Date.now() - startedAt,
+      stderr: message,
+      assistantMessages: 0,
+    };
+  }
   parser.flush();
   if (stderrBuf.trim().length > 0) opts.onStderrLine?.(stderrBuf);
 
