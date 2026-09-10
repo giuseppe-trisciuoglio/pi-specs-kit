@@ -50,6 +50,19 @@ function spawnerDeps(
   };
 }
 
+/** Deps whose primary ("provider/a") always hits the rate limit and whose
+ * fallback succeeds, recording the model of every spawn. */
+function quotaEscalationDeps(config: SpecsKitConfig): { calls: string[]; deps: ReturnType<typeof spawnerDeps> } {
+  const calls: string[] = [];
+  const deps = spawnerDeps(config, async (opts) => {
+    const model = String(opts.model ?? "auto");
+    calls.push(model);
+    if (model === "provider/a") return outcome({ exitCode: 1, stopReason: "error", errorMessage: QUOTA });
+    return outcome();
+  });
+  return { calls, deps };
+}
+
 async function withConfig(roles: Record<string, unknown>, fn: (config: SpecsKitConfig) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(path.join(tmpdir(), "escalation-"));
   const { writeFile } = await import("node:fs/promises");
@@ -174,13 +187,7 @@ test("every escalation attempt is charged to the budget like any other subproces
 
 test("once the primary died of an environment failure the role stays on the fallback", async () => {
   await withConfig({ reviewer_model: "provider/a", reviewer_fallback_model: "provider/b" }, async (config) => {
-    const calls: string[] = [];
-    const deps = spawnerDeps(config, async (opts) => {
-      const model = String(opts.model ?? "auto");
-      calls.push(model);
-      if (model === "provider/a") return outcome({ exitCode: 1, stopReason: "error", errorMessage: QUOTA });
-      return outcome();
-    });
+    const { calls, deps } = quotaEscalationDeps(config);
     const notices: string[] = [];
     deps.onNotify = (message: string) => {
       notices.push(message);
@@ -221,13 +228,7 @@ test("a primary that failed on the prompt, not the environment, is tried again",
 
 test("the skipped primary is not charged to the budget", async () => {
   await withConfig({ reviewer_model: "provider/a", reviewer_fallback_model: "provider/b" }, async (config) => {
-    const calls: string[] = [];
-    const deps = spawnerDeps(config, async (opts) => {
-      const model = String(opts.model ?? "auto");
-      calls.push(model);
-      if (model === "provider/a") return outcome({ exitCode: 1, stopReason: "error", errorMessage: QUOTA });
-      return outcome();
-    });
+    const { calls, deps } = quotaEscalationDeps(config);
     // Two for the first phase (primary plus escalation), then one per phase.
     deps.budget = new LoopBudget({ maxSpawnsPerTask: 99, maxSpawnsPerRun: 4, maxRunDurationMs: 3_600_000 });
     const spawner = new PhaseSpawner(deps);
