@@ -50,6 +50,19 @@ function spawnerDeps(
   };
 }
 
+/** Deps whose primary ("provider/a") always hits the rate limit and whose
+ * fallback succeeds, recording the model of every spawn. */
+function quotaEscalationDeps(config: SpecsKitConfig): { calls: string[]; deps: ReturnType<typeof spawnerDeps> } {
+  const calls: string[] = [];
+  const deps = spawnerDeps(config, async (opts) => {
+    const model = String(opts.model ?? "auto");
+    calls.push(model);
+    if (model === "provider/a") return outcome({ exitCode: 1, stopReason: "error", errorMessage: QUOTA });
+    return outcome();
+  });
+  return { calls, deps };
+}
+
 async function withConfig(roles: Record<string, unknown>, fn: (config: SpecsKitConfig) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(path.join(tmpdir(), "escalation-"));
   const { writeFile } = await import("node:fs/promises");
@@ -77,9 +90,10 @@ test("a refused primary is retried once on the configured fallback model", async
 
     assert.deepEqual(calls, ["provider/a", "provider/b"]);
     assert.equal(classifyPhaseFailure(result.outcome), null, "the delivered fallback attempt is returned");
-    assert.equal(notices.length, 1);
+    assert.equal(notices.length, 2);
     assert.match(notices[0], /fallback model provider\/b/);
     assert.match(notices[0], /quota/);
+    assert.match(notices[1], /stays on the fallback model provider\/b/);
   });
 });
 
@@ -167,6 +181,62 @@ test("every escalation attempt is charged to the budget like any other subproces
     const spawner = new PhaseSpawner(deps);
     await spawner.spawn({ taskId: "TASK-001", label: "review", role: "reviewer", prompt: TASK_PROMPT }, undefined, undefined, false);
     assert.equal(calls, 2, "primary plus one escalation");
+    assert.throws(() => deps.budget.consume(), /run budget exhausted/);
+  });
+});
+
+test("once the primary died of an environment failure the role stays on the fallback", async () => {
+  await withConfig({ reviewer_model: "provider/a", reviewer_fallback_model: "provider/b" }, async (config) => {
+    const { calls, deps } = quotaEscalationDeps(config);
+    const notices: string[] = [];
+    deps.onNotify = (message: string) => {
+      notices.push(message);
+    };
+    const spawner = new PhaseSpawner(deps);
+    const request = { taskId: "TASK-001", label: "review", role: "reviewer" as const, prompt: TASK_PROMPT };
+    await spawner.spawn(request, undefined, undefined, false);
+    const second = await spawner.spawn({ ...request, taskId: "TASK-002" }, undefined, undefined, false);
+    await spawner.spawn({ ...request, taskId: "TASK-003" }, undefined, undefined, false);
+
+    assert.deepEqual(calls, ["provider/a", "provider/b", "provider/b", "provider/b"], "the dead primary is tried once");
+    assert.equal(classifyPhaseFailure(second.outcome), null);
+    // One escalation notice plus the single switch notice: the later phases
+    // do not repeat either.
+    assert.equal(notices.length, 2);
+    assert.match(notices[1], /reviewer role stays on the fallback model provider\/b for the rest of this run/);
+  });
+});
+
+test("a primary that failed on the prompt, not the environment, is tried again", async () => {
+  await withConfig({ reviewer_model: "provider/a", reviewer_fallback_model: "provider/b" }, async (config) => {
+    const calls: string[] = [];
+    const deps = spawnerDeps(config, async (opts) => {
+      const model = String(opts.model ?? "auto");
+      calls.push(model);
+      // A silent spawn: nothing was produced, but the environment is not
+      // implicated, so the memory must not record the primary as dead.
+      if (model === "provider/a") return outcome({ assistantMessages: 0 });
+      return outcome();
+    });
+    const spawner = new PhaseSpawner(deps);
+    const request = { taskId: "TASK-001", label: "review", role: "reviewer" as const, prompt: TASK_PROMPT };
+    await spawner.spawn(request, undefined, undefined, false);
+    await spawner.spawn({ ...request, taskId: "TASK-002" }, undefined, undefined, false);
+    assert.deepEqual(calls, ["provider/a", "provider/b", "provider/a", "provider/b"]);
+  });
+});
+
+test("the skipped primary is not charged to the budget", async () => {
+  await withConfig({ reviewer_model: "provider/a", reviewer_fallback_model: "provider/b" }, async (config) => {
+    const { calls, deps } = quotaEscalationDeps(config);
+    // Two for the first phase (primary plus escalation), then one per phase.
+    deps.budget = new LoopBudget({ maxSpawnsPerTask: 99, maxSpawnsPerRun: 4, maxRunDurationMs: 3_600_000 });
+    const spawner = new PhaseSpawner(deps);
+    const request = { taskId: "TASK-001", label: "review", role: "reviewer" as const, prompt: TASK_PROMPT };
+    await spawner.spawn(request, undefined, undefined, false);
+    await spawner.spawn({ ...request, taskId: "TASK-002" }, undefined, undefined, false);
+    await spawner.spawn({ ...request, taskId: "TASK-003" }, undefined, undefined, false);
+    assert.equal(calls.length, 4);
     assert.throws(() => deps.budget.consume(), /run budget exhausted/);
   });
 });

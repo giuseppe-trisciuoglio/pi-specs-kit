@@ -9,6 +9,7 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { PhaseName } from "../config/specs-kit-config.ts";
 import type { LoopController } from "../loop/loop-controller.ts";
 import { loadTasks } from "../tasks/task-loader.ts";
+import { TaskValidationError, taskValidationLines } from "../tasks/task-validation.ts";
 
 export const PHASE_CHOICES: readonly PhaseName[] = ["implementation", "review", "cleanup", "sync"];
 
@@ -54,23 +55,37 @@ export async function pickSpec(
   return picked === undefined ? undefined : labels.get(picked);
 }
 
+/** Task ids of a spec, or null when they cannot be read: the same refusal
+ * the run start reports, read one line at a time because the notify channel
+ * shows one. */
+async function taskIdsOrReport(
+  controller: LoopController,
+  specDir: string,
+  ctx: ExtensionCommandContext,
+): Promise<string[] | null> {
+  const config = controller.config;
+  if (!config) return null;
+  try {
+    const tasks = await loadTasks(path.resolve(config.projectRoot, specDir));
+    return tasks.map((task) => task.frontmatter.id);
+  } catch (err) {
+    if (err instanceof TaskValidationError) {
+      for (const line of taskValidationLines(err.entries)) ctx.ui.notify(line, "error");
+    } else {
+      ctx.ui.notify(`Unable to read the tasks of ${specDir}.`, "error");
+    }
+    return null;
+  }
+}
+
 /** Pick an optional from/to range over the task ids of a spec. */
 export async function pickTaskRange(
   controller: LoopController,
   specDir: string,
   ctx: ExtensionCommandContext,
 ): Promise<TaskRangePick | undefined> {
-  const config = controller.config;
-  if (!config) return undefined;
-
-  let ids: string[];
-  try {
-    const tasks = await loadTasks(path.resolve(config.projectRoot, specDir));
-    ids = tasks.map((task) => task.frontmatter.id);
-  } catch {
-    ctx.ui.notify(`Unable to read the tasks of ${specDir}.`, "error");
-    return undefined;
-  }
+  const ids = await taskIdsOrReport(controller, specDir, ctx);
+  if (ids === null) return undefined;
   if (ids.length === 0) {
     ctx.ui.notify(`No tasks in ${specDir}.`, "warning");
     return undefined;

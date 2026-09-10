@@ -21,6 +21,7 @@ import { refreshCodebaseGraph } from "./codebase-graph.ts";
 import { workspaceFingerprint } from "./workspace.ts";
 import { LoopStatusTracker, type LoopStatus } from "./loop-status.ts";
 import { listModels, type ListedModel } from "./model-check.ts";
+import { TaskValidationError, taskValidationLines, taskValidationSummary } from "../tasks/task-validation.ts";
 import { prepareRun } from "./run-setup.ts";
 import { assembleRun } from "./run-assembly.ts";
 import { walkSelection } from "./run-walk.ts";
@@ -136,9 +137,19 @@ export class LoopEngine {
       this.#status.error = result.error ?? null;
       return result;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      let message = err instanceof Error ? err.message : String(err);
+      if (err instanceof TaskValidationError) {
+        // The notify channel shows one line at a time: a joined blob of every
+        // invalid file arrives truncated. One notification per line keeps each
+        // "which file, what is wrong" readable on its own, and the run keeps
+        // only the count, the one thing that fits where a run reports why it
+        // did not start.
+        for (const line of taskValidationLines(err.entries)) this.#notify(line, "error");
+        message = taskValidationSummary(err.entries);
+      } else {
+        this.#notify(`loop aborted: ${message}`, "error");
+      }
       this.#status.error = message;
-      this.#notify(`loop aborted: ${message}`, "error");
       return { reason: "halted", error: message };
     } finally {
       this.#status.endRun();
