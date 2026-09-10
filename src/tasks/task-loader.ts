@@ -21,7 +21,7 @@ async function readTaskFile(tasksDir: string, name: string): Promise<TaskFile | 
   const filePath = path.join(tasksDir, name);
   let task: TaskFile;
   try {
-    task = await parseTaskFile(filePath, await readFile(filePath, "utf8"));
+    task = parseTaskFile(filePath, await readFile(filePath, "utf8"));
   } catch (err) {
     // One malformed file must not hide the others: report every invalid
     // file at once so the user can fix the whole batch in one pass.
