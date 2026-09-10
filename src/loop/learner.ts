@@ -60,9 +60,9 @@ export const CONFIRMED_PREFIX = "CONFIRMED:";
 export function parseLearnings(text: string): string[] {
   const learnings: string[] = [];
   for (const line of text.split("\n")) {
-    const match = /^(?:[-*•]|\d+[.)])[ \t]+([^\n]+)$/.exec(line.trim());
+    const match = /^(?:[-*•]|\d+[.)])[ \t]+/.exec(line.trim());
     if (!match) continue;
-    const value = match[1];
+    const value = line.trim().slice(match[0].length);
     if (value && !learnings.includes(value)) learnings.push(value);
   }
   return learnings;

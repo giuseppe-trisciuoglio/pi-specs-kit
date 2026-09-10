@@ -98,12 +98,14 @@ function truncate(text: string): string {
 export function parseBlockers(text: string, task: string, attempt: number): Blocker[] {
   const found: Blocker[] = [];
   const seen = new Set<string>();
-  // The list marker and its trailing whitespace live in the same optional
-  // group, so the alternation does not also have to backtrack against the
-  // whitespace that follows it.
-  const line = /^(?:[-*•][ \t]*|\d+[.)][ \t]*)?([A-Z_]+)[ \t]*[:\-—][ \t]*(\S.*?)$/;
+  // The list marker and its trailing whitespace are stripped in their own step,
+  // so the label rule itself never has to carry the marker alternation.
+  const marker = /^(?:[-*•]|\d+[.)])[ \t]*/;
+  const labelled = /^([A-Z_]+)[ \t]*[:\-—][ \t]*(\S.*)$/;
   for (const raw of text.split("\n")) {
-    const match = line.exec(raw.trim());
+    const trimmed = raw.trim();
+    const stripped = marker.exec(trimmed)?.[0] ?? "";
+    const match = labelled.exec(trimmed.slice(stripped.length));
     if (!match) continue;
     const kind = KIND_BY_LABEL[match[1].toUpperCase()];
     if (!kind) continue;

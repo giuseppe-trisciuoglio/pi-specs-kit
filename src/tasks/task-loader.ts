@@ -15,6 +15,24 @@ import { TaskValidationError } from "./task-validation.ts";
  * markdown excluded, see isTaskFileName), sorted ascending by task number.
  * Returns an empty list when the directory does not exist.
  */
+/** Read and parse one task file. Returns the task, or the problem line that
+ * names what the operator has to fix instead of throwing on it. */
+async function readTaskFile(tasksDir: string, name: string): Promise<TaskFile | string> {
+  const filePath = path.join(tasksDir, name);
+  let task: TaskFile;
+  try {
+    task = await parseTaskFile(filePath, await readFile(filePath, "utf8"));
+  } catch (err) {
+    // One malformed file must not hide the others: report every invalid
+    // file at once so the user can fix the whole batch in one pass.
+    if (err instanceof TaskParseError) {
+      return `tasks/${name}: field "${err.field}": ${err.reason}`;
+    }
+    throw err;
+  }
+  return task;
+}
+
 export async function loadTasks(specDir: string): Promise<TaskFile[]> {
   const tasksDir = path.join(specDir, "tasks");
   let entries: string[];
@@ -33,19 +51,12 @@ export async function loadTasks(specDir: string): Promise<TaskFile[]> {
   const relative = (name: string): string => path.join(path.basename(tasksDir), name);
   for (const name of entries) {
     if (!isTaskFileName(name)) continue;
-    const filePath = path.join(tasksDir, name);
-    let task: TaskFile;
-    try {
-      task = parseTaskFile(filePath, await readFile(filePath, "utf8"));
-    } catch (err) {
-      // One malformed file must not hide the others: report every invalid
-      // file at once so the user can fix the whole batch in one pass.
-      if (err instanceof TaskParseError) {
-        problems.push(`${relative(name)}: field "${err.field}": ${err.reason}`);
-        continue;
-      }
-      throw err;
+    const loaded = await readTaskFile(tasksDir, name);
+    if (typeof loaded === "string") {
+      problems.push(loaded);
+      continue;
     }
+    const task = loaded;
     // Two files declaring the same id are ambiguous for every consumer: the
     // loop would run one and skip the other as already done, while progress
     // counts both. Fail loudly instead of silently dropping a task body.

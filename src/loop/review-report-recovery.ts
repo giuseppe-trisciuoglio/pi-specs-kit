@@ -179,11 +179,11 @@ export function recoverFrontmatter(block: string): RecoveredFrontmatter | null {
   };
 
   for (const raw of block.split("\n")) {
-    const line = raw.replace(/[ \t]+$/, "");
+    const line = raw.trimEnd();
     if (line.trim() === "") continue;
-    const bullet = /^\s*-\s*([^\n]*)$/.exec(line);
+    const bullet = /^\s*-/.exec(line);
     if (bullet) {
-      applyBullet(scan, bullet[1]);
+      applyBullet(scan, line.slice(bullet[0].length).trimStart());
       continue;
     }
     const head = header(line);
