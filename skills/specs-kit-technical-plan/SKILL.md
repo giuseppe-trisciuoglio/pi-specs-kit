@@ -62,6 +62,13 @@ brainstorm → technical-plan (this) → spec-to-tasks → implementation → re
 
 ## Core Principles
 
+- **The user owns the decisions**: You propose, they decide. A technology or an architecture choice
+  that is not already fixed by the specification, an ADR, or the existing codebase is asked, never
+  adopted on your own authority.
+- **One decision at a time**: Ask a single question, carrying your recommended answer and the reason
+  for it, and wait for the reply before the next one. Never present a batch of open decisions.
+- **Derive, then confirm**: Reading the choice off the existing architecture is the right way to find
+  a candidate — it is not permission to skip the confirmation.
 - **Concrete over Abstract**: "Node 20.11 LTS" not "Node ≥18"
 - **Decision with Rationale**: Why this choice over alternatives
 - **Version Pinning**: Every dependency has exact version
@@ -124,7 +131,10 @@ brainstorm → technical-plan (this) → spec-to-tasks → implementation → re
    - If exists, inherit existing stack choices
    - Add new libraries only if needed for this feature
 
-2. **Ask user for stack components** (or derive from existing architecture):
+2. **Ask the user for each stack component**, one at a time. Derive a candidate from the existing
+   architecture where you can, present it as your recommendation, and have it confirmed — a derived
+   value is a proposal, not an answer. A component with no source in the specification, in an ADR, or
+   in the codebase is always a question:
    - Language + version
    - Runtime + version
    - Framework + version
@@ -138,9 +148,9 @@ brainstorm → technical-plan (this) → spec-to-tasks → implementation → re
    - Exact version (no ranges, no "latest")
    - Any constraints or requirements
 
-4. **Use ask_user_question** for ambiguous choices:
-   - Present 2-3 options with trade-offs
-   - Ask for preference with context
+4. **Use ask_user_question** for ambiguous choices, one choice per question:
+   - Present 2-3 options with trade-offs, your recommendation first
+   - Ask for preference with context, then wait for the answer before raising the next choice
    - Document the decision and rationale
 
 5. **Generate Technology Stack table**:
@@ -244,10 +254,12 @@ brainstorm → technical-plan (this) → spec-to-tasks → implementation → re
    - Record each of these as an architecture decision so a later task does not
      have to reverse-engineer the read path from the code.
 
-6. **Use ask_user_question** for major decisions:
+6. **Use ask_user_question** for major decisions, one decision per question:
    - Present the decision context clearly
-   - Show alternatives with trade-offs
-   - Ask for preference, not validation
+   - Show alternatives with trade-offs, and say which one you recommend and why
+   - Ask for preference, not validation, and wait for the answer before moving to the next decision
+   - Never settle a major decision yourself because one option looks dominant: say that it dominates
+     and have the user confirm
 
 7. **Update todo**: Mark Phase 3 complete
 
