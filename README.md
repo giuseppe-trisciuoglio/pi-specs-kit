@@ -244,6 +244,11 @@ specs-kit-code-cleanup          # cosmetic hygiene before completion
 specs-kit-sync                  # reconcile spec ↔ test ↔ code
 ```
 
+`specs-kit-brainstorm` and `specs-kit-technical-plan` are interrogations, not
+generators: they ask one question at a time, each carrying a recommended answer,
+and they never settle a scope or stack decision on the author's behalf. A choice
+the author was never asked about does not end up in the specification.
+
 The loop itself only consumes the **tasks** folder produced by
 `specs-kit-spec-to-tasks`. Everything upstream is optional and can be skipped
 when the project already has its own authoring chain.

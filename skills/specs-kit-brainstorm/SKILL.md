@@ -81,13 +81,17 @@ The command will automatically gather context information when needed:
 
 You are helping a developer transform an idea into a fully formed design. Follow a systematic approach: understand the
 project
-context, explore the idea through targeted questions, explore existing code, propose alternative approaches, present the
-design
-incrementally, generate professional documentation, review the document, and recommend the next development command.
+context, grill the developer about the idea one question at a time until nothing material is left
+undecided, explore existing code, propose alternative approaches for the developer to choose from,
+present the design incrementally, generate professional documentation, review the document, and
+recommend the next development command. You never decide in the developer's place.
 
 ## Core Principles
 
-- **Ask only high-signal questions**: Use ask_user_question only when the answer materially changes scope, acceptance criteria, or constraints. If the request is already clear, proceed without adding extra checkpoints.
+- **The user is the source of the specification**: You do not decide in their place. Every choice that changes scope, acceptance criteria, or constraints is asked, never assumed. An idea that "seems clear" is an idea whose ambiguities you have not looked for yet.
+- **One question at a time**: Ask a single question and wait for the answer before the next one. Never batch questions.
+- **Always propose your recommended answer**: Each question carries the answer you would give and why, so the user can confirm in one word instead of writing the specification themselves.
+- **Explore instead of asking**: If the answer is already in the codebase, the ADRs, or the documentation, go and read it. Ask only what only the user knows.
 - **Multiple choice preferred**: Easier to answer than open-ended when possible
 - **YAGNI ruthlessly**: Remove unnecessary features from all specifications
 - **Functional focus ONLY**: Describe WHAT the system should do, never HOW it will be implemented
@@ -101,6 +105,51 @@ incrementally, generate professional documentation, review the document, and rec
 - **Scope awareness**: Validate idea scope early; if too large, guide user to split into multiple focused specifications
 - **Documentation-only boundary**: This command MUST NOT implement, patch, refactor, or modify application/source code. It may only create or update specification artifacts under `docs/specs/` and related spec documentation files.
 - **Stay in scope**: If the user asks to fix a bug, change existing behavior, refactor existing code, or "just make the modification", STOP and explain this skill only produces new functional specifications. Do not perform the change. Offer to model the desired end-state as a new specification instead, or stop.
+
+## Grilling Protocol
+
+Brainstorming is an interrogation, not a drafting exercise. The specification is written from the
+user's answers; what the user was never asked is not part of the specification. This protocol governs
+every question in every phase — Phase 2 is where most of them happen, but the rules hold everywhere.
+
+### How to ask
+
+1. **One question at a time.** Ask it, stop, wait for the answer. Never send two questions in the
+   same turn, never a numbered list of questions to answer in bulk.
+2. **Carry your recommended answer.** Every question states the answer you would pick and the reason
+   in one line. The user's cheapest possible reply is "yes"; make that reply available.
+3. **Prefer closed options.** Two to four mutually exclusive options beat an open question, with the
+   recommended one first. Use `ask_user_question` when the options are clean; ask in prose when the
+   answer is a number, a name, or a rule.
+4. **Follow the branch.** An answer that opens a new decision is grilled immediately, before moving
+   to the next area. Resolve dependencies between decisions one at a time, depth first.
+5. **Read before you ask.** If the answer is in the codebase, the ADRs, `CONTEXT.md`, or an existing
+   spec, go and read it, then confirm what you found instead of asking from scratch. Ask only what
+   lives in the user's head.
+6. **Challenge, do not transcribe.** When an answer contradicts an earlier one, the existing domain
+   language, or the code, say so and ask which one holds. When a term is vague or overloaded, propose
+   a precise one and get it confirmed.
+
+### When the user delegates
+
+If the user answers "decide for me", "as you prefer", or equivalent:
+
+- Record your answer as an **explicit assumption** in the specification's Assumptions section,
+  attributed as delegated by the user.
+- Do NOT turn it into a `[NEEDS CLARIFICATION]` marker — the user already answered, by delegating.
+- Do NOT silently absorb it into a requirement as if it had never been a question.
+
+### When to stop
+
+The grill ends when one of these is true, and only then:
+
+- No remaining ambiguity would change scope, acceptance criteria, constraints, or the boundary of
+  what is excluded; or
+- The user explicitly says to proceed / stop asking.
+
+Stopping because the idea "seems clear enough", because the questions are getting long, or because a
+reasonable default exists is not a valid exit. Before leaving the loop, summarise every answer
+collected and have the user confirm the summary.
 
 ## Spec Lifecycle: Deliberate Death
 
@@ -379,41 +428,49 @@ During Phase 5, identify negative requirements by asking:
 
 ## [NEEDS CLARIFICATION] Marker Rules
 
-Every specification may include `[NEEDS CLARIFICATION]` markers to identify areas requiring user input. However, to prevent specification bloat and ensure actionable outcomes, markers are **strictly limited to 3 maximum**.
+A `[NEEDS CLARIFICATION]` marker records a question the **user chose to defer**, not a question you decided not to ask. Everything else is grilled (see the Grilling Protocol) and answered before the specification is written.
 
-### Why Maximum 3?
+### Why a marker is an exception
 
-- **Focus**: Each marker represents a significant scope decision. Too many markers indicate the spec is not ready.
-- **Actionability**: Resolving markers requires user time. More than 3 creates friction.
-- **Quality over quantity**: Better to have 3 well-defined markers than 10 vague ones.
+- The grill is the normal way to resolve an unknown. A marker is what remains when the user says "not now" or "I have to check".
+- A marker is therefore always traceable to a question that was actually asked and explicitly deferred.
+- More than 3 markers in a finished specification is a **symptom**: the grill was cut short. Do not compress the excess into silent assumptions — go back and ask.
 
 ### Marker Requirements
 
 | Requirement | Description |
 |-------------|-------------|
-| **Max 3 markers** | No specification shall have more than 3 [NEEDS CLARIFICATION] markers total |
+| **Asked first** | A marker may only exist for a question that was put to the user and that the user deferred |
 | **Specific questions** | Each marker must contain a specific, answerable question |
 | **Inline placement** | Markers appear inline within requirement text, not as a separate section |
 | **Impact prioritization** | Markers are prioritized: scope > security/privacy > user experience > technical |
+| **More than 3 is a symptom** | Not a hard cap: it means the grill stopped too early. Resume it rather than trimming the list |
 
 ### When to Use a Marker
 
 Mark with `[NEEDS CLARIFICATION: specific question]` ONLY when ALL of these are true:
-1. The choice **significantly impacts feature scope** or user experience
-2. **Multiple reasonable interpretations exist** with different implications
-3. **No reasonable default exists** for the domain
+1. The question was **actually asked** during the grill
+2. The user **explicitly deferred** it (not "decide for me" — that is a delegated assumption, see the Grilling Protocol)
+3. The choice **significantly impacts feature scope**, security, or user experience
 
-### When NOT to Use a Marker (Make an Informed Guess Instead)
+### Areas the Grill MUST Cover (never guessed)
 
-| Area | Reasonable Default | Do NOT Mark |
-|------|-------------------|-------------|
-| Data retention | Industry-standard for domain | Guess and document |
-| Performance targets | Standard web/mobile expectations | Guess and document |
-| Error handling | User-friendly messages + fallbacks | Guess and document |
-| Auth method | Session-based or OAuth2 for web | Guess and document |
-| Integration patterns | REST/GraphQL for web, function calls for libs | Guess and document |
-| UI/UX details | Standard responsive design, standard patterns | Guess and document |
-| Input validation | Standard type/range/boundary checks | Guess and document |
+Each row below is a question to put to the user, with your recommended answer already proposed. None
+of them is a default you may adopt on your own.
+
+| Area | Ask | Your recommendation is the starting point |
+|------|-----|-------------------------------------------|
+| Data retention | How long is this data kept, and what happens at the end? | Propose the industry standard for the domain |
+| Performance targets | What response time / volume must this hold up to? | Propose standard web/mobile expectations |
+| Error handling | What does the user see and what does the system do when this fails? | Propose user-facing message + fallback |
+| Authentication / authorization | Who may do this, and how are they identified? | Propose the mechanism already used in the project |
+| Integration patterns | What capability must the other system expose? | Propose the shape used by existing integrations |
+| UI/UX behaviour | What does the user see and in what order? | Propose the pattern already in the product |
+| Input validation | What is a valid value, and what is rejected? | Propose type/range/boundary checks |
+
+If the user answers, the answer becomes a requirement. If the user delegates, your recommendation
+becomes a documented assumption. If the user defers, it becomes a marker. There is no fourth branch
+in which you decide quietly.
 
 ### Marker Syntax
 
@@ -426,11 +483,12 @@ The marker is placed **INLINE** within the requirement text. It does not replace
 ### Marker Validation Checklist
 
 Before Phase 5 generation, verify:
-- [ ] Maximum 3 markers present in the specification
+- [ ] Every marker corresponds to a question the user was asked and deferred
 - [ ] Each marker has a specific question (not vague "needs clarification")
 - [ ] Markers are inline within requirement text
 - [ ] Markers are prioritized by impact (scope > security > UX > technical)
-- [ ] No markers for areas with reasonable defaults
+- [ ] No marker stands in for a question that was never asked
+- [ ] More than 3 markers: the grill is resumed, not trimmed
 
 ### Marker Enforcement Examples
 
@@ -441,21 +499,21 @@ The system SHALL process payments via [NEEDS CLARIFICATION: which payment provid
 # BAD: Vague question
 The system SHALL support payments via [NEEDS CLARIFICATION: what should we support?] (unspecified)
 
-# BAD: Technical detail (has reasonable default)
+# BAD: technical detail, and out of scope for a functional specification
 The database should use [NEEDS CLARIFICATION: PostgreSQL or MySQL?] for storage.
-→ Default: PostgreSQL. Document assumption in Assumptions section.
+→ Not a functional question at all. It belongs to the technical plan.
 
-# BAD: Has reasonable default (REST API)
-The system must expose [NEEDS CLARIFICATION: REST or GraphQL?] endpoints.
-→ Default: REST. Document assumption in Assumptions section.
+# BAD: never asked, silently defaulted
+The system retains audit records for 90 days.
+→ Retention was never put to the user. Ask, then record the answer.
 ```
 
 ### Marker Count Validation in Phase 5
 
 After generating the specification:
 1. Count all `[NEEDS CLARIFICATION:` occurrences
-2. If count > 3: Flag the spec and identify the excess markers
-3. For excess markers: Either convert to a best-guess assumption OR defer to a future spec-check session
+2. For each one, confirm the user was asked and chose to defer. A marker with no question behind it is a missing grill round: go and ask it now
+3. If count > 3: tell the user the grill looks incomplete and offer to resume it. Never convert the excess into best-guess assumptions on your own
 4. Report final marker count in the completion summary
 
 ---
@@ -595,7 +653,7 @@ Only continue with brainstorming if the user explicitly confirms they want a **n
     - Read recent commits to understand what's being worked on
     - Check for existing documentation (README, docs/, existing specs)
     - Look for related features or similar implementations
-4. If the idea is unclear, ask the user for:
+4. Ask the opening questions, one at a time (the full grill happens in Phase 2):
     - What problem are they trying to solve?
     - What is the high-level goal?
     - Any initial thoughts or constraints?
@@ -659,26 +717,61 @@ Only continue with brainstorming if the user explicitly confirms they want a **n
 
 ---
 
-## Phase 2: Idea Refinement
+## Phase 2: Grilling the Idea
 
-**Goal**: Clarify the requirements and constraints through a dialogue with the developer
+**Goal**: Extract the specification from the user through sustained interrogation, one question at a
+time, until nothing material is left undecided
+
+This is the heart of the skill. Apply the **Grilling Protocol**: a single question per turn, each
+carrying your recommended answer, waiting for the reply before the next one. There is **no limit** on
+the number of questions — the loop ends on the protocol's exit condition, never on a quota.
 
 **Actions**:
 
-1. Ask up to 3 targeted questions to refine the idea:
-    - Focus on ambiguities or missing information
-    - Ask about edge cases or specific behaviors
-    - Ask about integration with existing features
-    - Ask about **exclusions and negative requirements** (what should the system NOT do?)
-2. Incorporate any extracted constraints from Phase 0 into your questions
-3. If the user provides a lot of information, summarize it to ensure alignment
-4. If the user changes the idea significantly, restart the refinement phase
+1. Open the loop by telling the user what is about to happen: you will ask a series of questions, one
+   at a time, each with a proposed answer they can simply confirm, and they can say "proceed" at any
+   point to stop.
+2. Before asking anything, read what is already written: Phase 0 constraints, existing specs, ADRs,
+   `CONTEXT.md`, the codebase. Anything answered there is confirmed, not asked.
+3. Grill each area below in order, depth first — when an answer opens a new decision, follow it
+   immediately rather than queueing it. An area is done when its answers are precise enough to write
+   testable acceptance criteria from them.
 
-**Negative Requirements Question**:
-During Phase 2, ask about exclusions that could become Negative Requirements:
-- "Are there security constraints or anti-patterns we must avoid?"
-- "Are there known failure modes or race conditions to prevent?"
-- "Are there data integrity constraints beyond normal validation?"
+   **Area 1 — Problem and actors**: what breaks today, who feels it, what "solved" looks like.
+
+   **Area 2 — Scope and boundary**: what is in this specification and what is deliberately left out.
+   Every boundary answer is a candidate Non-Goal.
+
+   **Area 3 — Business rules**: the rules that govern the behaviour, including the ones that hold
+   only in some states. Push for the rule, not the example.
+
+   **Area 4 — Data**: what information exists, what makes it valid, who may see it, how long it is
+   kept.
+
+   **Area 5 — Flows and edge cases**: the nominal path, then the alternatives, then what happens when
+   each step fails. Invent concrete scenarios and force a precise answer on each one.
+
+   **Area 6 — Integrations**: which existing systems are touched, and what capability each must
+   provide.
+
+   **Area 7 — Exclusions and negative requirements**: what the system must never do. Ask explicitly:
+   - "Are there security constraints or anti-patterns we must avoid?"
+   - "Are there known failure modes or race conditions to prevent?"
+   - "Are there data integrity constraints beyond normal validation?"
+
+   **Area 8 — The never-guessed list**: every row of *Areas the Grill MUST Cover* in the
+   [NEEDS CLARIFICATION] Marker Rules section that this feature touches — retention, performance,
+   error behaviour, authorization, integration shape, UI behaviour, validation. One question each,
+   with your recommendation.
+
+4. Sharpen the language as you go: when the user uses a vague or overloaded term, propose the precise
+   one and get it confirmed. When an answer contradicts an earlier one, the project's documented
+   language, or the code, surface the contradiction and ask which holds.
+5. Record each answer as you receive it. Delegated answers ("decide for me") become documented
+   assumptions; deferred answers become `[NEEDS CLARIFICATION]` markers. Nothing is left implicit.
+6. If the user changes the idea significantly mid-grill, restart from the affected area.
+7. Close the loop with a summary of every answer collected, and ask the user to confirm it before
+   moving to Phase 3.
 
 ---
 
@@ -707,10 +800,13 @@ During Phase 2, ask about exclusions that could become Negative Requirements:
     - NO libraries or dependencies
     - NO code or pseudo-code
 
-4. If there are materially different scope options, use ask_user_question to present them:
-    - Lead with your recommended option
-    - Explain your reasoning
-5. If one approach is clearly dominant, select it, record the rationale, and proceed without an extra gate
+4. Present the approaches with ask_user_question and let the **user** choose:
+    - Lead with your recommended option and say why it is your recommendation
+    - Present the alternatives fairly, with what each one costs and gives up
+    - Never select on your own, not even when one approach clearly dominates: state that it dominates
+      and have the user confirm it
+5. Grill the chosen approach before leaving the phase: whatever it leaves ambiguous goes back through
+   the Phase 2 loop, one question at a time
 
 6. **After approach selection, log the decision**:
     - Create an in-memory note of DEC-001: Approach Selection
@@ -795,11 +891,14 @@ During Phase 2, ask about exclusions that could become Negative Requirements:
     - Technical patterns or architectural styles
     - Code or pseudo-code
 
-5. Validate only at meaningful checkpoints:
-    - Default: generate all sections, then present one consolidated review
-    - Use ask_user_question mid-way only if a section introduces new ambiguity or a major scope decision
+5. Validate section by section: present a section, collect the user's feedback or approval, then move
+   to the next one. Do not draft the whole specification and present it once
+    - Whatever a section leaves ambiguous goes back through the Phase 2 grill loop before the section
+      is approved
+    - The user may explicitly ask for the full draft in one go ("show me everything, no stops"): only
+      then present all sections together
 
-6. If no major ambiguity is detected, proceed directly to Phase 5.3 and collect feedback on the complete draft
+6. Move to Phase 5.3 when every section has been approved
 
 ---
 
@@ -1087,26 +1186,25 @@ Example output snippet:
 
 ### [NEEDS CLARIFICATION] Markers
 
-When writing the specification, mark unclear aspects that require user input. This creates a bidirectional link with `specs.spec-check` which resolves these markers.
+When writing the specification, mark the aspects the user **explicitly deferred** during the grill.
+This creates a bidirectional link with `specs.spec-check`, which resolves these markers. An aspect
+that was never put to the user is not a marker: it is a missing question — go back and ask it.
 
 **When to use a marker**:
 
 Mark with `[NEEDS CLARIFICATION: specific question]` ONLY when ALL of these are true:
-1. The choice **significantly impacts feature scope** or user experience
-2. **Multiple reasonable interpretations exist** with different implications
-3. **No reasonable default exists** for the domain
+1. The question was **asked** during the Phase 2 grill
+2. The user **deferred** it ("not now", "I have to check") rather than answering or delegating
+3. The choice **significantly impacts feature scope**, security, or user experience
 
-**When NOT to use a marker** (make an informed guess instead):
+**When NOT to use a marker**:
 
-| Area | Reasonable Default | Do NOT mark |
-|------|-------------------|-------------|
-| Data retention | Industry-standard for domain | Guess and document |
-| Performance targets | Standard web/mobile expectations | Guess and document |
-| Error handling | User-friendly messages + fallbacks | Guess and document |
-| Auth method | Session-based or OAuth2 for web | Guess and document |
-| Integration patterns | REST/GraphQL for web, function calls for libs | Guess and document |
-| UI/UX details | Standard responsive design, standard patterns | Guess and document |
-| Input validation | Standard type/range/boundary checks | Guess and document |
+| Situation | What to do instead |
+|-----------|--------------------|
+| The user answered | Write the answer as a requirement |
+| The user delegated ("decide for me") | Write your recommendation and record it in Assumptions as delegated |
+| The question was never asked | Ask it now — see *Areas the Grill MUST Cover* |
+| It is a technical decision (storage, protocol, framework) | Out of scope here; it belongs to the technical plan |
 
 **Marker syntax**:
 
@@ -1118,7 +1216,7 @@ The marker is placed INLINE within the requirement text. It does not replace the
 
 **Rules**:
 
-- **Maximum 3 markers total** across the entire specification
+- **More than 3 markers is a symptom** that the grill stopped early: offer to resume it rather than trimming the list
 - **Prioritize by impact**: scope > security/privacy > user experience > technical details
 - Each marker must contain a **specific question** (not a vague "needs clarification")
 - The surrounding requirement text should still be meaningful with the default assumption
@@ -1137,12 +1235,12 @@ User data must be retained [NEEDS CLARIFICATION: what is the data retention peri
 Search results should be sorted [NEEDS CLARIFICATION: by relevance, recency, price, or user-selectable?] by default.
 ```
 
-**Examples of bad markers** (should be guessed instead):
+**Examples of bad markers**:
 
 ```markdown
-# Bad: has reasonable default (REST API)
-The system must expose [NEEDS CLARIFICATION: REST or GraphQL?] endpoints.
-→ Default: REST. Document assumption in Assumptions section.
+# Bad: never asked, so not deferred
+User sessions expire [NEEDS CLARIFICATION: after how long?] automatically.
+→ Session lifetime was never put to the user. Ask it, with your recommendation.
 
 # Bad: too vague
 The system must be [NEEDS CLARIFICATION: fast?] for all users.
@@ -1303,7 +1401,7 @@ This brainstorming command produces a **functional specification** that feeds in
 ↓
 Phase 0: Input Mode Detection (ADR/RFC or free-form)
 ↓
-Phase 1-2: Context Discovery & Idea Refinement
+Phase 1-2: Context Discovery & Grilling
 ↓
 Phase 3: Functional Approach Exploration (MVP / Balanced / Comprehensive)
 ↓
@@ -1361,7 +1459,7 @@ Throughout the process, maintain a todo list like:
 [ ] Phase 0: Input Mode Detection & ADR Discovery (if applicable)
 [ ] Phase 1: Context Discovery
 [ ] Phase 1.5: Complexity Assessment & Scope Validation (split if scope too large)
-[ ] Phase 2: Idea Refinement
+[ ] Phase 2: Grilling the Idea (one question at a time, no quota)
 [ ] Phase 3: Functional Approach Exploration
 [ ] Phase 4: Contextual Codebase Exploration (Optional)
 [ ] Phase 5: Functional Specification Presentation
