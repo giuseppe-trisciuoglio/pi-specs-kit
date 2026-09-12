@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A build tool printing binary no longer kills the run.** The output of a
+  failed hook is stripped of NUL bytes and the other non-printable control
+  characters before it enters the next attempt's prompt, and the prompt is
+  sanitized again right before the phase spawns. A spawn that is still refused
+  fails the single phase — attempt spent, retry logic in charge — instead of
+  aborting the whole loop.
+
 ### Changed
 
 - **A refused task bundle is readable.** When a spec's task files fail

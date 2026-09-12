@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { AUTO_COMPACT_EXTENSION, runAgentPhase, WITHHELD_TOOLS } from "../src/agent/spawner.ts";
 import type { PiStreamEvent } from "../src/agent/json-stream.ts";
 import { assistantText } from "../src/agent/stream-format.ts";
+import { classifyPhaseFailure, spawnFailed } from "../src/loop/phase-failure.ts";
 
 /**
  * Fake agent binary: an executable script with a node shebang that ignores
@@ -167,4 +168,47 @@ test("abort signal terminates the subprocess", async () => {
   assert.equal(outcome.aborted, true);
   assert.equal(outcome.timedOut, false);
   assert.ok(outcome.elapsedMs < 5000, `elapsed too high: ${outcome.elapsedMs}`);
+});
+
+test("a prompt carrying NUL bytes is sanitized instead of killing the spawn", async () => {
+  const piBin = writeFakePi(SUCCESS_BODY);
+  const events: PiStreamEvent[] = [];
+
+  const outcome = await runAgentPhase({
+    prompt: "<hooks>\nTests run: 3\0\0 failures\x1B[31m\n</hooks>",
+    systemPrompt: "sys\0tem",
+    appendSystemPrompt: "extra\0rules",
+    cwd: tmpdir(),
+    timeoutMs: 10_000,
+    piBin,
+    onEvent: (e) => events.push(e),
+  });
+
+  assert.equal(outcome.exitCode, 0);
+  const argvRaw = events.find((e) => e.type === "unparsed_line" && e.line.startsWith("ARGV:"));
+  assert.ok(argvRaw && argvRaw.type === "unparsed_line");
+  const argv = JSON.parse(argvRaw.line.slice("ARGV:".length)) as string[];
+  assert.equal(argv[argv.length - 1], "<hooks>\nTests run: 3 failures[31m\n</hooks>");
+  assert.equal(argv[argv.indexOf("--system-prompt") + 1], "system");
+  assert.equal(argv[argv.indexOf("--append-system-prompt") + 1], "extrarules");
+});
+
+test("a spawn rejected by argv validation fails the phase, not the caller", async () => {
+  // The binary name is the one argument the phase does not compose: a NUL there
+  // stands in for any future path that reaches spawn with invalid argv.
+  const outcome = await runAgentPhase({
+    prompt: "p",
+    cwd: tmpdir(),
+    timeoutMs: 10_000,
+    piBin: "fake\0agent",
+  });
+
+  assert.equal(outcome.exitCode, null);
+  assert.equal(outcome.stopReason, "error");
+  assert.match(outcome.errorMessage ?? "", /could not be spawned/);
+  assert.equal(outcome.assistantMessages, 0);
+  assert.equal(spawnFailed(outcome), true);
+  const failure = classifyPhaseFailure(outcome);
+  // Non-environmental: the attempt is spent and the retry logic keeps the run alive.
+  assert.equal(failure?.environment, false);
 });
