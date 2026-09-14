@@ -31,4 +31,7 @@ coverage/
 graphify-out/
 _ralph_loop/fix_plan.json
 _ralph_loop/
-.pi/jetbrains.json
+.pi/jetbrains.json# Tracked pi rules (global gitignore excludes .pi/ entirely)
+!.pi/
+.pi/*
+!.pi/rules/
