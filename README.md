@@ -249,6 +249,12 @@ generators: they ask one question at a time, each carrying a recommended answer,
 and they never settle a scope or stack decision on the author's behalf. A choice
 the author was never asked about does not end up in the specification.
 
+`specs-kit-spec-to-tasks` refuses a specification that is too large to implement or
+too wide to review: more than 15 implementation tasks, or more than 40 distinct
+created or modified files with documentation excluded. Either breach stops task
+generation and offers a split; continuing anyway is allowed and is recorded in the
+summary.
+
 The loop itself only consumes the **tasks** folder produced by
 `specs-kit-spec-to-tasks`. Everything upstream is optional and can be skipped
 when the project already has its own authoring chain.

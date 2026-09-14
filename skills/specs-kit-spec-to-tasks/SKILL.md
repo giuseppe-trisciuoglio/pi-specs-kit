@@ -72,6 +72,56 @@ Idea → Functional Specification → Architecture & Ontology Definition → Tas
 
 3. **If <= 15 tasks**: Proceed normally with task generation
 
+### Spec File Surface Limit
+
+**CRITICAL**: A specification may plan at most **40 distinct created or modified files**, documentation
+excluded. The task count bounds how much work the loop does; it says nothing about how many files that
+work touches, and a pull request with dozens of changed files cannot get a meaningful review whatever the
+task breakdown looked like.
+
+1. **What is counted**: the union of the distinct paths the tasks declare as created or modified ("Files
+   to Create" and "Files to Modify"), across every task of the spec. A path created by one task and
+   modified by another counts **once**.
+2. **What is excluded**: documentation only — `docs/**` (so the spec folder, the ADRs and the guides),
+   `README.md` and `CHANGELOG.md`. Source, tests, configuration, workflows and scripts all count: a spec
+   is not made narrower by being well tested.
+3. **Detect an oversized surface**: in Phase 4 (Task Decomposition), after file targets are assigned to
+   the tasks, count the distinct non-documentation paths
+4. **If > 40 files**:
+   - STOP task generation immediately
+   - Inform the user with this message:
+
+   ```
+   Specification Too Wide
+
+   This specification would create or modify X distinct files (documentation excluded), which exceeds
+   the maximum of 40. The change surface is too wide to be reviewed in a single pull request.
+
+   Heaviest directories:
+   - [directory] — N files
+   - [directory] — N files
+   - [directory] — N files
+
+   Recommended action:
+   1. Return to /skill:specs-kit-brainstorm
+   2. Split your idea into 2 or more specifications, each owning a narrower part of the change surface
+   3. Run /skill:specs-kit-spec-to-tasks for each specification separately
+   ```
+
+   - Use **ask_user_question** to offer options:
+     - Options:
+       - "Return to brainstorm and split this specification" (recommended)
+       - "Continue anyway" (not recommended - proceed at user risk)
+   - If user chooses "Return to brainstorm": abort task generation and suggest running
+     `/skill:specs-kit-brainstorm` with the split idea
+   - If user chooses "Continue anyway": proceed, with a warning logged in the Phase 7 summary
+
+5. **If <= 40 files**: Proceed normally with task generation, no extra prompt
+
+The number lives here, in the skill text, exactly like the 15-task limit: there is no key for it in
+`specs-kit.yaml`, because the skills are installed for agents that never read the extension's
+configuration.
+
 ## Usage
 
 ```bash
@@ -801,11 +851,20 @@ Provide a summary that will inform task generation with the detected stack's spe
 
 8. **Verify task count and spec size**:
    - Count total implementation tasks (excluding documentation and cleanup tasks)
+   - Count the distinct paths the tasks declare as created or modified, excluding documentation
+     (`docs/**`, `README.md`, `CHANGELOG.md`); a path declared by two tasks counts once
+   - Both limits are checked here, and a spec can breach either one or both. Name in the message
+     the limit that was breached, and when both are, report both counts before asking.
    - **If > 15 implementation tasks**: Trigger rejection logic (see Task Count Limit section)
      - STOP task generation
      - Present warning message to user
      - Offer to return to brainstorm or continue anyway
-   - **If <= 15 tasks**: Proceed with task file generation
+   - **If > 40 distinct non-documentation files**: Trigger rejection logic (see Spec File Surface
+     Limit section)
+     - STOP task generation
+     - Present warning message to user, with the heaviest directories
+     - Offer to return to brainstorm or continue anyway
+   - **If <= 15 tasks and <= 40 files**: Proceed with task file generation
 
 ---
 
@@ -1119,6 +1178,12 @@ Provide a summary that will inform task generation with the detected stack's spe
       - Data model: `docs/specs/[id]/data-model.md`
       - Contracts: `docs/specs/[id]/contracts/*`
     - **Tasks Generated**: Number of tasks created (breakdown: X implementation, 1 documentation, 1 cleanup)
+    - **Planned File Surface**: X distinct files created or modified (documentation excluded, limit 40)
+      - When the user chose "Continue anyway" on the file surface limit: `WARNING: the planned file
+        surface exceeds 40 files; the user chose to continue. The resulting pull request will be hard
+        to review in one pass.`
+      - When the user chose "Continue anyway" on the task count limit: `WARNING: the task count exceeds
+        15; the user chose to continue.`
     - **[IMP] Criteria**: N criteria → X implementation tasks (each [IMP] should map to at least one task)
     - **[SEF] Criteria**: N criteria → verified in documentation task (no standalone tasks)
     - **[EXT] Criteria**: N criteria → documentation checkpoints (no standalone tasks)

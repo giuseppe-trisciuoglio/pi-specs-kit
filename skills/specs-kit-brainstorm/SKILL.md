@@ -691,12 +691,14 @@ Only continue with brainstorming if the user explicitly confirms they want a **n
    - Multiple user flows but related
    - Examples: "User authentication with roles", "Product catalog with categories"
 
-   **Large Scope** (WARNING - will likely generate >15 tasks - see step 3):
+   **Large Scope** (WARNING - will likely generate >15 tasks, or touch >40 files - see step 3):
    - 5+ user stories
    - Multiple functional domains or bounded contexts
    - 5+ integration points
    - Complex data model (9+ entities)
    - Multiple independent user flows
+   - A change surface spanning several modules or layers: `spec-to-tasks` also rejects a spec whose
+     tasks declare more than 40 distinct created or modified files, documentation excluded
    - Examples: "Full E-commerce system", "Multi-provider travel aggregator", "Complete CRM system"
 
 3. **If scope is classified as LARGE**:
@@ -710,10 +712,13 @@ Only continue with brainstorming if the user explicitly confirms they want a **n
      - Options:
        - "Split the idea into the suggested specifications" (recommended)
        - "Focus only on one part of the idea" (ask which one)
-       - "Continue with a single large specification" (not recommended - warn about task count limit)
+       - "Continue with a single large specification" (not recommended - warn about both limits
+         enforced by `spec-to-tasks`: at most 15 implementation tasks and at most 40 distinct created
+         or modified files, documentation excluded)
    - If user chooses to split: Focus the current brainstorming session on the FIRST part of the split.
    - If user chooses to focus on one part: Focus the current session on that part.
-   - If user chooses to continue: Proceed with a warning that `spec-to-tasks` will reject the spec if it exceeds 15 tasks.
+   - If user chooses to continue: Proceed with a warning that `spec-to-tasks` will reject the spec if it
+     exceeds 15 implementation tasks or 40 distinct created or modified files (documentation excluded).
 
 ---
 

@@ -176,7 +176,7 @@ model is spelled correctly.
    |---|---------|---------|
    | 1 | **The Adversary** | Requirements that cannot be falsified, acceptance criteria that pass trivially, implicit assumptions, scope that quietly grew or shrank between spec and tasks |
    | 2 | **The Operator** | What happens when it fails: partial writes, concurrency, retries, unavailable dependencies, migration and rollback, observability of the failure |
-   | 3 | **The Executor** | Whether the task set is actually runnable: ordering, missing prerequisite tasks, hidden coupling between "independent" tasks, DoD that cannot be checked, work no task covers |
+   | 3 | **The Executor** | Whether the task set is actually runnable: ordering, missing prerequisite tasks, hidden coupling between "independent" tasks, DoD that cannot be checked, work no task covers, a change surface too wide to be reviewed in one pass |
    | 4 | **The Historian** | Whether the work contradicts what the project already decided: architecture document, ontology terms, recorded decisions |
 
    Personas are assigned by position, so a panel of 2 uses personas 1 and 2. Persona 4
@@ -248,6 +248,12 @@ the question is "does this specification hold together", not "does the code matc
   satisfy it, the review is right to reject it every time, and the retries spend the whole task
   allowance before the run stops on it. The operator half belongs to the "Preconditions
   (operator)" section of the tasks document; only the part an agent can do stays a task.
+- Judge the width of the planned change surface: count the distinct paths the tasks declare as
+  created or modified, documentation aside (`docs/**`, `README.md`, `CHANGELOG.md`). A specification
+  whose tasks spread over many modules or layers produces a pull request no reviewer can read in one
+  pass, and the defect is the specification's, not the implementation's. Say how many files the plan
+  touches, which directories carry the weight, and whether the work splits along a seam the
+  specification already names.
 - If you conclude a section is sound, say which specific attack you tried on it and why
   it did not land — record it under attacks_that_did_not_land, do not simply omit it.
 - Severity: BLOCKER (implementation would produce wrong or unsafe behaviour, or a task
@@ -258,6 +264,7 @@ the question is "does this specification hold together", not "does the code matc
 
 - [ ] Every file in the review surface has been read, tasks included
 - [ ] Every task has been checked for work only a person could perform
+- [ ] The planned change surface has been counted and judged
 - [ ] Every finding carries a concrete failure scenario
 - [ ] The answer is a single JSON object, nothing else
 
