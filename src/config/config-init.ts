@@ -73,6 +73,12 @@ export function defaultConfigYaml(): string {
     hooks: {
       timeout: formatDurationMs(hooks.timeoutMs),
       ...Object.fromEntries(PHASE_NAMES.map((phase) => [phase, { pre: [], post: [] }])),
+      // The gate of a phase is told which files the attempt stands on
+      // (SPECS_KIT_CHANGED_FILES, and the same list in the file named by
+      // SPECS_KIT_CHANGED_FILES_PATH), so it can compile and test that scope.
+      // What the project cannot afford once per attempt goes here instead: the
+      // checkpoint runs after each task that passed its review.
+      checkpoint: { post: [] },
     },
     knowledge_base: { files: [] },
   });

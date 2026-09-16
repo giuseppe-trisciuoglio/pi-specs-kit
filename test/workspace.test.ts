@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loopArtifactExclusions, workspaceFingerprint } from "../src/loop/workspace.ts";
+import { changedWorkspaceFiles, loopArtifactExclusions, workspaceFingerprint } from "../src/loop/workspace.ts";
 
 const gitAvailable = spawnSync("git", ["--version"], { stdio: "ignore" }).status === 0;
 
@@ -108,4 +108,56 @@ test("loopArtifactExclusions covers the loop folder of the spec and the generate
   // but the graph is generated into the project root either way.
   assert.deepEqual(loopArtifactExclusions("/repo", "/elsewhere/001"), ["graphify-out"]);
   assert.deepEqual(loopArtifactExclusions("/repo", "/repo"), ["graphify-out"]);
+});
+
+test("changedWorkspaceFiles lists what stands on top of the last commit", { skip: !gitAvailable }, async () => {
+  const dir = initRepo();
+  assert.deepEqual(await changedWorkspaceFiles(dir), [], "a committed tree has changed nothing");
+
+  writeFileSync(path.join(dir, "src.txt"), "edited\n");
+  mkdirSync(path.join(dir, "mod"), { recursive: true });
+  writeFileSync(path.join(dir, "mod", "added.txt"), "brand new\n");
+
+  assert.deepEqual(await changedWorkspaceFiles(dir), ["mod/added.txt", "src.txt"]);
+});
+
+test("changedWorkspaceFiles leaves out the excluded and the ignored paths", { skip: !gitAvailable }, async () => {
+  const dir = initRepo();
+  writeFileSync(path.join(dir, ".gitignore"), "target/\n");
+  spawnSync("git", ["add", "-A"], { cwd: dir, stdio: "ignore" });
+  spawnSync("git", ["commit", "-m", "ignore rules"], { cwd: dir, stdio: "ignore" });
+  mkdirSync(path.join(dir, "specs", "001", "_ralph_loop"), { recursive: true });
+  writeFileSync(path.join(dir, "specs", "001", "_ralph_loop", "fix_plan.json"), '{"step":"review"}');
+  mkdirSync(path.join(dir, "target"), { recursive: true });
+  writeFileSync(path.join(dir, "target", "app.jar"), "build output");
+  writeFileSync(path.join(dir, "src.txt"), "edited\n");
+
+  assert.deepEqual(await changedWorkspaceFiles(dir, ["specs/001/_ralph_loop"]), ["src.txt"]);
+});
+
+test("an unborn HEAD reads the whole worktree as changed", { skip: !gitAvailable }, async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "workspace-unborn-"));
+  assert.equal(spawnSync("git", ["init"], { cwd: dir, stdio: "ignore" }).status, 0);
+  writeFileSync(path.join(dir, "first.txt"), "nothing committed yet\n");
+
+  assert.deepEqual(await changedWorkspaceFiles(dir), ["first.txt"]);
+});
+
+test("a directory outside git yields no list instead of throwing", { skip: !gitAvailable }, async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "workspace-plain-"));
+  writeFileSync(path.join(dir, "src.txt"), "not tracked anywhere");
+
+  assert.equal(await changedWorkspaceFiles(dir), null);
+});
+
+test("reading the changed files never touches the real index", { skip: !gitAvailable }, async () => {
+  const dir = initRepo();
+  writeFileSync(path.join(dir, "staged.txt"), "deliberately staged\n");
+  spawnSync("git", ["add", "staged.txt"], { cwd: dir, stdio: "ignore" });
+  writeFileSync(path.join(dir, "loose.txt"), "deliberately unstaged\n");
+  const indexBefore = readFileSync(path.join(dir, ".git", "index"));
+
+  assert.deepEqual(await changedWorkspaceFiles(dir), ["loose.txt", "staged.txt"]);
+
+  assert.deepEqual(readFileSync(path.join(dir, ".git", "index")), indexBefore);
 });

@@ -39,15 +39,20 @@ export function loopArtifactExclusions(projectRoot: string, specDir: string): st
   return [...exclusions, path.posix.join(rel.split(path.sep).join("/"), "_ralph_loop")];
 }
 
+type Git = (args: string[]) => Promise<{ exitCode: number | null; stdout: string }>;
+
 /**
- * Tree object id of the current worktree, or null when it cannot be computed.
- * Equal ids mean the two moments are byte-identical over everything git would
- * track; a different id means at least one file changed.
+ * Stage the worktree into a throwaway index and hand the caller a git bound
+ * to it. Everything both readers need — the temp index, the exclusions, the
+ * best-effort contract — happens once here: on any failure the callback is
+ * never invoked and the caller gets null, which is how both of them say "the
+ * signal is not available".
  */
-export async function workspaceFingerprint(
+async function withScratchIndex<T>(
   projectRoot: string,
-  excluded: readonly string[] = [],
-): Promise<string | null> {
+  excluded: readonly string[],
+  read: (git: Git) => Promise<T | null>,
+): Promise<T | null> {
   let dir: string;
   try {
     dir = await mkdtemp(path.join(tmpdir(), "specs-kit-fp-"));
@@ -55,7 +60,7 @@ export async function workspaceFingerprint(
     return null;
   }
   const env = { ...process.env, GIT_INDEX_FILE: path.join(dir, "index") };
-  const git = (args: string[]): Promise<{ exitCode: number | null; stdout: string }> =>
+  const git: Git = (args) =>
     spawnProcess("git", args, { cwd: projectRoot, env, timeoutMs: FINGERPRINT_TIMEOUT_MS });
   try {
     // Seeding the scratch index from HEAD keeps the staging step to the files
@@ -66,13 +71,52 @@ export async function workspaceFingerprint(
     const pathspec = [".", ...excluded.map((p) => `:(exclude)${p}`)];
     const add = await git(["add", "-A", "--", ...pathspec]);
     if (add.exitCode !== 0) return null;
-    const tree = await git(["write-tree"]);
-    if (tree.exitCode !== 0) return null;
-    const sha = tree.stdout.trim();
-    return sha === "" ? null : sha;
+    return await read(git);
   } catch {
     return null;
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/**
+ * Tree object id of the current worktree, or null when it cannot be computed.
+ * Equal ids mean the two moments are byte-identical over everything git would
+ * track; a different id means at least one file changed.
+ */
+export async function workspaceFingerprint(
+  projectRoot: string,
+  excluded: readonly string[] = [],
+): Promise<string | null> {
+  return withScratchIndex(projectRoot, excluded, async (git) => {
+    const tree = await git(["write-tree"]);
+    if (tree.exitCode !== 0) return null;
+    const sha = tree.stdout.trim();
+    return sha === "" ? null : sha;
+  });
+}
+
+/**
+ * Paths that differ from the last commit, relative to the project root, or
+ * null when the tree cannot be read. This is the work standing on top of
+ * HEAD: the checkpoint commits at every passed task, so what comes back is
+ * what the current task has touched, across all its attempts — a module an
+ * earlier attempt wrote and this one did not still belongs to the scope a
+ * gate has to cover.
+ *
+ * NUL-separated on the git side because a path may legitimately contain
+ * anything else, newlines included.
+ */
+export async function changedWorkspaceFiles(
+  projectRoot: string,
+  excluded: readonly string[] = [],
+): Promise<string[] | null> {
+  return withScratchIndex(projectRoot, excluded, async (git) => {
+    const diff = await git(["diff", "--cached", "--name-only", "-z", "HEAD"]);
+    // An unborn HEAD has nothing to diff against: everything staged into the
+    // scratch index is new, so the index itself is the list.
+    const listed = diff.exitCode === 0 ? diff : await git(["ls-files", "--cached", "-z"]);
+    if (listed.exitCode !== 0) return null;
+    return listed.stdout.split("\0").filter((entry) => entry !== "");
+  });
 }

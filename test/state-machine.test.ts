@@ -369,6 +369,63 @@ test("happy path full mode: three tasks, all phases, frontmatter and checkpoints
   assert.ok(run.states.length > 0, "state changes emitted");
 });
 
+test("the checkpoint of a passed task runs its own gate, once per task", async () => {
+  const { root, specDir } = await createSpec();
+  const stages: string[] = [];
+  const run = await runLoop(
+    root,
+    specDir,
+    () => {},
+    (config) => {
+      config.hooks.checkpoint = { pre: [], post: ["the whole suite"] };
+    },
+    {},
+    async (_hooks, target, stage) => {
+      stages.push(`${target}:${stage}`);
+      return [];
+    },
+  );
+
+  assert.equal(run.result.reason, "completed");
+  assert.deepEqual(
+    stages.filter((s) => s.startsWith("checkpoint")),
+    ["checkpoint:post", "checkpoint:post", "checkpoint:post"],
+    "one full-suite run per task that passed, not one per attempt",
+  );
+});
+
+test("a red checkpoint gate is recorded and named at the range close, the run walks on", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(
+    root,
+    specDir,
+    () => {},
+    (config) => {
+      config.hooks.checkpoint = { pre: [], post: ["the whole suite"] };
+    },
+    {},
+    async (_hooks, target) =>
+      target === "checkpoint"
+        ? [{ command: "the whole suite", ok: false, exitCode: 1, timedOut: false, output: "2 tests failed" }]
+        : [],
+  );
+
+  // The task passed its review and is committed: there is no attempt left to
+  // spend on the red suite, so it is recorded exactly like the gate of any
+  // other phase without a retry path.
+  assert.equal(run.result.reason, "completed");
+  assert.deepEqual(run.plan.done, ["TASK-001", "TASK-002", "TASK-003"]);
+  assert.ok(
+    run.notifications.some((n) => n.type === "warning" && n.message.includes("checkpoint hook failed after TASK-001")),
+    JSON.stringify(run.notifications),
+  );
+  assert.ok(
+    run.notifications.some((n) => n.message.includes("failed post-hook gate: the checkpoint")),
+    "the range close names the gate",
+  );
+  assert.equal(run.plan.state.postHookGateFailed, null, "the notice is cleared once it has been given");
+});
+
 test("fast mode: cleanup and frontmatter rewrite skipped, sync only on the last task", async () => {
   const { root, specDir } = await createSpec();
   const run = await runLoop(root, specDir, () => {}, (config) => {
