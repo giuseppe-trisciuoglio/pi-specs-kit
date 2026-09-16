@@ -11,6 +11,7 @@ import {
   loadSpecsKitConfig,
 } from "../src/config/specs-kit-config.ts";
 import { ensureConfigFile } from "../src/config/config-init.ts";
+import { hardRunDurationMs } from "../src/loop/budget.ts";
 import {
   updateActiveSpec,
   updateHooksTimeout,
@@ -452,6 +453,20 @@ test("the run ceilings are read from the config and default when out of range", 
     assert.equal(config.run.maxSpawnsPerTask, 4);
     assert.equal(config.run.maxSpawnsPerRun, 20);
     assert.equal(config.run.maxRunDurationMs, 90 * 60_000);
+    assert.equal(
+      config.run.maxRunDurationHardMs,
+      null,
+      "a file that names only the expected duration leaves the halting ceiling to be derived",
+    );
+
+    await writeFile(
+      path.join(dir, CONFIG_FILE_NAME),
+      "run:\n  max_run_duration: 90m\n  max_run_duration_hard: 10h\n",
+      "utf8",
+    );
+    const twoLevels = await loadSpecsKitConfig(dir);
+    assert.equal(twoLevels.run.maxRunDurationMs, 90 * 60_000);
+    assert.equal(twoLevels.run.maxRunDurationHardMs, 10 * 60 * 60_000);
 
     // Zero would disable the ceiling, which is the state the ceilings exist to
     // prevent: it falls back to the default rather than switching them off.
@@ -474,10 +489,22 @@ test("ensureConfigFile creates a default file that loads back as the defaults", 
     // milliseconds and cut every phase short.
     assert.equal((doc.run as Record<string, unknown>).timeout, "1h");
     assert.equal((doc.run as Record<string, unknown>).max_run_duration, "6h");
+    // The halting ceiling is derived when the file omits it, and the generated
+    // file exists to show the operator every knob: it is written out at the
+    // value the derivation would have produced.
+    assert.equal((doc.run as Record<string, unknown>).max_run_duration_hard, "18h");
 
     const config = await loadSpecsKitConfig(dir);
     const bare = await loadSpecsKitConfig(path.join(dir, "empty"));
-    assert.deepEqual(config.run, bare.run);
+    assert.equal(
+      config.run.maxRunDurationHardMs,
+      hardRunDurationMs(bare.run.maxRunDurationMs, bare.run.maxRunDurationHardMs),
+      "spelling the derived ceiling out changes nothing about how long the run may take",
+    );
+    assert.deepEqual(
+      { ...config.run, maxRunDurationHardMs: null },
+      { ...bare.run, maxRunDurationHardMs: null },
+    );
     assert.deepEqual(config.hooks, bare.hooks);
     assert.equal(config.specsDir, bare.specsDir);
     assert.equal(config.mode, bare.mode);

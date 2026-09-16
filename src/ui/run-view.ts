@@ -14,6 +14,7 @@ import {
 } from "../agent/compaction-plan.ts";
 import { updateRunConfig, type RunField } from "../config/config-writer.ts";
 import type { RunConfig, SpecsKitConfig } from "../config/specs-kit-config.ts";
+import { hardRunDurationMs } from "../loop/budget.ts";
 import type { LoopController } from "../loop/loop-controller.ts";
 import { formatDurationMs, parseDurationMs } from "../util/duration.ts";
 
@@ -43,7 +44,18 @@ const FIELDS: readonly RunFieldDef[] = [
   { field: "review_file_retry", kind: "number", label: "review file re-spawns", display: (r) => String(r.reviewFileRetry) },
   { field: "max_spawns_per_task", kind: "number", label: "max agent sessions per task", display: (r) => String(r.maxSpawnsPerTask) },
   { field: "max_spawns_per_run", kind: "number", label: "max agent sessions per run", display: (r) => String(r.maxSpawnsPerRun) },
-  { field: "max_run_duration", kind: "duration", label: "max run duration", display: (r) => formatDurationMs(r.maxRunDurationMs) },
+  { field: "max_run_duration", kind: "duration", label: "expected run duration (warns)", display: (r) => formatDurationMs(r.maxRunDurationMs) },
+  {
+    field: "max_run_duration_hard",
+    kind: "duration",
+    label: "max run duration (halts)",
+    // Shown as the ceiling that actually applies: an unset field is a multiple
+    // of the soft one, and the operator needs the number, not the blank.
+    display: (r) => {
+      const effective = formatDurationMs(hardRunDurationMs(r.maxRunDurationMs, r.maxRunDurationHardMs));
+      return r.maxRunDurationHardMs === null ? `${effective} (derived)` : effective;
+    },
+  },
   { field: "reconcile_context", kind: "boolean", label: "sync may fix context docs", display: (r) => String(r.reconcileContext) },
   { field: "auto_compact", kind: "boolean", label: "compact a phase mid-run", display: (r) => String(r.autoCompact) },
   { field: "auto_compact_threshold", kind: "percent", label: "compact at (% of context window)", display: (r) => String(r.autoCompactThresholdPercent) },

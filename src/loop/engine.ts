@@ -15,6 +15,7 @@ import type { PiStreamEvent } from "../agent/json-stream.ts";
 import type { PhaseMeter } from "../measure/phase-meter.ts";
 import { runPhaseHooks } from "./hooks.ts";
 import { BudgetExceededError } from "./budget.ts";
+import { pushNotify } from "../util/push-notify.ts";
 import { DEFAULT_ENVIRONMENT_STREAK, EnvironmentStreakError } from "./phase-failure.ts";
 import { commitCheckpoint } from "./checkpoint.ts";
 import { refreshCodebaseGraph } from "./codebase-graph.ts";
@@ -64,6 +65,11 @@ export interface EngineDeps {
   /** Phase measurement; defaults to the real ledger/write-ahead writer. */
   meter?: PhaseMeter;
   now?: () => Date;
+  /**
+   * Desktop notification for a halt the operator may be away from. Injectable
+   * so tests observe it instead of writing escape sequences to the terminal.
+   */
+  pushNotify?: (title: string, body: string) => void;
 }
 
 export type LoopEndReason = "completed" | "halted" | "stopped";
@@ -84,6 +90,7 @@ interface ResolvedDeps {
   environmentStreakLimit: number;
   /** Catalogue lookup used by the escalation diagnosis. */
   listModels: () => Promise<ListedModel[]>;
+  pushNotify: (title: string, body: string) => void;
 }
 
 export class LoopEngine {
@@ -108,6 +115,7 @@ export class LoopEngine {
       now: deps.now ?? (() => new Date()),
       environmentStreakLimit: deps.environmentStreakLimit ?? DEFAULT_ENVIRONMENT_STREAK,
       listModels: deps.listModels ?? listModels,
+      pushNotify: deps.pushNotify ?? pushNotify,
     };
   }
 
@@ -274,6 +282,10 @@ export class LoopEngine {
         plan.state.step = "failed";
         await this.#persist(specDir, plan);
         this.#notify(`loop stopped: ${detail}`, "error");
+        // A ceiling halts a run that has been going for hours, which is
+        // precisely when nobody is watching the session: the in-session
+        // message alone would be found the next morning.
+        this.#deps.pushNotify("specs-kit", `Loop halted: ${detail}`);
         return { reason: "halted", error: detail };
       }
       throw err;

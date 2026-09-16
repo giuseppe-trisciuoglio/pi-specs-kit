@@ -9,6 +9,7 @@
 
 import { writeFile } from "node:fs/promises";
 import YAML from "yaml";
+import { hardRunDurationMs } from "../loop/budget.ts";
 import { formatDurationMs } from "../util/duration.ts";
 import {
   CONFIG_VERSION,
@@ -51,7 +52,13 @@ export function defaultConfigYaml(): string {
       review_file_retry: run.reviewFileRetry,
       max_spawns_per_task: run.maxSpawnsPerTask,
       max_spawns_per_run: run.maxSpawnsPerRun,
+      // Two levels: the first is what the run is expected to take and only
+      // warns when crossed, the second is the ceiling against a runaway and
+      // halts. Left out, the halting one is a multiple of the expected one.
       max_run_duration: formatDurationMs(run.maxRunDurationMs),
+      max_run_duration_hard: formatDurationMs(
+        hardRunDurationMs(run.maxRunDurationMs, run.maxRunDurationHardMs),
+      ),
       // Lets sync correct a source-of-truth context document that a
       // consolidated learning contradicts. Editing the project's own
       // instructions is a trust-boundary change, so it stays opt-in.

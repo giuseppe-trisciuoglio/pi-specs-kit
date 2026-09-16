@@ -36,7 +36,7 @@ function spawnerDeps(
   return {
     config,
     specDir: ".",
-    budget: new LoopBudget({ maxSpawnsPerTask: 99, maxSpawnsPerRun: 999, maxRunDurationMs: 3_600_000 }),
+    budget: new LoopBudget({ maxSpawnsPerTask: 99, maxSpawnsPerRun: 999, maxRunDurationMs: 3_600_000, maxRunDurationHardMs: null }),
     spawnPhase,
     onNotify: (message: string) => opts.notify?.(message),
     onStream: () => {},
@@ -177,7 +177,7 @@ test("every escalation attempt is charged to the budget like any other subproces
     });
     // A ceiling of exactly two: primary plus escalation fit, and one more
     // spawn of any kind is refused — the escalation cannot sneak past it.
-    deps.budget = new LoopBudget({ maxSpawnsPerTask: 2, maxSpawnsPerRun: 2, maxRunDurationMs: 3_600_000 });
+    deps.budget = new LoopBudget({ maxSpawnsPerTask: 2, maxSpawnsPerRun: 2, maxRunDurationMs: 3_600_000, maxRunDurationHardMs: null });
     const spawner = new PhaseSpawner(deps);
     await spawner.spawn({ taskId: "TASK-001", label: "review", role: "reviewer", prompt: TASK_PROMPT }, undefined, undefined, false);
     assert.equal(calls, 2, "primary plus one escalation");
@@ -230,7 +230,7 @@ test("the skipped primary is not charged to the budget", async () => {
   await withConfig({ reviewer_model: "provider/a", reviewer_fallback_model: "provider/b" }, async (config) => {
     const { calls, deps } = quotaEscalationDeps(config);
     // Two for the first phase (primary plus escalation), then one per phase.
-    deps.budget = new LoopBudget({ maxSpawnsPerTask: 99, maxSpawnsPerRun: 4, maxRunDurationMs: 3_600_000 });
+    deps.budget = new LoopBudget({ maxSpawnsPerTask: 99, maxSpawnsPerRun: 4, maxRunDurationMs: 3_600_000, maxRunDurationHardMs: null });
     const spawner = new PhaseSpawner(deps);
     const request = { taskId: "TASK-001", label: "review", role: "reviewer" as const, prompt: TASK_PROMPT };
     await spawner.spawn(request, undefined, undefined, false);
