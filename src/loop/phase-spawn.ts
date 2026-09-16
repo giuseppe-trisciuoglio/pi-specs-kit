@@ -8,6 +8,7 @@ import path from "node:path";
 import type { PiStreamEvent } from "../agent/json-stream.ts";
 import { assistantText, formatStreamEvent } from "../agent/stream-format.ts";
 import { classifyPhaseFailure } from "./phase-failure.ts";
+import { attemptModel, type AttemptModel } from "./phase-escalation.ts";
 import type { PhaseRunOutcome, PhaseSpawnOptions } from "../agent/spawner.ts";
 import type { RoleName, SpecsKitConfig } from "../config/specs-kit-config.ts";
 import type { TaskFile } from "../tasks/task-parser.ts";
@@ -121,6 +122,13 @@ export interface PhaseSpawnRequest {
   label: string;
   role: RoleName;
   prompt: string;
+  /**
+   * 1-based attempt this spawn belongs to; it decides whether the role runs
+   * on its primary or on its retry model. Absent counts as the first attempt,
+   * which is what the subroutines that have no attempt of their own (the
+   * learner, the compaction pass) are.
+   */
+  attempt?: number;
   /** Charge the run ceilings but not the per-task one; only the failure
    * learner asks for it, because it runs when that allowance is gone. */
   offTaskBudget?: boolean;
@@ -154,13 +162,15 @@ export interface PhaseSpawnerDeps {
 export class PhaseSpawner {
   readonly #deps: PhaseSpawnerDeps;
   /**
-   * Roles whose primary model already died of an environment failure in this
-   * run, mapped to the model that died. Run-scoped memory: it is never
-   * written to the fix plan, so a fresh run re-probes the primary in case the
-   * access it lost has come back. Keyed by the model string too, so a
-   * configuration reload that names a different primary is probed again.
+   * Models that already died of an environment failure in this run.
+   * Run-scoped memory: it is never written to the fix plan, so a fresh run
+   * re-probes them in case the access they lost has come back. Keyed by the
+   * model string rather than by role, because one role now has two models
+   * that can be the primary of a spawn — the first attempt's and the retry's
+   * — and each answers for its own outage; a configuration reload that names
+   * a different model is probed again for the same reason.
    */
-  readonly #deadPrimary = new Map<RoleName, string>();
+  readonly #deadModels = new Set<string>();
 
   constructor(deps: PhaseSpawnerDeps) {
     this.#deps = deps;
@@ -175,19 +185,32 @@ export class PhaseSpawner {
   ): Promise<LearnerResult> {
     const { taskId, label, role } = request;
     const roleConfig = this.#deps.config.roles[role];
-    if (!roleConfig.model || roleConfig.model === "auto") this.#deps.warnAutoModel(role);
-    const escalation = this.#escalationModel(role, roleConfig.model);
-    // The run already paid for this diagnosis: a primary that answered with an
+    // Which of the role's models this attempt is worth is decided before
+    // anything else: everything below — the auto warning, the escalation, the
+    // sticky memory — is about the model actually being spawned, whichever it
+    // turned out to be.
+    const primary = attemptModel(roleConfig, request.attempt ?? 1);
+    if (!primary.model || primary.model === "auto") this.#deps.warnAutoModel(role);
+    const escalation = this.#escalationModel(role, primary.model);
+    const fallback: AttemptModel | null =
+      escalation === null ? null : { model: escalation, thinkingLevel: roleConfig.thinkingLevel, retry: false };
+    // The run already paid for this diagnosis: a model that answered with an
     // environment failure will answer the next phase the same way, so the
     // attempt against it is skipped for the rest of the run and only the
     // fallback is spawned.
-    if (escalation !== null && this.#deadPrimary.get(role) === roleConfig.model) {
+    if (fallback !== null && primary.model !== undefined && this.#deadModels.has(primary.model)) {
       return await this.#spawnOnce(
-        request, escalation, systemPromptOverride, signal, captureText, meterHandle,
+        request, fallback, systemPromptOverride, signal, captureText, meterHandle,
+      );
+    }
+    if (primary.retry) {
+      this.#deps.onNotify(
+        `${label} attempt ${request.attempt} for ${taskId} runs on the ${role} retry model ${primary.model}`,
+        "info",
       );
     }
     const first = await this.#spawnOnce(
-      request, roleConfig.model, systemPromptOverride, signal, captureText, meterHandle,
+      request, primary, systemPromptOverride, signal, captureText, meterHandle,
     );
     const failure = classifyPhaseFailure(first.outcome);
     if (!failure) return first;
@@ -195,18 +218,18 @@ export class PhaseSpawner {
     // about the prompt. When the role declares a second model, exactly one
     // spawn goes to it before the usual routing takes over — a ladder of
     // fallbacks would spend the run budget proving the same outage per task.
-    if (escalation === null) return first;
-    this.#deps.onNotify(await this.#escalationNotice(taskId, label, failure, roleConfig.model, escalation), "warning");
+    if (fallback === null || escalation === null) return first;
+    this.#deps.onNotify(await this.#escalationNotice(taskId, label, failure, primary.model, escalation), "warning");
     const second = await this.#spawnOnce(
-      request, escalation, systemPromptOverride, signal, captureText, meterHandle,
+      request, fallback, systemPromptOverride, signal, captureText, meterHandle,
     );
     if (classifyPhaseFailure(second.outcome) !== null) return first;
-    // Only an environment failure earns the memory: a prompt the primary
+    // Only an environment failure earns the memory: a prompt the model
     // could not answer says nothing about the next phase's prompt.
-    if (failure.environment && roleConfig.model) {
-      this.#deadPrimary.set(role, roleConfig.model);
+    if (failure.environment && primary.model) {
+      this.#deadModels.add(primary.model);
       this.#deps.onNotify(
-        `the ${role} role stays on the fallback model ${escalation} for the rest of this run: ${roleConfig.model} failed with ${failure.kind}`,
+        `the ${role} role stays on the fallback model ${escalation} for the rest of this run: ${primary.model} failed with ${failure.kind}`,
         "warning",
       );
     }
@@ -245,13 +268,13 @@ export class PhaseSpawner {
 
   async #spawnOnce(
     request: PhaseSpawnRequest,
-    model: string | undefined,
+    spawnModel: AttemptModel,
     systemPromptOverride: SystemPromptOverrideText | undefined,
     signal: AbortSignal | undefined,
     captureText: boolean,
     meterHandle: PhaseHandle | null,
   ): Promise<LearnerResult> {
-    const { taskId, label, role, prompt } = request;
+    const { taskId, label, prompt } = request;
     const { config } = this.#deps;
     // Every phase reaches the agent through here, so charging the budget at
     // this single point is what makes the ceilings inescapable. It throws
@@ -268,8 +291,8 @@ export class PhaseSpawner {
     try {
       const outcome = await this.#deps.spawnPhase({
         prompt,
-        model,
-        thinkingLevel: config.roles[role].thinkingLevel,
+        model: spawnModel.model,
+        thinkingLevel: spawnModel.thinkingLevel,
         appendSystemPrompt: systemPromptOverride?.mode === "append" ? systemPromptOverride.content : undefined,
         systemPrompt: systemPromptOverride?.mode === "replace" ? systemPromptOverride.content : undefined,
         cwd: config.projectRoot,

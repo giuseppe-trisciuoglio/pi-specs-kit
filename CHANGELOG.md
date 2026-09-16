@@ -27,6 +27,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A stronger model once an attempt has failed.** A role can declare
+  `<role>_retry_model`, with an optional `<role>_retry_thinking_level` and
+  `<role>_retry_from_attempt` (2 by default): from that attempt onwards the
+  phase spawns on the retry model instead of the primary. Left out, the role
+  behaves exactly as before. It exists because the attempts of a task are not
+  worth the same — the first one is speculative, while every later one is
+  spawned because an earlier one was wrong and drags another review and another
+  gate behind it. The retry model is validated against the model catalogue like
+  a primary (an unknown one refuses the start, naming the field), it escalates
+  to `<role>_fallback_model` on an environment failure like a primary, and the
+  sticky fallback memory is now keyed by model name, so a dead cheap model does
+  not condemn the strong one.
+
 - **Failure memory.** A failed implementation attempt now goes through a
   `failure_learner` node that records what stopped it as *blockers* in
   `fix_plan.state.blockers`, per task and classified. The next attempt of the

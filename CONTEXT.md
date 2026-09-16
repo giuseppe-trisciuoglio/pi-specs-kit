@@ -36,6 +36,10 @@ _Avoid_: LLM, provider, tool, codex
 Function an agent plays in the loop: agent (implementation), reviewer (review), cleaner (cleanup), synchronizer (sync), learner (learnings extraction, and on failed attempts the failure learner). Each role has its own model and thinking level, configurable from `specs-kit.yaml` or from pi's TUI.
 _Avoid_: persona, worker
 
+**Retry model**:
+The model a role is spawned on from its `<role>_retry_from_attempt` (2 by default) onwards, with an optional thinking level of its own. It answers a wrong result, not a refusing provider: the first attempt of a task is speculative and cheap, while every later one exists because an earlier one was wrong and drags another review and another gate behind it. It is not the fallback model, which answers an environment failure and which the retry model itself escalates to.
+_Avoid_: fallback model, escalation model, strong model
+
 **Phase skill**:
 Instructions document injected into a phase's prompt (specs-kit-task-implementation, specs-kit-task-review, specs-kit-code-cleanup, specs-kit-sync), resolved by the fork bundled in the extension.
 _Avoid_: prompt template
