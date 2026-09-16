@@ -135,12 +135,16 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
       });
       // An abort without a stop request (phase interrupt) falls through
       // to the failure path and costs one attempt.
-      if (deps.stopping() === "now") return { kind: "stopped" };
+      if (deps.stopping() === "now") {
+        executor.finishPhase(impl.meterHandle, "halted", impl.hooksMs);
+        return { kind: "stopped" };
+      }
       if (!impl.preHooksOk) {
         notify(`pre-implementation hook failed (${id})`, "warning");
         state.retry_count++;
         await persist();
         io.runtime.implStatus = "pre-hook-failed";
+        executor.finishPhase(impl.meterHandle, "pre_hook_failed", impl.hooksMs);
         return { kind: "ok" };
       }
       // Checked before every other outcome: whichever way this attempt ends,
@@ -161,6 +165,7 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         await persist();
         notify(environmentFailureMessage("implementation", id, failure), "error");
         io.runtime.implStatus = "environment-failed";
+        executor.finishPhase(impl.meterHandle, "spawn_failed", impl.hooksMs);
         return { kind: "ok" };
       }
       if (failure) {
@@ -169,6 +174,7 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         await persist();
         io.runtime.failureDetail = `implementation ${failure.kind}: ${failure.detail}`;
         io.runtime.implStatus = "spawn-failed";
+        executor.finishPhase(impl.meterHandle, "spawn_failed", impl.hooksMs);
         return { kind: "ok" };
       }
       // The post hooks are the phase's own gate: the build does not compile
@@ -182,6 +188,7 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         io.runtime.failureDetail =
           "the post-implementation gate failed: " + impl.failedPostHooks.map((h) => h.command).join(", ");
         io.runtime.implStatus = "post-hook-failed";
+        executor.finishPhase(impl.meterHandle, "gate_failed", impl.hooksMs);
         return { kind: "ok" };
       }
       io.runtime.postHookFailures = null;
@@ -196,6 +203,7 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
           await persist();
           notify(protectedPathsWarning(id, changed), "warning");
           io.runtime.implStatus = "protected-paths-touched";
+          executor.finishPhase(impl.meterHandle, "protected_paths", impl.hooksMs);
           return { kind: "ok" };
         }
       }
@@ -212,10 +220,12 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
           await persist();
           notify(`implementation retry for ${id} changed nothing, task abandoned`, "warning");
           io.runtime.implStatus = "no-op-retry";
+          executor.finishPhase(impl.meterHandle, "unchanged_tree", impl.hooksMs);
           return { kind: "ok" };
         }
       }
       io.runtime.implStatus = "ok";
+      executor.finishPhase(impl.meterHandle, "passed", impl.hooksMs);
       return { kind: "ok" };
     },
 

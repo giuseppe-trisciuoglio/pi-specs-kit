@@ -77,7 +77,10 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
         firstAttempt: state.retry_count === 0,
         signal: deps.signal(),
       });
-      if (deps.stopping() === "now") return { kind: "stopped" };
+      if (deps.stopping() === "now") {
+        executor.finishPhase(cl.meterHandle, "halted", cl.hooksMs);
+        return { kind: "stopped" };
+      }
       if (!cl.preHooksOk || spawnFailed(cl.outcome)) notify(`cleanup failed for ${id}, continuing`, "warning");
       // A red post hook does not fail the phase — cleanup has no retry path —
       // but it must not vanish into a transient warning either: record it so
@@ -86,6 +89,11 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
         plan.state.postHookGateFailed = "cleanup";
         await persist();
       }
+      executor.finishPhase(
+        cl.meterHandle,
+        !cl.preHooksOk ? "pre_hook_failed" : spawnFailed(cl.outcome) ? "spawn_failed" : !cl.postHooksOk ? "gate_failed" : "passed",
+        cl.hooksMs,
+      );
       return { kind: "ok" };
     },
 
@@ -166,7 +174,10 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
         signal: deps.signal(),
       });
       io.runtime.runState.syncRan = true;
-      if (deps.stopping() === "now") return { kind: "stopped" };
+      if (deps.stopping() === "now") {
+        executor.finishPhase(sy.meterHandle, "halted", sy.hooksMs);
+        return { kind: "stopped" };
+      }
       if (!sy.preHooksOk || spawnFailed(sy.outcome)) notify(`sync failed for ${id}, continuing`, "warning");
       // Same rule as cleanup: the phase completes and never retries, so a red
       // post hook is recorded for the run close rather than dropped.
@@ -174,6 +185,11 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
         plan.state.postHookGateFailed = "sync";
         await persist();
       }
+      executor.finishPhase(
+        sy.meterHandle,
+        !sy.preHooksOk ? "pre_hook_failed" : spawnFailed(sy.outcome) ? "spawn_failed" : !sy.postHooksOk ? "gate_failed" : "passed",
+        sy.hooksMs,
+      );
       return { kind: "ok" };
     },
 
