@@ -12,7 +12,6 @@ import { loadFixPlan, type FixPlan } from "../src/fixplan/fix-plan.ts";
 import { LoopController } from "../src/loop/loop-controller.ts";
 import type { LedgerRow, PhaseLedgerRow } from "../src/measure/ledger.ts";
 import { readWalRows } from "../src/measure/wal.ts";
-import { spawnSync } from "node:child_process";
 
 const E2E_DIR = path.dirname(fileURLToPath(import.meta.url));
 const FAKE_BIN_DIR = path.join(E2E_DIR, "fake-bin");
