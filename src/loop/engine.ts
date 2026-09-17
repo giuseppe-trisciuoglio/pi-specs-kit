@@ -25,6 +25,7 @@ import { listModels, type ListedModel } from "./model-check.ts";
 import { TaskValidationError, taskValidationLines, taskValidationSummary } from "../tasks/task-validation.ts";
 import { prepareRun } from "./run-setup.ts";
 import { assembleRun } from "./run-assembly.ts";
+import { rangeStatsSummary } from "./range-stats.ts";
 import { walkSelection } from "./run-walk.ts";
 
 export interface LoopStartOptions {
@@ -271,6 +272,7 @@ export class LoopEngine {
           notify: (m, t) => this.#notify(m, t),
           persist: (p) => this.#persist(specDir, p),
           rangeClose: { projectRoot: config.projectRoot, specDir },
+          statsSummary: () => rangeStatsSummary(config, plan.spec_id),
         },
       );
     } catch (err) {

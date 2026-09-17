@@ -126,6 +126,15 @@ export interface PhaseHooks {
   post: string[];
 }
 
+/**
+ * Everything the loop can hang a shell command off: the four phases plus the
+ * checkpoint of a passed task. The checkpoint is not a phase — no agent runs
+ * there, no prompt is built — but it is the second level of the gate: the
+ * phase hooks run the scope of what the attempt touched, and the suite the
+ * project cannot afford per attempt runs here, once per task that passed.
+ */
+export type HookTarget = PhaseName | "checkpoint";
+
 export interface HooksConfig {
   /** Timeout for each hook command. */
   timeoutMs: number;
@@ -133,6 +142,11 @@ export interface HooksConfig {
   review: PhaseHooks;
   cleanup: PhaseHooks;
   sync: PhaseHooks;
+  /**
+   * Commands run after a passed task's checkpoint. Only the post stage is
+   * read: there is nothing before a checkpoint for a hook to precede.
+   */
+  checkpoint: PhaseHooks;
 }
 
 /**
@@ -237,6 +251,7 @@ export function defaultHooks(): HooksConfig {
     review: empty(),
     cleanup: empty(),
     sync: empty(),
+    checkpoint: empty(),
   };
 }
 
@@ -452,6 +467,16 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
     const ph = record(hooks[phase]);
     config.hooks[phase] = { pre: commandList(ph.pre), post: commandList(ph.post) };
   }
+  // The checkpoint accepts the map the phases use — only its post stage —
+  // and a bare command list, which is what the target reads as anyway.
+  const checkpoint = hooks.checkpoint;
+  config.hooks.checkpoint = {
+    pre: [],
+    post:
+      typeof checkpoint === "string" || Array.isArray(checkpoint)
+        ? commandList(checkpoint)
+        : commandList(record(checkpoint).post),
+  };
 
   config.knowledgeBase.files = commandList(record(doc.knowledge_base).files);
 

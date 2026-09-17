@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import YAML from "yaml";
 import { loadSpecsKitConfig } from "../src/config/specs-kit-config.ts";
 import { LoopEngine, type LoopEndReason } from "../src/loop/engine.ts";
 import { loadFixPlan, type FixPlan } from "../src/fixplan/fix-plan.ts";
@@ -26,12 +28,15 @@ const FAKE_VARS = [
   "FAKE_PI_STATE_FILE",
   "FAKE_PI_REVIEW_VERDICT",
   "FAKE_PI_SKIP_REVIEW_FILE",
-  "FAKE_PI_REVIEW_FAIL_TIMES",
+"FAKE_PI_REVIEW_FAIL_TIMES",
   "FAKE_PI_REVIEW_STATE_FILE",
   "FAKE_PI_PROMPT_LOG",
   "FAKE_PI_IMPL_WRITE",
+  "FAKE_PI_TOUCH_FILE",
   "HOME",
 ];
+
+const gitAvailable = spawnSync("git", ["--version"], { stdio: "ignore" }).status === 0;
 
 interface FakeProject {
   projectRoot: string;
@@ -139,6 +144,12 @@ test("e2e: full loop over three tasks completes with the expected fix plan", { t
       assert.deepEqual(row.usage, { input: 300, output: 30, cache_read: 0, cache_write: 0, total: 330 });
       assert.equal(row.model, "fake/fake-model");
       assert.ok(row.duration_ms >= 0);
+      // A clean run: every phase closes with a "passed" outcome. Only the
+      // phases that run hooks (not the learner) carry hooks_ms.
+      assert.equal(row.outcome, "passed", `${row.task}:${row.phase} should have passed`);
+      if (["implementation", "review", "sync"].includes(row.phase)) {
+        assert.ok((row.hooks_ms ?? -1) >= 0, `${row.task}:${row.phase} is missing hooks_ms`);
+      }
     }
     // Completed phases prune their raw rows from the write-ahead file.
     const walRows = readWalRows(
@@ -171,6 +182,21 @@ test("e2e: a failing implementation phase is retried and the loop completes", { 
     const plan = await loadFixPlan(project.specDir);
     assert.ok(plan);
     assert.deepEqual(plan.done, ["TASK-001", "TASK-002", "TASK-003"]);
+
+    // The failed and the successful attempt of the retried task each
+    // leave their own row, with the outcome that decided the retry.
+    const ledgerRows = (await readFile(path.join(project.projectRoot, "docs/specs/measurements.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as LedgerRow);
+    const implRows = ledgerRows.filter(
+      (r): r is PhaseLedgerRow => r.kind === "phase" && r.phase === "implementation" && r.task === "TASK-001",
+    );
+    assert.deepEqual(
+      implRows.map((r) => r.outcome),
+      ["spawn_failed", "passed"],
+      "the forced failure and the successful retry are both recorded",
+    );
   } finally {
     await rm(project.projectRoot, { recursive: true, force: true });
   }
@@ -325,5 +351,71 @@ test("e2e: refreshing the fix plan is refused while a loop is running", { timeou
     });
   } finally {
     await rm(project.projectRoot, { recursive: true, force: true });
+  }
+});
+
+/** Commit the throwaway project, so the gates have a HEAD to be told about. */
+function commitProject(projectRoot: string): void {
+  for (const args of [
+    ["init"],
+    ["config", "user.email", "loop@example.invalid"],
+    ["config", "user.name", "Loop E2E"],
+    ["add", "-A"],
+    ["commit", "-m", "the project before the loop"],
+  ]) {
+    assert.equal(spawnSync("git", args, { cwd: projectRoot, stdio: "ignore" }).status, 0, `git ${args[0]} failed`);
+  }
+}
+
+test("e2e: the gates are told which files the attempt stands on", { timeout: 120_000, skip: !gitAvailable }, async () => {
+  const project = await setupProject();
+  // Outside the project: a hook writing into the tree it reports on would
+  // show up in its own next report.
+  const hookOut = await mkdtemp(path.join(tmpdir(), "e2e-hooks-"));
+  try {
+    commitProject(project.projectRoot);
+    const touched = "src/touched-by-the-agent.txt";
+    const inline = (name: string): string =>
+      `printf '%s' "$SPECS_KIT_CHANGED_FILES" > ${path.join(hookOut, name)}`;
+    await writeFile(
+      path.join(project.projectRoot, "specs-kit.yaml"),
+      YAML.stringify({
+        version: "1",
+        hooks: {
+          timeout: "60s",
+          implementation: {
+            post: [
+              `${inline("implementation.txt")}; cat "$SPECS_KIT_CHANGED_FILES_PATH" > ${path.join(hookOut, "implementation-file.txt")}`,
+            ],
+          },
+          checkpoint: { post: [inline("checkpoint.txt")] },
+        },
+      }),
+      "utf8",
+    );
+
+    const result = await runLoop(project, {
+      FAKE_PI_TOUCH_FILE: path.join(project.projectRoot, touched),
+    });
+    assert.equal(result.reason, "completed");
+
+    // The gate of the implementation sees the file the phase just wrote...
+    const implSeen = await readFile(path.join(hookOut, "implementation.txt"), "utf8");
+    assert.ok(implSeen.split("\n").includes(touched), `the implementation gate saw: ${implSeen}`);
+    // ...and the same list is readable from the file, for a list too long to
+    // travel in an environment block.
+    assert.equal(await readFile(path.join(hookOut, "implementation-file.txt"), "utf8"), `${implSeen}\n`);
+
+    // The checkpoint gate is told the same thing, once per task that passed.
+    const checkpointSeen = await readFile(path.join(hookOut, "checkpoint.txt"), "utf8");
+    assert.ok(checkpointSeen.split("\n").includes(touched), `the checkpoint gate saw: ${checkpointSeen}`);
+    // The loop's own state file and logs are not work the gate has to cover.
+    assert.ok(
+      !checkpointSeen.split("\n").some((line) => line.includes("_ralph_loop")),
+      `the loop's own writes leaked into the gate scope: ${checkpointSeen}`,
+    );
+  } finally {
+    await rm(project.projectRoot, { recursive: true, force: true });
+    await rm(hookOut, { recursive: true, force: true });
   }
 });

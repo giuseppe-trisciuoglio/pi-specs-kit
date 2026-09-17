@@ -22,12 +22,12 @@ function windowsToastScript(title: string, body: string): string {
   const mgr = `[${type}.ToastNotificationManager, ${type}, ContentType = WindowsRuntime]`;
   const template = `[${type}.ToastTemplateType]::ToastText01`;
   const toast = `[${type}.ToastNotification]::new($xml)`;
-  const escaped = body.replace(/'/g, "''");
+  const escaped = body.replaceAll("'", "''");
   return [
     `${mgr} > $null`,
     `$xml = [${type}.ToastNotificationManager]::GetTemplateContent(${template})`,
     `$xml.GetElementsByTagName('text')[0].AppendChild($xml.CreateTextNode('${escaped}')) > $null`,
-    `[${type}.ToastNotificationManager]::CreateToastNotifier('${title.replace(/'/g, "''")}').Show(${toast})`,
+    `[${type}.ToastNotificationManager]::CreateToastNotifier('${title.replaceAll("'", "''")}').Show(${toast})`,
   ].join("; ");
 }
 
@@ -46,12 +46,26 @@ export function notificationSequence(title: string, body: string, env: NodeJS.Pr
   return `\x1b]777;notify;${t};${b}\x07`;
 }
 
+export interface PushNotifyDeps {
+  execFile?: (file: string, args: string[], callback: () => void) => void;
+}
+
 /** Fire a desktop notification. Never throws. */
-export function pushNotify(title: string, body: string, env: NodeJS.ProcessEnv = process.env): void {
+export function pushNotify(
+  title: string,
+  body: string,
+  env: NodeJS.ProcessEnv = process.env,
+  deps: PushNotifyDeps = {},
+): void {
   try {
     const sequence = notificationSequence(title, body, env);
     if (sequence === null) {
-      execFile("powershell.exe", ["-NoProfile", "-Command", windowsToastScript(title, body)], () => {});
+      // Never search the working directory or PATH for a notification executable.
+      (deps.execFile ?? execFile)(
+        String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
+        ["-NoProfile", "-Command", windowsToastScript(title, body)],
+        () => {},
+      );
       return;
     }
     process.stdout.write(sequence);

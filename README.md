@@ -57,13 +57,14 @@ For each task in the active range, the loop runs a fixed pipeline:
 |-------|--------------|
 | **implementation** | pre hooks → phase prompt → `pi` subprocess → post hooks. A failure consumes one attempt (`max_attempts`). |
 | **failure learner** | runs on a failed attempt, before the next one: records what stopped it as *blockers* in the fix plan, so the retry is handed the wall instead of re-deriving it. A blocker that no retry can clear — a contradiction in the task, a decision nobody made — ends the task on its second appearance and names it to the operator. |
-| **review** | must produce `tasks/<TASK>--review.md` with `review_status: PASSED\|FAILED`. The verdict is the only part the loop reads. A negative verdict sends the task back to implementation with the feedback, unless it repeats the previous one verbatim. |
+| **review** | must produce `tasks/<TASK>--review.md` with `review_status: PASSED\|FAILED`. The verdict is the only part the loop reads, and only four things make it negative: a blocking finding, an unmet acceptance criterion or DoD item, a spec conflict, an operator escalation — warnings and suggestions leave as routed suggestions instead. A negative verdict sends the task back to implementation with the feedback, unless it repeats the previous one verbatim. |
 | **cleanup** | skipped in `mode: fast`. |
 | **learner** | extracts the task's learnings and accumulates them in the fix plan; later tasks receive them as memory. Facts the failed attempts of the task had to establish are offered to it as candidates. |
 | **sync** | in fast mode, only after the last task of the range. |
 
-When the loop finishes a task it updates its frontmatter to `reviewed` and
-recomputes progress. State transitions are persisted atomically, so a crash at
+When the loop finishes a task it updates its frontmatter to `reviewed`,
+checkpoints the work and runs the `checkpoint` hooks — the second level of the
+gate, where the full suite belongs — then recomputes progress. State transitions are persisted atomically, so a crash at
 any point leaves a snapshot you can resume from.
 
 ## Commands
@@ -138,6 +139,8 @@ hooks:
   implementation:
     pre: ["npm run lint"]
     post: ["npm test"]
+  checkpoint:
+    post: ["npm run test:all"]
 knowledge_base:
   files: ["./docs/architecture.md"]
 ```
@@ -213,6 +216,55 @@ context and says so on its log.
 what it costs. The same applies to a fix routed to a task that is not still
 pending inside the range — the deferral is refused and the fix comes back to the
 task at hand.
+
+**Hooks, and what they are told.** Every phase has a `pre` and a `post` stage;
+the post stage of the implementation is the gate — red means the attempt is
+spent and the next one is shown the output. Each hook command runs through
+`/bin/sh` in the project root, with the loop's own environment plus two
+variables naming what the work stands on:
+
+| Variable | Value |
+|----------|-------|
+| `SPECS_KIT_CHANGED_FILES` | the paths that differ from the last commit, newline-separated, relative to the project root |
+| `SPECS_KIT_CHANGED_FILES_PATH` | a file holding the same list, one path per line, for a list too long for an environment block |
+
+Both are empty when the list cannot be read — outside a git repository, on a
+git failure, or on a clean tree — so a command that finds them empty has been
+told nothing and should run its full scope. The list is the work of the current
+task, across all its attempts, and never includes what the loop itself writes
+(the fix plan, the phase logs, the generated graph).
+
+A gate that uses them runs the scope of the attempt instead of the whole suite.
+For a Maven project:
+
+```yaml
+hooks:
+  timeout: 20m
+  implementation:
+    post:
+      - |
+        set -eu
+        [ -n "$SPECS_KIT_CHANGED_FILES" ] || exec ./mvnw -q verify
+        MODULES=$(printf '%s\n' "$SPECS_KIT_CHANGED_FILES" | cut -d/ -f1 | sort -u | paste -sd, -)
+        ./mvnw -q -pl "$MODULES" -am verify
+  checkpoint:
+    post: ["./mvnw -q verify"]
+```
+
+**The second level of the gate** is `hooks.checkpoint.post`: the commands that
+run after the checkpoint of a task that passed its review — where the suite the
+phases cannot afford once per attempt belongs. It is not a phase: it has no
+`pre` stage (nothing precedes a checkpoint), and a bare list
+(`checkpoint: ["./mvnw verify"]`) is read as its post stage. The changed files
+are taken before the checkpoint commit, so the hooks still see what the task
+touched. A red one is recorded rather than retried — the task passed and is
+committed, so there is no attempt left to spend — and the range close names it,
+like the gate of any other phase without a retry path.
+
+On the project side, a suite that starts containers is worth making reusable
+(for Testcontainers, `testcontainers.reuse.enable=true` in `~/.testcontainers.properties`):
+the scoped gate runs more often than the full one, and paying for a fresh
+Postgres on each run gives back what the narrower scope saved.
 
 **When the range closes**, the loop re-derives two claims it can check without a
 model: every coverage-matrix row marked implemented or verified must cite a test

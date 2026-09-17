@@ -27,6 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A two-level gate.** Every hook command is now told which files the work
+  stands on — `SPECS_KIT_CHANGED_FILES` (newline-separated, relative to the
+  project root) and `SPECS_KIT_CHANGED_FILES_PATH` (the same list in a file) —
+  so the gate of a phase can compile and test that scope instead of the whole
+  suite on every attempt. Both variables are empty when the tree cannot be read,
+  which a hook should treat as "run everything". The suite moves to the new
+  `hooks.checkpoint.post`, which runs after the checkpoint of each task that
+  passed its review; a red one is recorded and named at the range close, like
+  the gate of any other phase without a retry path. See `docs/adr/0039`.
+
 - **A stronger model once an attempt has failed.** A role can declare
   `<role>_retry_model`, with an optional `<role>_retry_thinking_level` and
   `<role>_retry_from_attempt` (2 by default): from that attempt onwards the

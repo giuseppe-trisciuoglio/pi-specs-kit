@@ -81,6 +81,7 @@ async function harness(script: (spawn: number) => PhaseStepResult): Promise<Harn
       prompts.push(input);
       return script(++spawns);
     },
+    finishPhase: () => {},
   } as unknown as PhaseExecutor;
 
   return {
@@ -299,6 +300,7 @@ test("a prior verdict is archived before the canonical report is wiped", async (
       );
       return okResult;
     },
+    finishPhase: () => {},
   } as unknown as PhaseExecutor;
   const deps: ReviewStepDeps = {
     config,
@@ -346,6 +348,7 @@ test("a red post-hook gate after the review is recorded on the run", async () =>
         ],
       };
     },
+    finishPhase: () => {},
   } as unknown as PhaseExecutor;
   const deps: ReviewStepDeps = {
     config,
@@ -381,6 +384,7 @@ async function reportingHarness(
       if (content !== undefined) await writeFile(reviewFilePath(specDir, "TASK-001"), content, "utf8");
       return okResult;
     },
+    finishPhase: () => {},
   } as unknown as PhaseExecutor;
   return {
     plan,
