@@ -60,8 +60,17 @@ export interface RunConfig {
   maxSpawnsPerTask: number;
   /** Agent subprocesses the whole run may spend. */
   maxSpawnsPerRun: number;
-  /** Wall-clock limit of the whole run. */
+  /**
+   * Wall-clock the run is expected to fit in. Soft: crossing it warns once and
+   * the run carries on, because a run slower than planned is ordinary work.
+   */
   maxRunDurationMs: number;
+  /**
+   * Wall-clock the run may never cross: it halts there, which is the ceiling
+   * that exists against a runaway. Null when the file leaves it out, and the
+   * budget then derives it from the soft one.
+   */
+  maxRunDurationHardMs: number | null;
   /**
    * Let sync correct source-of-truth context documents (AGENTS.md,
    * architecture.md, ontology.md, .pi/rules) when a consolidated learning
@@ -198,6 +207,7 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
   maxSpawnsPerTask: 8,
   maxSpawnsPerRun: 60,
   maxRunDurationMs: 6 * 60 * 60 * 1000,
+  maxRunDurationHardMs: null,
   reconcileContext: false,
   autoCompact: false,
   autoCompactThresholdPercent: DEFAULT_AUTO_COMPACT_PERCENT,
@@ -408,6 +418,8 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
   run.maxSpawnsPerTask = count(src.max_spawns_per_task, 1) ?? run.maxSpawnsPerTask;
   run.maxSpawnsPerRun = count(src.max_spawns_per_run, 1) ?? run.maxSpawnsPerRun;
   run.maxRunDurationMs = positiveDuration(src.max_run_duration, file, "run.max_run_duration") ?? run.maxRunDurationMs;
+  run.maxRunDurationHardMs =
+    positiveDuration(src.max_run_duration_hard, file, "run.max_run_duration_hard") ?? run.maxRunDurationHardMs;
   run.reconcileContext = flag(src.reconcile_context) ?? run.reconcileContext;
   run.autoCompact = flag(src.auto_compact) ?? run.autoCompact;
   run.autoCompactThresholdPercent = thresholdPercent(src.auto_compact_threshold) ?? run.autoCompactThresholdPercent;

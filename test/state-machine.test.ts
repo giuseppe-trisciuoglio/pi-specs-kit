@@ -119,6 +119,8 @@ interface RunResult {
   calls: SpawnCall[];
   checkpoints: string[];
   notifications: { message: string; type: string }[];
+  /** Desktop notifications the run fired, captured instead of written out. */
+  pushes: { title: string; body: string }[];
   states: LoopState[];
   engine: LoopEngine;
 }
@@ -151,6 +153,7 @@ async function runLoop(
   const counts = new Map<string, number>();
   const checkpoints: string[] = [];
   const notifications: { message: string; type: string }[] = [];
+  const pushes: { title: string; body: string }[] = [];
   const states: LoopState[] = [];
 
   let engine: LoopEngine;
@@ -206,6 +209,7 @@ async function runLoop(
       workspaceFingerprint,
       refreshCodebaseGraph,
       now: () => FIXED_NOW,
+      pushNotify: (title, body) => pushes.push({ title, body }),
     },
     {
       onStateChange: (plan) => states.push({ ...plan.state }),
@@ -216,7 +220,7 @@ async function runLoop(
   const result = await engine.start({ specDir, ...startOpts });
   const plan = await loadFixPlan(specDir);
   assert.ok(plan, "fix plan persisted");
-  return { result, plan, calls, checkpoints, notifications, states, engine };
+  return { result, plan, calls, checkpoints, notifications, pushes, states, engine };
 }
 
 const sequence = (calls: SpawnCall[]): string[] => calls.map((c) => `${c.task}:${c.phase}`);
@@ -884,6 +888,21 @@ test("the per-run spawn ceiling stops the range partway through", async () => {
   assert.match(run.result.error ?? "", /run budget exhausted/);
   assert.deepEqual(run.plan.done, ["TASK-001"], "the work already finished stays done");
   assert.equal(run.calls.length, 3);
+  // A ceiling fires after hours of unattended work: the in-session message
+  // alone would be read the next morning.
+  assert.equal(run.pushes.length, 1);
+  assert.equal(run.pushes[0].title, "specs-kit");
+  assert.match(run.pushes[0].body, /Loop halted: run budget exhausted/);
+});
+
+test("a run that ends on its own terms pushes nothing", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(root, specDir, () => {}, (config) => {
+    config.mode = "fast";
+  });
+
+  assert.equal(run.result.reason, "completed");
+  assert.deepEqual(run.pushes, [], "only a halt is worth interrupting the operator for");
 });
 
 test("continue on failure skips to the next task", async () => {

@@ -19,7 +19,11 @@ delivery pipeline you can watch and steer in plain English.
 - **Kill-safe by design.** State lives in an atomically rewritten `fix_plan.json`;
   `--resume` restarts exactly where it stopped, `--force` resets it.
 - **Bounded spend.** `max_attempts`, `max_spawns_per_task`, `max_spawns_per_run` and
-  `max_run_duration` keep an agent that won't converge from burning tokens forever.
+  `max_run_duration_hard` keep an agent that won't converge from burning tokens
+  forever. The wall clock has two levels: `max_run_duration` is how long the run is
+  expected to take and only warns when crossed, `max_run_duration_hard` is the one
+  that halts. Every ceiling follows the yaml file while the run is live — raise one
+  mid-run and the next phase reads the new value, no stop and no `--resume`.
 - **Observable.** A live widget shows spec / task / phase / attempt / progress and
   the last line of the agent stream; the attach view renders the running phase like
   an interactive session (markdown, thinking blocks, tool rows, diffs).
@@ -123,7 +127,8 @@ run:
   continue_on_failure: false
   max_spawns_per_task: 8
   max_spawns_per_run: 60
-  max_run_duration: 6h
+  max_run_duration: 6h       # expected: crossing it warns once, the run continues
+  max_run_duration_hard: 18h # the ceiling that halts; omitted, it is 3x the above
   auto_compact: false
   auto_compact_threshold: 50
   protect_spec_artifacts: true
@@ -262,7 +267,8 @@ subprocess whatever phase asks for it:
 |-----|---------|--------|
 | `run.max_spawns_per_task` | 8 | Agent sessions one task may spend across all its phases. |
 | `run.max_spawns_per_run` | 60 | Agent sessions the whole run may spend. |
-| `run.max_run_duration` | 6h | Wall-clock time of the whole run. |
+| `run.max_run_duration` | 6h | How long the run is expected to take. Crossing it warns once; the run continues. |
+| `run.max_run_duration_hard` | 3 x `max_run_duration` | Wall-clock time the run may never cross: it halts there and pushes a desktop notification. |
 
 Crossing one ends the run with `state.step: failed` and the reason in
 `state.error`, whatever `continue_on_failure` says: a budget already exhausted

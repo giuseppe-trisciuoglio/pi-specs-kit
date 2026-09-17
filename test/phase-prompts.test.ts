@@ -113,7 +113,7 @@ async function harness(opts: { preHooks?: HookResult[]; postHooks?: HookResult[]
   const executor = new PhaseExecutor({
     config,
     specDir,
-    budget: new LoopBudget({ maxSpawnsPerTask: 50, maxSpawnsPerRun: 50, maxRunDurationMs: 3_600_000 }),
+    budget: new LoopBudget({ maxSpawnsPerTask: 50, maxSpawnsPerRun: 50, maxRunDurationMs: 3_600_000, maxRunDurationHardMs: null }),
     spawnPhase: async (opts: PhaseSpawnOptions) => {
       prompts.push(opts.prompt);
       return okOutcome;

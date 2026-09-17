@@ -57,7 +57,13 @@ declared. The snapshot was a property of the loader, not of the readers.
 - The run ceilings follow the file: `LoopBudget.reconfigure` re-applies the
   limits on every successful reload while the counters and the start timestamp
   carry over, so raising a ceiling mid-run lets a run continue that would have
-  halted, and lowering one tightens a run that is spending too much.
+  halted, and lowering one tightens a run that is spending too much. This is
+  the answer to a run about to stop on its wall clock: edit
+  `max_run_duration_hard` in the file and the next phase reads the new number —
+  no stop, no `--resume`. Amended by `docs/adr/0040`, which split the wall
+  clock into an expected duration that warns and a hard one that halts; both
+  travel through the same reconfigure, and moving the expected one re-arms its
+  warning.
 - The learner spawns read the values of the most recent phase reload; knobs
   consumed once at start stay start-time — the task range, the resume anchor,
   the selected spec — and editing them mid-run has no effect on the walk in

@@ -136,7 +136,8 @@ The yaml configuration at `specs-kit.yaml` is the operator-facing surface. Each 
 | `run.no_commit` | bool | `true` | Per-task checkpoint gate **only** (the call site in `src/loop/graph/task-nodes-tail.ts` checks it, not the `commitCheckpoint` helper itself) | ADR-0007 + technical-plan AD-002 |
 | `run.continue_on_failure` | bool | `false` | Funnel failures of the task | — |
 | `run.max_spawns_per_task` / `run.max_spawns_per_run` | int | `8` / `60` | Budgets | — |
-| `run.max_run_duration` | duration string | `6h` | Run budget | — |
+| `run.max_run_duration` | duration string | `6h` | Run budget: soft, crossing it warns once and the run continues | ADR-0040 |
+| `run.max_run_duration_hard` | duration string | 3 x `max_run_duration` | Run budget: hard, crossing it halts the run and pushes a desktop notification | ADR-0040 / ADR-0041 |
 | `run.reconcile_context` | bool | `false` | Sync phase | — |
 | `run.auto_compact` | bool | `false` | Phase spawn: loads the compaction extension into the phase subprocess | ADR-0031 |
 | `run.auto_compact_threshold` | int (10-90) | `50` | Share of the model context window at which a phase summarizes itself | ADR-0031 |
@@ -150,6 +151,8 @@ The yaml configuration at `specs-kit.yaml` is the operator-facing surface. Each 
 | `prompts.system_overrides.{phase}.{mode,source,file,text}` | nested | per phase | Prompt injection | — |
 
 Unknown top-level or nested keys are ignored; only modeled keys are written back by the config writer.
+
+**The file is live.** The loop re-reads `specs-kit.yaml` before every phase (ADR-0026), so editing a behavioural key while a run is in progress takes effect at the next phase boundary — no stop, no `--resume`. This is how a run about to halt on its wall clock is rescued: raise `run.max_run_duration_hard` in the file and the next phase reads the new number. The run ceilings travel through `LoopBudget.reconfigure`, which carries the counters and the start timestamp over, so a raised ceiling extends the run in progress instead of restarting its accounting. The structural anchors (`projectRoot`, `specs_dir`, the active `spec`) and the knobs consumed once at start (the task range, the resume anchor) stay frozen at the start values.
 
 ### 3.3 Architectural Style
 

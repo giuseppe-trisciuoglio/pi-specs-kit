@@ -84,11 +84,15 @@ export function assembleRun(deps: RunAssemblyDeps): AssembledRun {
     }
   }
 
-  const budget = new LoopBudget({
-    maxSpawnsPerTask: config.run.maxSpawnsPerTask,
-    maxSpawnsPerRun: config.run.maxSpawnsPerRun,
-    maxRunDurationMs: config.run.maxRunDurationMs,
-  });
+  const budget = new LoopBudget(
+    {
+      maxSpawnsPerTask: config.run.maxSpawnsPerTask,
+      maxSpawnsPerRun: config.run.maxSpawnsPerRun,
+      maxRunDurationMs: config.run.maxRunDurationMs,
+      maxRunDurationHardMs: config.run.maxRunDurationHardMs,
+    },
+    { notify: (m, t) => deps.notify(m, t) },
+  );
 
   // The reload swaps the run options in place, so the ceilings have to be
   // re-applied explicitly: the budget copied them into its own limits.
@@ -100,6 +104,7 @@ export function assembleRun(deps: RunAssemblyDeps): AssembledRun {
         maxSpawnsPerTask: cfg.run.maxSpawnsPerTask,
         maxSpawnsPerRun: cfg.run.maxSpawnsPerRun,
         maxRunDurationMs: cfg.run.maxRunDurationMs,
+        maxRunDurationHardMs: cfg.run.maxRunDurationHardMs,
       }),
   });
 

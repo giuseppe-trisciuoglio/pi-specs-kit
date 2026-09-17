@@ -44,6 +44,7 @@ export type RunField =
   | "max_spawns_per_task"
   | "max_spawns_per_run"
   | "max_run_duration"
+  | "max_run_duration_hard"
   | "reconcile_context"
   | "auto_compact"
   | "auto_compact_threshold"
