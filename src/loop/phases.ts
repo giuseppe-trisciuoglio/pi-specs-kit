@@ -10,7 +10,8 @@ import { PHASE_ROLE, type PhaseName, type SpecsKitConfig } from "../config/specs
 import type { TaskFile } from "../tasks/task-parser.ts";
 import type { PiStreamEvent } from "../agent/json-stream.ts";
 import type { PhaseRunOutcome, PhaseSpawnOptions } from "../agent/spawner.ts";
-import type { PhaseMeter } from "../measure/phase-meter.ts";
+import type { PhaseHandle, PhaseMeter } from "../measure/phase-meter.ts";
+import type { PhaseOutcome } from "../measure/ledger.ts";
 import type { LoopBudget } from "./budget.ts";
 import type { HookResult } from "./hooks.ts";
 import { runPhaseHooks } from "./hooks.ts";
@@ -70,6 +71,15 @@ export interface PhaseStepResult {
    * the full result list. */
   failedPostHooks: HookResult[];
   outcome: PhaseRunOutcome | null;
+  /**
+   * The open measurement handle of this attempt, null when no meter is
+   * configured. The caller judges what this phase result means for the
+   * task — a verdict, a no-op retry, a protected-paths rejection — so it is
+   * the caller, not this method, that closes the row with `finishPhase`.
+   */
+  meterHandle?: PhaseHandle | null;
+  /** Time spent in pre/post hooks for this attempt. */
+  hooksMs?: number;
 }
 
 export type { SystemPromptOverrideText } from "./phase-context.ts";
@@ -145,15 +155,28 @@ export class PhaseExecutor {
     // as they did when the flag defaulted on the wide signature.
     const blockOnFailure = "firstAttempt" in input ? input.firstAttempt : true;
     // The handle spans hooks and subprocess alike: the phase duration in the
-    // ledger is the whole step, not just the agent session.
+    // ledger is the whole step, not just the agent session. Closing it is the
+    // caller's job (see `finishPhase` below): only the caller knows whether
+    // this attempt passed, needs a retry, or changed nothing.
     const meterHandle = this.#context.beginMeter(input.specId, task.frontmatter.id, phase, input.attempt, role);
+    const hookDuration = (results: HookResult[]): number => results.reduce((sum, r) => sum + (r.durationMs ?? 0), 0);
+    let hooksMs = 0;
     try {
       const preResults = await this.#deps.runHooks(config.hooks, phase, "pre", config.projectRoot, {
         onStdoutLine: (line) => this.#deps.onLogLine(`[pre-${phase}] ${line}`),
         onStderrLine: (line) => this.#deps.onLogLine(`[pre-${phase}] ! ${line}`),
       });
+      hooksMs += hookDuration(preResults);
       if (preResults.some((r) => !r.ok) && blockOnFailure) {
-        return { preHooksOk: false, hookResults: preResults, postHooksOk: true, failedPostHooks: [], outcome: null };
+        return {
+          preHooksOk: false,
+          hookResults: preResults,
+          postHooksOk: true,
+          failedPostHooks: [],
+          outcome: null,
+          meterHandle,
+          hooksMs,
+        };
       }
       const { prompt, systemPromptOverride } = await this.#context.buildPrompt(phase, input, preResults);
       const { outcome } = await this.#spawner.spawn(
@@ -168,6 +191,7 @@ export class PhaseExecutor {
         onStdoutLine: (line) => this.#deps.onLogLine(`[post-${phase}] ${line}`),
         onStderrLine: (line) => this.#deps.onLogLine(`[post-${phase}] ! ${line}`),
       });
+      hooksMs += hookDuration(postResults);
       const failedPost = postResults.find((r) => !r.ok);
       if (failedPost) this.#deps.onNotify(`post-${phase} hook failed: ${failedPost.command}`, "warning");
       return {
@@ -176,10 +200,29 @@ export class PhaseExecutor {
         postHooksOk: !failedPost,
         failedPostHooks: failedPost ? postResults.filter((r) => !r.ok) : [],
         outcome,
+        meterHandle,
+        hooksMs,
       };
-    } finally {
-      if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
+    } catch (err) {
+      // A phase that throws (the environment streak, a hook runner failure)
+      // never reaches the caller to close its own row: this is the one case
+      // where the executor closes it itself, so the ledger keeps one row per
+      // attempt even when the run aborts on top of it.
+      if (meterHandle) this.#deps.meter?.finishPhase(meterHandle, { outcome: "spawn_failed", hooksMs });
+      throw err;
     }
+  }
+
+  /**
+   * Close the measurement of a phase attempt with the outcome the caller
+   * judged: a review verdict, a no-op retry, a protected-paths rejection, or
+   * simply pass/fail. A no-op when there is no handle to close — tests that
+   * do not care about the ledger, or a phase attempt the caller never
+   * received (see the catch branch of `run` above).
+   */
+  finishPhase(handle: PhaseHandle | null | undefined, outcome: PhaseOutcome, hooksMs = 0): void {
+    if (!handle) return;
+    this.#deps.meter?.finishPhase(handle, { outcome, hooksMs });
   }
 
   /**
