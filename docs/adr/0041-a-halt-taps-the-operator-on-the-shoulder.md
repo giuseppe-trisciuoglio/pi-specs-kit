@@ -41,6 +41,13 @@ finished with what it could do and had no way to say so out loud.
   environmental streak into a halt, and takes it as an injectable dependency
   (`EngineDeps.pushNotify`) so the test suite observes the call instead of
   writing escape sequences into the test output.
+- Windows Terminal invokes PowerShell only at the fixed absolute path
+  `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, never through
+  the working directory or `PATH`. This assumes the Windows system directory
+  is protected by OS permissions. A nonstandard installation without that
+  executable skips the toast, best-effort; there is no `PATH` fallback.
+  The subprocess dependency is injectable so tests verify the executable and
+  argument escaping without displaying notifications.
 - Only a halt pushes. A completed run, a stopped run and an ordinary failed
   task stay on the in-session channel: a notification that fires for everything
   is one the operator learns to ignore, and the halt is the event that leaves

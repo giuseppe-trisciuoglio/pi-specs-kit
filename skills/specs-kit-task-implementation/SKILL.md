@@ -320,6 +320,11 @@ This command implements a specific task following a focused workflow:
 1. Run the project's build/compile command to ensure no syntax errors
 2. Run relevant unit and integration tests:
    - Identify existing tests for modified components
+   - Run only the tests that cover what you touched: the modules, packages or
+     files you changed. Do not run the whole suite — the gate that follows this
+     phase runs the same scope for you, and the full suite runs at the
+     checkpoint of a task that passed its review. A full suite run inside the
+     phase pays for itself two more times before the task is done.
    - Run them to ensure no regressions
 3. Create new tests for the implemented functionality:
    - Follow the test instructions in the task description

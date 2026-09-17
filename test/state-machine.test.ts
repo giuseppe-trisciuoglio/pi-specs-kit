@@ -10,6 +10,7 @@ import { LoopEngine, type LoopEndReason, type LoopStartOptions } from "../src/lo
 import type { PhaseRunOutcome, PhaseSpawnOptions } from "../src/agent/spawner.ts";
 import { runPhaseHooks, type HookResult } from "../src/loop/hooks.ts";
 import { reviewFilePath } from "../src/loop/review-report.ts";
+import { ledgerPath, type LedgerRow, type PhaseLedgerRow } from "../src/measure/ledger.ts";
 
 const tmpDirs: string[] = [];
 after(async () => {
@@ -437,6 +438,63 @@ test("happy path full mode: three tasks, all phases, frontmatter and checkpoints
     assert.equal(task.frontmatter.reviewedDate, FIXED_DATE);
   }
   assert.ok(run.states.length > 0, "state changes emitted");
+});
+
+test("the checkpoint of a passed task runs its own gate, once per task", async () => {
+  const { root, specDir } = await createSpec();
+  const stages: string[] = [];
+  const run = await runLoop(
+    root,
+    specDir,
+    () => {},
+    (config) => {
+      config.hooks.checkpoint = { pre: [], post: ["the whole suite"] };
+    },
+    {},
+    async (_hooks, target, stage) => {
+      stages.push(`${target}:${stage}`);
+      return [];
+    },
+  );
+
+  assert.equal(run.result.reason, "completed");
+  assert.deepEqual(
+    stages.filter((s) => s.startsWith("checkpoint")),
+    ["checkpoint:post", "checkpoint:post", "checkpoint:post"],
+    "one full-suite run per task that passed, not one per attempt",
+  );
+});
+
+test("a red checkpoint gate is recorded and named at the range close, the run walks on", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(
+    root,
+    specDir,
+    () => {},
+    (config) => {
+      config.hooks.checkpoint = { pre: [], post: ["the whole suite"] };
+    },
+    {},
+    async (_hooks, target) =>
+      target === "checkpoint"
+        ? [{ command: "the whole suite", ok: false, exitCode: 1, timedOut: false, output: "2 tests failed" }]
+        : [],
+  );
+
+  // The task passed its review and is committed: there is no attempt left to
+  // spend on the red suite, so it is recorded exactly like the gate of any
+  // other phase without a retry path.
+  assert.equal(run.result.reason, "completed");
+  assert.deepEqual(run.plan.done, ["TASK-001", "TASK-002", "TASK-003"]);
+  assert.ok(
+    run.notifications.some((n) => n.type === "warning" && n.message.includes("checkpoint hook failed after TASK-001")),
+    JSON.stringify(run.notifications),
+  );
+  assert.ok(
+    run.notifications.some((n) => n.message.includes("failed post-hook gate: the checkpoint")),
+    "the range close names the gate",
+  );
+  assert.equal(run.plan.state.postHookGateFailed, null, "the notice is cleared once it has been given");
 });
 
 test("fast mode: cleanup and frontmatter rewrite skipped, sync only on the last task", async () => {
@@ -1001,6 +1059,18 @@ test("rejected review feeds back into the next implementation prompt", async () 
   assert.ok(retries[1].prompt.includes("<review_feedback>"));
   assert.ok(retries[1].prompt.includes("Found problems"));
   assert.ok(retries[1].prompt.includes("Missing input validation"));
+
+  // The ledger keeps one row per review spawn, and the outcome names why
+  // each one ended: the rejected first attempt, the accepted second.
+  const config = await loadSpecsKitConfig(root);
+  const rows = (await readFile(ledgerPath(config.projectRoot, config.specsDir), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as LedgerRow);
+  const reviewRows = rows.filter(
+    (r): r is PhaseLedgerRow => r.kind === "phase" && r.task === "TASK-001" && r.phase === "review",
+  );
+  assert.deepEqual(reviewRows.map((r) => r.outcome), ["review_failed", "passed"]);
 });
 
 test("missing review file triggers review file retries and re-spawns", async () => {
@@ -1381,6 +1451,16 @@ test("a red implementation post hook fails the attempt and does not reach review
   const review = run.calls.find((c) => c.task === "TASK-001" && c.phase === "review");
   assert.ok(review, "the reviewer is only spawned after a green gate");
   assert.ok(run.plan.done.includes("TASK-001"), "the task completes once the gate is green");
+
+  const config = await loadSpecsKitConfig(root);
+  const rows = (await readFile(ledgerPath(config.projectRoot, config.specsDir), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as LedgerRow);
+  const implRows = rows.filter(
+    (r): r is PhaseLedgerRow => r.kind === "phase" && r.task === "TASK-001" && r.phase === "implementation",
+  );
+  assert.deepEqual(implRows.map((r) => r.outcome), ["gate_failed", "passed"]);
 });
 
 test("with attempts exhausted a red implementation post hook closes the task through the funnel", async () => {

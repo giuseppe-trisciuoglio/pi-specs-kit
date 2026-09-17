@@ -7,8 +7,8 @@
 import path from "node:path";
 import type { PiStreamEvent } from "../agent/json-stream.ts";
 import { assistantText, formatStreamEvent } from "../agent/stream-format.ts";
-import { classifyPhaseFailure } from "./phase-failure.ts";
 import { attemptModel, type AttemptModel } from "./phase-escalation.ts";
+import { classifyPhaseFailure, spawnFailed } from "./phase-failure.ts";
 import type { PhaseRunOutcome, PhaseSpawnOptions } from "../agent/spawner.ts";
 import type { RoleName, SpecsKitConfig } from "../config/specs-kit-config.ts";
 import type { RoutedSuggestion } from "./review-report.ts";
@@ -379,8 +379,9 @@ export class PhaseSpawner {
   ): Promise<LearnerResult> {
     const spec = path.basename(this.#deps.specDir);
     const meterHandle = this.#deps.beginMeter(spec, task.frontmatter.id, "learner", 1, "learner");
+    let result: LearnerResult | undefined;
     try {
-      return await this.spawn(
+      result = await this.spawn(
         {
           taskId: task.frontmatter.id,
           label: "learner",
@@ -392,8 +393,11 @@ export class PhaseSpawner {
         true,
         meterHandle,
       );
+      return result;
     } finally {
-      if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
+      if (meterHandle) {
+        this.#deps.meter?.finishPhase(meterHandle, { outcome: spawnFailed(result?.outcome ?? null) ? "spawn_failed" : "passed" });
+      }
     }
   }
 
@@ -406,8 +410,9 @@ export class PhaseSpawner {
   async runFailureLearner(task: TaskFile, input: FailureLearnerInput): Promise<LearnerResult> {
     const spec = path.basename(this.#deps.specDir);
     const meterHandle = this.#deps.beginMeter(spec, task.frontmatter.id, "failure_learner", input.attempt, "learner");
+    let result: LearnerResult | undefined;
     try {
-      return await this.spawn(
+      result = await this.spawn(
         {
           taskId: task.frontmatter.id,
           label: "failure_learner",
@@ -426,8 +431,11 @@ export class PhaseSpawner {
         true,
         meterHandle,
       );
+      return result;
     } finally {
-      if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
+      if (meterHandle) {
+        this.#deps.meter?.finishPhase(meterHandle, { outcome: spawnFailed(result?.outcome ?? null) ? "spawn_failed" : "passed" });
+      }
     }
   }
 
@@ -446,17 +454,20 @@ export class PhaseSpawner {
       learnings.map((l) => `- ${l}`).join("\n"),
     ].join("\n");
     const meterHandle = this.#deps.beginMeter(path.basename(this.#deps.specDir), "learnings", "compact", 1, "learner");
+    let result: LearnerResult | undefined;
     try {
-      const { text } = await this.spawn(
+      result = await this.spawn(
         { taskId: "learnings", label: "compact", role: "learner", prompt },
         undefined,
         opts?.signal,
         true,
         meterHandle,
       );
-      return parseLearnings(text);
+      return parseLearnings(result.text);
     } finally {
-      if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
+      if (meterHandle) {
+        this.#deps.meter?.finishPhase(meterHandle, { outcome: spawnFailed(result?.outcome ?? null) ? "spawn_failed" : "passed" });
+      }
     }
   }
 
