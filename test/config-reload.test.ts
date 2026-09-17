@@ -256,6 +256,7 @@ test("the executor awaits the reload before the pre-hooks of the phase", async (
     postHookFailures: null,
     upstreamProvides: [],
     routedSuggestions: [],
+    brief: null,
     firstAttempt: true,
   };
   await executor.run("implementation", input);

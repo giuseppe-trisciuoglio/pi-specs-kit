@@ -21,6 +21,7 @@ function makeConfig(overrides: Partial<SpecsKitConfig> = {}): SpecsKitConfig {
     specsDir: "specs",
     mode: "full",
     pollIntervalMs: 1000,
+    brief: { enabled: false },
     roles: defaultRoles(),
     reviewPanel: [],
     run: { ...DEFAULT_RUN_CONFIG },

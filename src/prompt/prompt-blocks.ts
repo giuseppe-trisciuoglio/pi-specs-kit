@@ -52,6 +52,9 @@ export interface PromptContext {
   upstreamProvides?: string[];
   /** Fixes reviewers routed to this task from earlier completed tasks. */
   routedSuggestions?: RoutedSuggestion[];
+  /** The reading brief produced for this task, verbatim; every attempt of
+   * the task receives it instead of re-deriving the reconnaissance. */
+  brief?: string | null;
   /** Project-level learnings accumulated across specs. */
   projectLearnings?: string[];
   /** Spec documents inlined for the phases that read the spec folder. */
@@ -284,6 +287,25 @@ export function retryReviewBlock(findings: string[] | undefined, diff: AttemptDi
     );
   }
   return `<retry_review>\n${lines.join("\n")}\n</retry_review>`;
+}
+
+/**
+ * The reading brief of the task, present on every implementation attempt
+ * once the brief node has produced it. Its own block, not folded into the
+ * memory: the brief is a per-task reading list with a lifespan of one task,
+ * while the memory channels outlive it — and an agent that reads the brief
+ * as a project rule would generalize a local file list.
+ */
+export function briefBlock(brief: string | null | undefined): string | null {
+  if (!brief?.trim()) return null;
+  const lines = [
+    "The reading brief below was prepared for this task before your first attempt:",
+    "files to touch, patterns the area follows, tests to run. Start from it instead of",
+    "re-deriving the reconnaissance; verify a claim only when you are about to rely on it.",
+    "",
+    brief.trim(),
+  ];
+  return `<task_brief>\n${lines.join("\n")}\n</task_brief>`;
 }
 
 /** Contracts from upstream tasks the current task depends on. */

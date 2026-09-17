@@ -1,5 +1,5 @@
 /**
- * Pre-flight validation of the models configured for the five roles against
+ * Pre-flight validation of the models configured for the roles against
  * the catalogue the agent CLI actually knows. A mistyped model id is only
  * discovered at spawn time today, once per attempt; checking it before the
  * loop starts turns an infrastructure failure into a cheap refusal. The CLI
@@ -55,7 +55,7 @@ export function parseModelList(output: string): ListedModel[] {
 }
 
 /**
- * The models configured for the five roles, with "auto" and empty values
+ * The models configured for the roles, with "auto" and empty values
  * dropped: both mean the CLI picks the model, so there is nothing to check.
  *
  * A declared retry model is one of these, not an escalation: every attempt
@@ -66,6 +66,10 @@ export function parseModelList(output: string): ListedModel[] {
 export function configuredModels(config: SpecsKitConfig): ConfiguredModel[] {
   const models: ConfiguredModel[] = [];
   for (const role of ROLE_NAMES) {
+    // The reading brief spawns only when enabled, and its default model is
+    // the learner's: checking an unused or inherited id would refuse a run
+    // over a model no spawn ever asks for.
+    if (role === "brief" && !config.brief.enabled) continue;
     const { model, retryModel } = config.roles[role];
     if (model !== "" && model !== AUTO_MODEL) models.push({ role, model });
     if (retryModel && retryModel !== AUTO_MODEL && retryModel !== model) {
@@ -85,6 +89,7 @@ export function configuredModels(config: SpecsKitConfig): ConfiguredModel[] {
 export function configuredFallbackModels(config: SpecsKitConfig): ConfiguredModel[] {
   const models: ConfiguredModel[] = [];
   for (const role of ROLE_NAMES) {
+    if (role === "brief" && !config.brief.enabled) continue;
     const { model, fallbackModel } = config.roles[role];
     if (fallbackModel && fallbackModel !== model) models.push({ role, model: fallbackModel });
   }

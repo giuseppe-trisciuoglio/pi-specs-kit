@@ -182,6 +182,7 @@ export class PhaseContext {
       attemptDiff: "attemptDiff" in input ? input.attemptDiff : null,
       upstreamProvides: "upstreamProvides" in input ? input.upstreamProvides : undefined,
       routedSuggestions: "routedSuggestions" in input ? input.routedSuggestions : undefined,
+      brief: "brief" in input ? input.brief : null,
       projectLearnings,
       contextFiles,
     });

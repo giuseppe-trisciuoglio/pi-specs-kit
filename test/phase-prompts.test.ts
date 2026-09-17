@@ -184,7 +184,8 @@ test("implementation on retry carries review feedback, upstream contracts and ro
     upstreamProvides: ["parseSpec(text: string): Spec"],
     routedSuggestions: [{ to: "TASK-001", text: "extract the retry helper", from: "TASK-000" }],
     // What the node declares on a retry: the pre-hook output becomes context.
-    firstAttempt: false,
+    brief: null,
+        firstAttempt: false,
   };
 
   const prompt = await capturePrompt(h, () => h.executor.run("implementation", input));
@@ -207,7 +208,8 @@ test("only the phases that read the spec folder receive its documents", async ()
     postHookFailures: null,
     upstreamProvides: [],
     routedSuggestions: [],
-    firstAttempt: true,
+    brief: null,
+        firstAttempt: true,
   };
   const implPrompt = await capturePrompt(h, () => h.executor.run("implementation", impl));
   assert.ok(!implPrompt.includes("<context_files>"), "implementation reads code the task picks, not a fixed set");
@@ -227,7 +229,8 @@ test("implementation on the first attempt has no feedback block at all", async (
     postHookFailures: null,
     upstreamProvides: [],
     routedSuggestions: [],
-    firstAttempt: true,
+    brief: null,
+        firstAttempt: true,
   };
 
   const prompt = await capturePrompt(h, () => h.executor.run("implementation", input));
@@ -247,7 +250,8 @@ test("a failing pre-hook blocks the phase on the first attempt: no spawn at all"
     postHookFailures: null,
     upstreamProvides: [],
     routedSuggestions: [],
-    firstAttempt: true,
+    brief: null,
+        firstAttempt: true,
   };
 
   const result = await h.executor.run("implementation", input);
@@ -265,7 +269,8 @@ test("a failing pre-hook on a retry feeds its output into the prompt as context"
     postHookFailures: null,
     upstreamProvides: [],
     routedSuggestions: [],
-    firstAttempt: false,
+    brief: null,
+        firstAttempt: false,
   };
 
   const prompt = await capturePrompt(h, () => h.executor.run("implementation", input));
@@ -290,7 +295,8 @@ test("a failing post hook is exposed and feeds the retry prompt, labeled against
     postHookFailures: null,
     upstreamProvides: [],
     routedSuggestions: [],
-    firstAttempt: true,
+    brief: null,
+        firstAttempt: true,
   };
 
   // The executor exposes the red gate explicitly instead of burying it in the
@@ -306,7 +312,8 @@ test("a failing post hook is exposed and feeds the retry prompt, labeled against
   const retryInput: ImplementationPhaseInput = {
     ...input,
     attempt: 2,
-    firstAttempt: false,
+    brief: null,
+        firstAttempt: false,
     postHookFailures: first.failedPostHooks,
   };
   const retry = await h.executor.run("implementation", retryInput);

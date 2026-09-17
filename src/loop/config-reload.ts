@@ -76,6 +76,7 @@ export class ConfigReloader {
     config.version = fresh.version;
     config.mode = fresh.mode;
     config.pollIntervalMs = fresh.pollIntervalMs;
+    config.brief = fresh.brief;
     config.roles = fresh.roles;
     config.reviewPanel = fresh.reviewPanel;
     config.run = fresh.run;

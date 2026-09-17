@@ -106,6 +106,22 @@ test("missing file yields all defaults", async () => {
   });
 });
 
+test("the reading brief is off by default and parses its flag and role", async () => {
+  await withTempDir(async (dir) => {
+    const config = await loadSpecsKitConfig(dir);
+    assert.deepEqual(config.brief, { enabled: false });
+    await writeFile(
+      path.join(dir, CONFIG_FILE_NAME),
+      "brief:\n  enabled: true\nagents:\n  brief_model: minimax/MiniMax-M3\n  brief_thinking_level: low\n",
+      "utf8",
+    );
+    const loaded = await loadSpecsKitConfig(dir);
+    assert.deepEqual(loaded.brief, { enabled: true });
+    assert.equal(loaded.roles.brief.model, "minimax/MiniMax-M3");
+    assert.equal(loaded.roles.brief.thinkingLevel, "low");
+  });
+});
+
 test("full yaml maps every field", async () => {
   await withTempDir(async (dir) => {
     const file = path.join(dir, CONFIG_FILE_NAME);

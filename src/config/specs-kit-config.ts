@@ -7,10 +7,10 @@
 /** Loop phases that map to an agent role. */
 export type PhaseName = "implementation" | "review" | "cleanup" | "sync";
 
-/** Agent roles, one per phase plus the learnings extractor. */
-export type RoleName = "agent" | "reviewer" | "cleaner" | "synchronizer" | "learner";
+/** Agent roles, one per phase plus the learnings extractor and the reading brief. */
+export type RoleName = "agent" | "reviewer" | "cleaner" | "synchronizer" | "learner" | "brief";
 
-export const ROLE_NAMES: readonly RoleName[] = ["agent", "reviewer", "cleaner", "synchronizer", "learner"];
+export const ROLE_NAMES: readonly RoleName[] = ["agent", "reviewer", "cleaner", "synchronizer", "learner", "brief"];
 
 /** Role responsible for each phase. */
 export const PHASE_ROLE: Readonly<Record<PhaseName, RoleName>> = {
@@ -172,6 +172,18 @@ export interface PromptsConfig {
   phaseOverrides: Partial<Record<PhaseName, SystemPromptOverride>>;
 }
 
+/**
+ * The reading brief: one cheap, read-only spawn per task that writes a short
+ * brief file every implementation attempt of the task then receives. Off by
+ * default: the extra spawn has to pay for itself in shorter attempts, and the
+ * measurement is what decides that.
+ */
+export interface BriefConfig {
+  enabled: boolean;
+}
+
+export const DEFAULT_BRIEF_CONFIG: BriefConfig = { enabled: false };
+
 export interface SpecsKitConfig {
   version: string;
   /** Absolute path of the project root (directory holding the config file). */
@@ -184,6 +196,8 @@ export interface SpecsKitConfig {
   spec?: string;
   mode: "fast" | "full";
   pollIntervalMs: number;
+  /** Reading-brief behavior; only the flag is behavioral, the role lives in roles. */
+  brief: BriefConfig;
   roles: Record<RoleName, RoleConfig>;
   /** Declared adversarial review panel, in persona order; empty when unset. */
   reviewPanel: PanelReviewer[];
@@ -381,6 +395,7 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
     specsDir: DEFAULT_SPECS_DIR,
     mode: "fast",
     pollIntervalMs: 100,
+    brief: { ...DEFAULT_BRIEF_CONFIG },
     roles: defaultRoles(),
     reviewPanel: [],
     run: { ...DEFAULT_RUN_CONFIG },
@@ -410,6 +425,7 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
   config.spec = text(doc.spec);
   config.mode = doc.mode === "full" ? "full" : "fast";
   config.pollIntervalMs = parseDurationMs(doc.poll_interval) ?? config.pollIntervalMs;
+  config.brief = { enabled: flag(record(doc.brief).enabled) ?? config.brief.enabled };
 
   config.roles = parseRoles(doc);
 

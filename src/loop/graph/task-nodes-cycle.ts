@@ -21,6 +21,7 @@ import {
   snapshotProtectedPaths,
 } from "../protected-paths.ts";
 import { blockersForTask, injectableBlockers } from "../blockers.ts";
+import { readBrief } from "./task-nodes-brief.ts";
 import { operatorWallMessage } from "./task-nodes-failure.ts";
 import { runReviewStep } from "../review-runner.ts";
 import { collectRoutedSuggestions } from "../routed-suggestions.ts";
@@ -131,6 +132,10 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         postHookFailures: io.runtime.postHookFailures,
         upstreamProvides: upstreamProvides(taskFile, selected, plan.done),
         routedSuggestions: io.runtime.routedSuggestions,
+        // Written once by the brief node, read back on every attempt: a retry
+        // gets it without regenerating it, next to the blockers in their own
+        // block.
+        brief: await readBrief(specDir, id),
         // The node declares how the world is, not what to do; the executor
         // owns the blocking policy. On the first attempt the workspace is
         // expected to be in a clean state, so a failing pre-hook blocks the

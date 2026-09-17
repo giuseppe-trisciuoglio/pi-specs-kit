@@ -13,6 +13,7 @@ function makeCtx(overrides: Partial<RoutingContext> = {}): RoutingContext {
     mode: "full",
     isLastTask: false,
     continueOnFailure: false,
+    briefWanted: false,
     blockerWall: false,
     operatorWall: false,
     stopping: false,
@@ -34,6 +35,7 @@ test("the registry contains exactly the declared routing predicates", () => {
   assert.deepEqual(Object.keys(CONDITIONS).sort(), [
     "always",
     "blocker_wall_repeated",
+    "brief_wanted",
     "continue_on_failure",
     "enters_at_cleanup_fast_mode",
     "enters_at_cleanup_full_mode",

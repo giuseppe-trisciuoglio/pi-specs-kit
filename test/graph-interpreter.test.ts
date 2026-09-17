@@ -20,6 +20,7 @@ function makeRuntime(overrides: Partial<TaskRuntime> = {}): TaskRuntime {
     implStatus: "ok",
     postHookFailures: null,
     routedSuggestions: [],
+    briefPath: null,
     failureDetail: null,
     blockerWall: null,
     operatorWall: null,
@@ -33,6 +34,7 @@ function makeFacts(overrides: Partial<RoutingFacts> = {}): RoutingFacts {
     mode: "full",
     isLastTask: false,
     continueOnFailure: false,
+    briefWanted: false,
     attemptsLeft: () => true,
     stopping: () => false,
     ...overrides,
@@ -344,4 +346,43 @@ test("the hop limit turns a sinkless cycle into an explicit error", async () => 
     interpretTaskGraph(g, { runtime: makeRuntime(), facts: makeFacts() }),
     /hop limit/,
   );
+});
+
+test("the brief node runs before the first attempt only when wanted", async () => {
+  const build = () => {
+    const visited: string[] = [];
+    const g = graph(
+      [
+        node("enter_task", "deterministic", visit(visited, "enter_task")),
+        node("brief", "agentic", visit(visited, "brief")),
+        node("implementation", "agentic", visit(visited, "implementation")),
+        node("task_done", "sink", undefined, "done"),
+      ],
+      [
+        { from: "enter_task", to: "brief", type: "advance", when: "brief_wanted" },
+        { from: "enter_task", to: "implementation", type: "advance", when: "enters_at_implementation" },
+        { from: "brief", to: "implementation", type: "advance", when: "always" },
+        { from: "implementation", to: "task_done", type: "advance", when: "impl_ok" },
+      ],
+      "enter_task",
+    );
+    return { g, visited };
+  };
+
+  const withBrief = build();
+  await interpretTaskGraph(withBrief.g, { runtime: makeRuntime(), facts: makeFacts({ briefWanted: true }) });
+  assert.deepEqual(withBrief.visited, ["enter_task", "brief", "implementation"]);
+
+  const withoutBrief = build();
+  await interpretTaskGraph(withoutBrief.g, { runtime: makeRuntime(), facts: makeFacts({ briefWanted: false }) });
+  assert.deepEqual(withoutBrief.visited, ["enter_task", "implementation"]);
+
+  // A resumed task names its starting step, so it never re-runs the brief:
+  // a retry or a restart does not pay for the reconnaissance twice.
+  const resumed = build();
+  await interpretTaskGraph(resumed.g, {
+    runtime: makeRuntime({ entry: { resumed: true, startStep: "implementation" } }),
+    facts: makeFacts({ briefWanted: true }),
+  });
+  assert.deepEqual(resumed.visited, ["enter_task", "implementation"]);
 });

@@ -17,6 +17,8 @@ PHASE="unknown"
 TASK_ID=$(printf '%s' "$PROMPT" | grep -oE 'tasks/TASK-[0-9]+--review\.md' | head -n 1 | sed -e 's|tasks/||' -e 's|--review\.md||')
 if [[ -n "$TASK_ID" ]]; then
   PHASE="review"
+elif [[ "$PROMPT" == *"Your only output is the file"* ]]; then
+  PHASE="brief"
 elif [[ "$PROMPT" == *"What the loop observed:"* ]]; then
   PHASE="failure_learner"
 elif [[ "$PROMPT" == *"bullet list"* ]]; then
@@ -34,10 +36,12 @@ fi
 if [[ -n "${FAKE_PI_PROMPT_LOG:-}" ]]; then
   RETRY_BLOCK=0
   DIFF_BLOCK=0
+  BRIEF_BLOCK=0
   [[ "$PROMPT" == *"<retry_review>"* ]] && RETRY_BLOCK=1
   [[ "$PROMPT" == *"<diff"* ]] && DIFF_BLOCK=1
+  [[ "$PROMPT" == *"<task_brief>"* ]] && BRIEF_BLOCK=1
   mkdir -p "$(dirname "$FAKE_PI_PROMPT_LOG")"
-  printf '%s retry_review=%s diff=%s\n' "$PHASE" "$RETRY_BLOCK" "$DIFF_BLOCK" >> "$FAKE_PI_PROMPT_LOG"
+  printf '%s retry_review=%s diff=%s brief=%s\n' "$PHASE" "$RETRY_BLOCK" "$DIFF_BLOCK" "$BRIEF_BLOCK" >> "$FAKE_PI_PROMPT_LOG"
 fi
 
 # Emit the JSONL event stream: session, agent/turn lifecycle, a tool call with
@@ -106,6 +110,15 @@ case "$PHASE" in
     TEXT="fake pi completed phase $PHASE"
     ;;
 esac
+
+# The brief phase writes the reading brief of the task it was invoked for.
+if [[ "$PHASE" == "brief" && -n "${FAKE_PI_SPEC_DIR:-}" ]]; then
+  BRIEF_TASK=$(printf '%s' "$PROMPT" | grep -oE 'id="TASK-[0-9]+"' | head -n 1 | sed -e 's/id="//' -e 's/"//')
+  if [[ -n "$BRIEF_TASK" ]]; then
+    mkdir -p "$FAKE_PI_SPEC_DIR/tasks"
+    printf 'Files to touch: src/retry.ts\n' > "$FAKE_PI_SPEC_DIR/tasks/$BRIEF_TASK--brief.md"
+  fi
+fi
 
 # An implementation that writes nothing looks like a no-op retry to the loop.
 # Tests that need a retry to reach a second review ask for a real edit here.

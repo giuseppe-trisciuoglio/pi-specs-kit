@@ -11,6 +11,7 @@ import { classifyPhaseFailure } from "./phase-failure.ts";
 import { attemptModel, type AttemptModel } from "./phase-escalation.ts";
 import type { PhaseRunOutcome, PhaseSpawnOptions } from "../agent/spawner.ts";
 import type { RoleName, SpecsKitConfig } from "../config/specs-kit-config.ts";
+import type { RoutedSuggestion } from "./review-report.ts";
 import type { TaskFile } from "../tasks/task-parser.ts";
 import type { PhaseHandle, PhaseMeter } from "../measure/phase-meter.ts";
 import type { ListedModel } from "./model-check.ts";
@@ -18,6 +19,7 @@ import { PhaseLogWriter } from "../util/log-writer.ts";
 import type { LoopBudget } from "./budget.ts";
 import type { HookResult } from "./hooks.ts";
 import { buildFailureLearnerPrompt } from "./blockers.ts";
+import { buildBriefPrompt } from "./brief.ts";
 import { CONFIRMED_PREFIX, parseLearnings } from "./learner.ts";
 import type { SystemPromptOverrideText } from "./phase-context.ts";
 
@@ -319,6 +321,53 @@ export class PhaseSpawner {
       return { outcome, text };
     } finally {
       await writer.close();
+    }
+  }
+
+  /**
+   * Run the reading brief: one cheap, read-only spawn before the first
+   * implementation attempt, writing the brief file every attempt of the task
+   * then receives. It runs on the brief role when the operator pinned one;
+   * the default — the same model the learner uses — is spelled by spawning
+   * on the learner role itself, so it inherits that role's escalation and
+   * sticky-memory routing instead of growing a parallel path.
+   */
+  async runBrief(
+    task: TaskFile,
+    opts?: {
+      signal?: AbortSignal;
+      briefPath?: string;
+      routedSuggestions?: readonly RoutedSuggestion[];
+      learnings?: readonly string[];
+      projectLearnings?: readonly string[];
+    },
+  ): Promise<LearnerResult> {
+    const { config } = this.#deps;
+    const pinned = config.roles.brief;
+    const role: RoleName = pinned.model && pinned.model !== "auto" ? "brief" : "learner";
+    const spec = path.basename(this.#deps.specDir);
+    const meterHandle = this.#deps.beginMeter(spec, task.frontmatter.id, "brief", 1, role);
+    try {
+      return await this.spawn(
+        {
+          taskId: task.frontmatter.id,
+          label: "brief",
+          role,
+          prompt: buildBriefPrompt({
+            task,
+            briefPath: opts?.briefPath ?? "",
+            routedSuggestions: opts?.routedSuggestions,
+            learnings: opts?.learnings,
+            projectLearnings: opts?.projectLearnings,
+          }),
+        },
+        undefined,
+        opts?.signal,
+        true,
+        meterHandle,
+      );
+    } finally {
+      if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
     }
   }
 
