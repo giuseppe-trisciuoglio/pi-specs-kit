@@ -64,6 +64,23 @@ function graph(nodes: TaskNode[], edges: TaskGraph["edges"], entry: TaskNodeId =
   return { entry, nodes, edges };
 }
 
+/** A graph case with its own visit log: the log travels with the graph, so
+ * every scenario builds fresh nodes without sharing visited state. Nodes
+ * listed in `traced` record their visit; a node named as `sink` ends the
+ * walk with the done outcome. */
+function visitingGraph(
+  traced: [TaskNodeId, TaskNode["kind"]][],
+  edges: TaskGraph["edges"],
+  entry: TaskNodeId,
+  sink?: TaskNodeId,
+) {
+  const visited: string[] = [];
+  const nodes = traced.map(([id, kind]) =>
+    id === sink ? node(id, "sink", undefined, "done") : node(id, kind, visit(visited, id)),
+  );
+  return { g: graph(nodes, edges, entry), visited };
+}
+
 test("linear path walks every node in order and returns the sink outcome", async () => {
   const visited: string[] = [];
   const g = graph(
@@ -83,15 +100,9 @@ test("linear path walks every node in order and returns the sink outcome", async
 });
 
 test("conditional branch follows the predicate that reads the runtime", async () => {
-  const build = () => {
-    const visited: string[] = [];
-    const g = graph(
-      [
-        node("review_gate", "deterministic", visit(visited, "review_gate")),
-        node("cleanup", "deterministic", visit(visited, "cleanup")),
-        node("learner", "deterministic", visit(visited, "learner")),
-        node("task_done", "sink", undefined, "done"),
-      ],
+  const newCase = () =>
+    visitingGraph(
+      [["review_gate", "deterministic"], ["cleanup", "deterministic"], ["learner", "deterministic"], ["task_done", "sink"]],
       [
         { from: "review_gate", to: "cleanup", type: "passed", when: "verdict_passed_full_mode" },
         { from: "review_gate", to: "learner", type: "mode-skip", when: "verdict_passed_fast_mode" },
@@ -99,12 +110,12 @@ test("conditional branch follows the predicate that reads the runtime", async ()
         { from: "learner", to: "task_done", type: "advance", when: "always" },
       ],
       "review_gate",
+      "task_done",
     );
-    return { g, visited };
-  };
 
-  // Full mode: the passed verdict routes through cleanup.
-  const full = build();
+  // Full mode: the passed verdict routes through cleanup; fast mode skips
+  // cleanup and lands on the learner.
+  const full = newCase();
   assert.equal(
     await interpretTaskGraph(full.g, {
       runtime: makeRuntime({ lastVerdict: { kind: "passed" } }),
@@ -114,8 +125,7 @@ test("conditional branch follows the predicate that reads the runtime", async ()
   );
   assert.deepEqual(full.visited, ["review_gate", "cleanup"]);
 
-  // Fast mode: the same verdict skips cleanup and lands on the learner.
-  const fast = build();
+  const fast = newCase();
   assert.equal(
     await interpretTaskGraph(fast.g, {
       runtime: makeRuntime({ lastVerdict: { kind: "passed" } }),
@@ -349,15 +359,9 @@ test("the hop limit turns a sinkless cycle into an explicit error", async () => 
 });
 
 test("the brief node runs before the first attempt only when wanted", async () => {
-  const build = () => {
-    const visited: string[] = [];
-    const g = graph(
-      [
-        node("enter_task", "deterministic", visit(visited, "enter_task")),
-        node("brief", "agentic", visit(visited, "brief")),
-        node("implementation", "agentic", visit(visited, "implementation")),
-        node("task_done", "sink", undefined, "done"),
-      ],
+  const newCase = () =>
+    visitingGraph(
+      [["enter_task", "deterministic"], ["brief", "agentic"], ["implementation", "agentic"], ["task_done", "sink"]],
       [
         { from: "enter_task", to: "brief", type: "advance", when: "brief_wanted" },
         { from: "enter_task", to: "implementation", type: "advance", when: "enters_at_implementation" },
@@ -365,21 +369,20 @@ test("the brief node runs before the first attempt only when wanted", async () =
         { from: "implementation", to: "task_done", type: "advance", when: "impl_ok" },
       ],
       "enter_task",
+      "task_done",
     );
-    return { g, visited };
-  };
 
-  const withBrief = build();
+  const withBrief = newCase();
   await interpretTaskGraph(withBrief.g, { runtime: makeRuntime(), facts: makeFacts({ briefWanted: true }) });
   assert.deepEqual(withBrief.visited, ["enter_task", "brief", "implementation"]);
 
-  const withoutBrief = build();
+  const withoutBrief = newCase();
   await interpretTaskGraph(withoutBrief.g, { runtime: makeRuntime(), facts: makeFacts({ briefWanted: false }) });
   assert.deepEqual(withoutBrief.visited, ["enter_task", "implementation"]);
 
   // A resumed task names its starting step, so it never re-runs the brief:
   // a retry or a restart does not pay for the reconnaissance twice.
-  const resumed = build();
+  const resumed = newCase();
   await interpretTaskGraph(resumed.g, {
     runtime: makeRuntime({ entry: { resumed: true, startStep: "implementation" } }),
     facts: makeFacts({ briefWanted: true }),
