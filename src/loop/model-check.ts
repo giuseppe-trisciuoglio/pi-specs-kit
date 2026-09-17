@@ -97,7 +97,10 @@ export function configuredFallbackModels(config: SpecsKitConfig): ConfiguredMode
  * fix in the file, and an operator reading one of them has to know which.
  */
 function describe(models: readonly ConfiguredModel[]): string {
-  return models.map((m) => `${m.role}${m.field ? ` (${m.field})` : ""}: ${m.model}`).join(", ");
+  return models.map((m) => {
+    const fieldTag = m.field ? ` (${m.field})` : "";
+    return `${m.role}${fieldTag}: ${m.model}`;
+  }).join(", ");
 }
 
 /**
