@@ -55,6 +55,19 @@ export interface ReviewPhaseInput extends PhaseSpawnInput {
    * live is a fact the loop lists from disk; what they concluded stays
    * undelivered so the fresh evaluation judges for itself. */
   priorAttemptArchives: string[];
+  /** What the rejected verdict of the previous attempt asked to close, as a
+   * checklist; empty on a first review and when the archive is unreadable. */
+  priorBlockingFindings: string[];
+  /** Patch from the tree the previous review judged to the tree now: what the
+   * retry changed. Null when there is no retry, no git, or no ceiling. */
+  attemptDiff: AttemptDiff | null;
+}
+
+/** The bounded patch a re-review reads instead of the whole workspace. */
+export interface AttemptDiff {
+  stat: string;
+  patch: string;
+  truncated: boolean;
 }
 
 export interface CleanupPhaseInput extends PhaseSpawnInput {

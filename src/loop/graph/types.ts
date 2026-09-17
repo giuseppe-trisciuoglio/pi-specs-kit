@@ -20,7 +20,7 @@ import type {
 import type { PhaseExecutor } from "../phases.ts";
 import type { snapshotProtectedPaths } from "../protected-paths.ts";
 import type { RoutedSuggestion } from "../review-report.ts";
-import type { changedWorkspaceFiles, workspaceFingerprint } from "../workspace.ts";
+import type { changedWorkspaceFiles, workspaceDiff, workspaceFingerprint } from "../workspace.ts";
 import type { ConditionName } from "./conditions.ts";
 
 /** Terminal results of one task's walk through the graph. */
@@ -205,6 +205,9 @@ export interface TaskNodeDeps {
   /** Content fingerprint of the worktree, read around a retried phase to tell
    * a retry that changed something from one that changed nothing. */
   workspaceFingerprint: typeof workspaceFingerprint;
+  /** Patch between the tree the previous review judged and the tree now; what
+   * a re-review is asked to read instead of the whole task. */
+  workspaceDiff: typeof workspaceDiff;
   /** Re-extract the codebase graph the phases read; best-effort. */
   refreshCodebaseGraph: typeof refreshCodebaseGraph;
   /**

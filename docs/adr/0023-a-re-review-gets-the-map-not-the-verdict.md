@@ -38,3 +38,10 @@ The listing trusts the disk over any counter: an archive a hand removed is not
 listed, one a hand added is listed like any other. The pointer is gathered
 after the rotation, so the freshest state of the disk is what the reviewer is
 told about.
+
+## Amended by ADR-0043
+
+A retried review now also receives the blocking findings of the verdict it
+replaces, as a checklist to close, and the patch of what the retry changed.
+The rule this ADR set survives it: the conclusion — the status, the summary —
+still never travels. See `docs/adr/0043`.

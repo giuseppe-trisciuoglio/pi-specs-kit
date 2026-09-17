@@ -283,6 +283,22 @@ export function routedFor(report: ReviewReport, targetTaskId: string): RoutedSug
   return report.routed.filter((r) => r.to === targetTaskId);
 }
 
+/**
+ * What a rejected verdict asked the retry to close, as a checklist for the
+ * review that judges that retry. Only the two lists the loop treats as
+ * blocking: the issues and the requirement conflicts, the latter tagged so a
+ * reader knows a contradiction is not an ordinary defect. The status, the
+ * summary and the escalation stay out — a re-review is told what to verify,
+ * never what the previous one concluded, and an escalation ends the task
+ * rather than buying it another review.
+ */
+export function blockingFindings(report: ReviewReport): string[] {
+  return [
+    ...report.issues.filter((issue) => issue.trim() !== ""),
+    ...report.specConflicts.filter((c) => c.trim() !== "").map((c) => `requirement conflict: ${c}`),
+  ];
+}
+
 /** Feedback handed back to the implementation phase after a rejected review. */
 export function reviewFeedback(report: ReviewReport): string {
   const parts: string[] = [];

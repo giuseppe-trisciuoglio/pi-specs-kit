@@ -20,7 +20,7 @@ import type { commitCheckpoint } from "./checkpoint.ts";
 import type { refreshCodebaseGraph } from "./codebase-graph.ts";
 import { ConfigReloader } from "./config-reload.ts";
 import type { ListedModel } from "./model-check.ts";
-import type { workspaceFingerprint } from "./workspace.ts";
+import type { workspaceDiff, workspaceFingerprint } from "./workspace.ts";
 import { declareFinalSyncNode, type RunNode } from "./graph/run-graph.ts";
 import type { TaskNodeDeps } from "./graph/types.ts";
 import type { runPhaseHooks } from "./hooks.ts";
@@ -41,6 +41,7 @@ export interface RunAssemblyDeps {
   runHooks: typeof runPhaseHooks;
   commitCheckpoint: typeof commitCheckpoint;
   workspaceFingerprint: typeof workspaceFingerprint;
+  workspaceDiff: typeof workspaceDiff;
   refreshCodebaseGraph: typeof refreshCodebaseGraph;
   /** Config loader for the per-phase reload, already defaulted by the engine. */
   reloadConfig: (projectRoot: string, configPath?: string) => Promise<SpecsKitConfig | null>;
@@ -156,6 +157,7 @@ export function assembleRun(deps: RunAssemblyDeps): AssembledRun {
     signal: () => deps.signal(),
     commitCheckpoint: deps.commitCheckpoint,
     workspaceFingerprint: deps.workspaceFingerprint,
+    workspaceDiff: deps.workspaceDiff,
     refreshCodebaseGraph: deps.refreshCodebaseGraph,
     now: deps.now,
   };

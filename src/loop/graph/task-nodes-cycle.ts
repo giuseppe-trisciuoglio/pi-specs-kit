@@ -64,6 +64,7 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         state.retry_count = 0;
         state.review_file_retry = 0;
         state.review_file_error = null;
+        state.review_base_tree = null;
         state.error = null;
         state.iteration++;
         await persist();
@@ -103,6 +104,12 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
       // a stall; and skipping the measurement keeps the happy path free of it.
       const isRetry = state.retry_count > 0;
       const before = isRetry ? await deps.workspaceFingerprint(config.projectRoot, fingerprintExclusions) : null;
+      // The same tree serves a second reader. Taken before a retried
+      // implementation runs, it is exactly what the review that rejected this
+      // task was looking at, so the re-review can be handed the patch from
+      // there to here instead of the whole workspace. Null outside a git
+      // repository, which simply leaves the re-review without the channel.
+      state.review_base_tree = before;
       // Read on every attempt, not only on retries: the first one is exactly
       // where a mismatch between code and requirement is most tempting to
       // resolve by editing the requirement.

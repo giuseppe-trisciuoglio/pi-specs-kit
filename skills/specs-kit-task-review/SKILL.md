@@ -68,6 +68,30 @@ Resolve, in order:
 
 If any required input is missing or ambiguous, ask the user via ask_user_question.
 
+### Retry mode
+
+A prompt carrying a `<retry_review>` block is reviewing a retry: this task was already
+implemented, reviewed and rejected, and what you are looking at is the second (or later)
+attempt. The block carries two things, and it changes how you work:
+
+- the findings the previous review blocked on. Verify each one and state its outcome —
+  closed, still open, or no longer applicable — in your report. They are what to verify,
+  not a conclusion to adopt: the previous verdict is not in the prompt and you are not
+  being asked to agree with it.
+- a `<diff>`, when the workspace is under git: the patch from the tree the previous
+  review judged to the tree now. Read it first, and open the workspace only for what it
+  does not answer. When the diff is marked `truncated="true"`, the summary above it still
+  names every file: read the rest from the workspace.
+
+Do not re-run the whole review from scratch: Phase 1 and Phase 2 are a re-read of what a
+previous attempt already established, and the retry exists because of a bounded list.
+The verdict, however, stays unbounded: the patch narrows your reading, not your
+judgement. A change can break code it does not touch, so the acceptance criteria and the
+DoD are still checked in full (Phase 3), and a regression outside the patch is a finding
+like any other.
+
+Without a `<retry_review>` block, this is a first review: run every phase in full.
+
 ## Core Principles
 
 - **Thorough verification**: Check every acceptance criterion and every DoD item
@@ -109,6 +133,7 @@ If any required input is missing or ambiguous, ask the user via ask_user_questio
 **Actions**:
 
 1. Identify what files/components were created for this task:
+   - In retry mode the `<diff>` block already answers this: use it instead of exploring
    - Check git diff to see what changed since task was started
    - Look for new files matching the task scope
    - Review implementation details

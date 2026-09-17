@@ -19,7 +19,7 @@ import { pushNotify } from "../util/push-notify.ts";
 import { DEFAULT_ENVIRONMENT_STREAK, EnvironmentStreakError } from "./phase-failure.ts";
 import { commitCheckpoint } from "./checkpoint.ts";
 import { refreshCodebaseGraph } from "./codebase-graph.ts";
-import { workspaceFingerprint } from "./workspace.ts";
+import { workspaceDiff, workspaceFingerprint } from "./workspace.ts";
 import { LoopStatusTracker, type LoopStatus } from "./loop-status.ts";
 import { listModels, type ListedModel } from "./model-check.ts";
 import { TaskValidationError, taskValidationLines, taskValidationSummary } from "../tasks/task-validation.ts";
@@ -53,6 +53,7 @@ export interface EngineDeps {
   runHooks?: typeof runPhaseHooks;
   commitCheckpoint?: typeof commitCheckpoint;
   workspaceFingerprint?: typeof workspaceFingerprint;
+  workspaceDiff?: typeof workspaceDiff;
   refreshCodebaseGraph?: typeof refreshCodebaseGraph;
   /** Config loader for the per-phase reload; defaults to the real loader. */
   reloadConfig?: (projectRoot: string, configPath?: string) => Promise<SpecsKitConfig | null>;
@@ -83,6 +84,7 @@ interface ResolvedDeps {
   runHooks: typeof runPhaseHooks;
   commitCheckpoint: typeof commitCheckpoint;
   workspaceFingerprint: typeof workspaceFingerprint;
+  workspaceDiff: typeof workspaceDiff;
   refreshCodebaseGraph: typeof refreshCodebaseGraph;
   reloadConfig: (projectRoot: string, configPath?: string) => Promise<SpecsKitConfig | null>;
   /** Null means "build the real one at run start", keeping the constructor inert. */
@@ -110,6 +112,7 @@ export class LoopEngine {
       runHooks: deps.runHooks ?? runPhaseHooks,
       commitCheckpoint: deps.commitCheckpoint ?? commitCheckpoint,
       workspaceFingerprint: deps.workspaceFingerprint ?? workspaceFingerprint,
+      workspaceDiff: deps.workspaceDiff ?? workspaceDiff,
       refreshCodebaseGraph: deps.refreshCodebaseGraph ?? refreshCodebaseGraph,
       reloadConfig: deps.reloadConfig ?? loadConfigIfPresent,
       meter: deps.meter ?? null,
@@ -235,6 +238,7 @@ export class LoopEngine {
       runHooks: this.#deps.runHooks,
       commitCheckpoint: this.#deps.commitCheckpoint,
       workspaceFingerprint: this.#deps.workspaceFingerprint,
+      workspaceDiff: this.#deps.workspaceDiff,
       refreshCodebaseGraph: this.#deps.refreshCodebaseGraph,
       reloadConfig: this.#deps.reloadConfig,
       meter: this.#deps.meter,

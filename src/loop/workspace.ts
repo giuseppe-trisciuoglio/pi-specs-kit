@@ -1,13 +1,18 @@
 /**
- * Content fingerprint of the working tree: the signal that tells a retry which
- * changed something from a retry which changed nothing at all.
+ * What git says about the working tree at three moments: the content fingerprint
+ * that tells a retry which changed something from a retry which changed nothing,
+ * the patch between the tree an earlier phase saw and the tree as it is now, and
+ * the paths standing on top of the last commit so a gate knows what the attempt
+ * touched.
  *
- * Computed through a throwaway git index so the user's staging area is never
- * touched — the tree object git derives from that index is an exact content
- * hash of every tracked and newly added file, and ignored paths (build output)
- * stay out of it for free. Best-effort by design: outside a git repository, or
- * on any git failure, the answer is null and the caller simply loses the
- * signal.
+ * All three go through a throwaway git index so the user's staging area is
+ * never touched — the tree object git derives from that index is an exact
+ * content hash of every tracked and newly added file, and ignored paths
+ * (build output) stay out of it for free. The tree objects land in the
+ * repository's own object store, which is what makes a fingerprint taken one
+ * phase ago still diffable one phase later. Best-effort by design: outside a
+ * git repository, or on any git failure, the answer is null and the caller
+ * simply loses the signal.
  */
 
 import { mkdtemp, rm } from "node:fs/promises";
@@ -39,13 +44,28 @@ export function loopArtifactExclusions(projectRoot: string, specDir: string): st
   return [...exclusions, path.posix.join(rel.split(path.sep).join("/"), "_ralph_loop")];
 }
 
+/**
+ * Pathspecs of the review artifacts, kept out of the patch a re-review reads.
+ *
+ * Between the two trees the loop archives the rejected verdict and removes the
+ * report it replaced, so an unfiltered patch would carry the whole text of the
+ * previous review as an added file — the conclusion the review ingress
+ * deliberately does not deliver, handed over by accident.
+ */
+export function reviewArtifactExclusions(projectRoot: string, specDir: string): string[] {
+  const rel = path.relative(projectRoot, specDir);
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return [];
+  const tasks = path.posix.join(rel.split(path.sep).join("/"), "tasks");
+  return [`${tasks}/*--review.md`, `${tasks}/*--review.attempt-*.md`, `${tasks}/*--review.unreadable.md`];
+}
+
 type Git = (args: string[]) => Promise<{ exitCode: number | null; stdout: string }>;
 
 /**
  * Stage the worktree into a throwaway index and hand the caller a git bound
- * to it. Everything both readers need — the temp index, the exclusions, the
+ * to it. Everything the readers need — the temp index, the exclusions, the
  * best-effort contract — happens once here: on any failure the callback is
- * never invoked and the caller gets null, which is how both of them say "the
+ * never invoked and the caller gets null, which is how all of them say "the
  * signal is not available".
  */
 async function withScratchIndex<T>(
@@ -93,6 +113,53 @@ export async function workspaceFingerprint(
     if (tree.exitCode !== 0) return null;
     const sha = tree.stdout.trim();
     return sha === "" ? null : sha;
+  });
+}
+
+/** A patch between two moments of the worktree, bounded in size. */
+export interface WorkspaceDiff {
+  /** `--stat` summary of the patch, always complete. */
+  stat: string;
+  /** The patch itself, cut at the configured ceiling. */
+  patch: string;
+  /** True when the patch was cut; the stat still describes the whole change. */
+  truncated: boolean;
+}
+
+/**
+ * Patch from `baseTree` to the worktree as it is now, or null when there is
+ * nothing to show: no base, no git, an empty change, or a ceiling of zero.
+ *
+ * The head is what is kept when the patch is too long. Unlike a build log,
+ * whose verdict is in the last lines, a patch is read from the top and git
+ * orders it by path: a cut tail loses the files a reader would reach last,
+ * while the stat above it still names every one of them.
+ */
+export async function workspaceDiff(
+  projectRoot: string,
+  baseTree: string | null,
+  excluded: readonly string[] = [],
+  limitChars = 0,
+): Promise<WorkspaceDiff | null> {
+  if (!baseTree || limitChars <= 0) return null;
+  return withScratchIndex(projectRoot, excluded, async (git) => {
+    const tree = await git(["write-tree"]);
+    if (tree.exitCode !== 0) return null;
+    const current = tree.stdout.trim();
+    if (current === "" || current === baseTree) return null;
+    const pathspec = ["--", ".", ...excluded.map((p) => `:(exclude)${p}`)];
+    const stat = await git(["diff", "--stat", baseTree, current, ...pathspec]);
+    if (stat.exitCode !== 0) return null;
+    const patch = await git(["diff", "--no-color", baseTree, current, ...pathspec]);
+    if (patch.exitCode !== 0) return null;
+    const full = patch.stdout.trim();
+    if (full === "") return null;
+    const truncated = full.length > limitChars;
+    return {
+      stat: stat.stdout.trim(),
+      patch: truncated ? `${full.slice(0, limitChars)}\n…[${full.length - limitChars} characters omitted]…` : full,
+      truncated,
+    };
   });
 }
 

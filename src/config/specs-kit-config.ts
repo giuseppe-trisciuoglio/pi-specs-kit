@@ -110,6 +110,13 @@ export interface RunConfig {
    * Turn it off only for a run whose job is to revise those documents.
    */
   protectSpecArtifacts: boolean;
+  /**
+   * Ceiling, in kilobytes, of the patch a re-review receives: what the retried
+   * implementation changed since the tree the previous review judged. Zero
+   * turns the channel off and the re-review falls back to reading the workspace
+   * itself, which is what it did before the channel existed.
+   */
+  reviewDiffMaxKb: number;
 }
 
 export type HookStage = "pre" | "post";
@@ -227,6 +234,7 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
   autoCompact: false,
   autoCompactThresholdPercent: DEFAULT_AUTO_COMPACT_PERCENT,
   protectSpecArtifacts: true,
+  reviewDiffMaxKb: 64,
 };
 
 export function defaultRoles(): Record<RoleName, RoleConfig> {
@@ -445,6 +453,7 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
   run.autoCompact = flag(src.auto_compact) ?? run.autoCompact;
   run.autoCompactThresholdPercent = thresholdPercent(src.auto_compact_threshold) ?? run.autoCompactThresholdPercent;
   run.protectSpecArtifacts = flag(src.protect_spec_artifacts) ?? run.protectSpecArtifacts;
+  run.reviewDiffMaxKb = count(src.review_diff_max_kb) ?? run.reviewDiffMaxKb;
   const fromTask = text(src.from_task);
   if (fromTask !== undefined) run.fromTask = fromTask;
   const toTask = text(src.to_task);

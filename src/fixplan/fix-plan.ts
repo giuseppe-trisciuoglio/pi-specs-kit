@@ -68,6 +68,13 @@ export interface LoopState {
    * on older fix plans.
    */
   blockers?: Blocker[];
+  /**
+   * Tree object of the worktree as the previous review of the current task
+   * judged it, captured when a retried implementation starts. What the
+   * re-review is shown the patch against. Advisory only — tolerated as
+   * missing on older fix plans, and null outside a git repository.
+   */
+  review_base_tree?: string | null;
   last_updated: string;
 }
 
