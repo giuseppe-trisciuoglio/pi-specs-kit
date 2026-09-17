@@ -67,6 +67,8 @@ hooks:
   review: { pre: [], post: [] }
   cleanup: { pre: [], post: [] }
   sync: { pre: [], post: [] }
+  checkpoint:
+    post: [mvnw verify]
 knowledge_base:
   files: ["./docs/a.md", "./docs/b.md"]
 prompts:
@@ -96,6 +98,7 @@ test("missing file yields all defaults", async () => {
     assert.equal(config.git.baseBranch, "main");
     assert.equal(config.hooks.timeoutMs, 240_000);
     assert.deepEqual(config.hooks.implementation, { pre: [], post: [] });
+    assert.deepEqual(config.hooks.checkpoint, { pre: [], post: [] });
     assert.deepEqual(config.knowledgeBase.files, []);
     assert.equal(config.prompts.unsupportedPolicy, "error");
     assert.deepEqual(config.prompts.phaseOverrides, {});
@@ -132,6 +135,7 @@ test("full yaml maps every field", async () => {
     assert.equal(config.hooks.timeoutMs, 240_000);
     assert.deepEqual(config.hooks.implementation, { pre: ["npm run lint"], post: ["npm test", "npm run build"] });
     assert.deepEqual(config.hooks.sync, { pre: [], post: [] });
+    assert.deepEqual(config.hooks.checkpoint, { pre: [], post: ["mvnw verify"] });
 
     assert.deepEqual(config.knowledgeBase.files, ["./docs/a.md", "./docs/b.md"]);
 
@@ -153,6 +157,22 @@ test("unknown fields are tolerated", async () => {
     const config = await loadSpecsKitConfig(dir);
     assert.deepEqual(config.run, DEFAULT_RUN_CONFIG);
     for (const role of ROLE_NAMES) assert.equal(config.roles[role].model, "auto");
+  });
+});
+
+test("the checkpoint hooks also accept a bare command list, and never a pre stage", async () => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, CONFIG_FILE_NAME);
+    await writeFile(file, 'hooks:\n  checkpoint: ["mvnw verify", "./scripts/smoke.sh"]\n');
+    assert.deepEqual((await loadSpecsKitConfig(dir)).hooks.checkpoint, {
+      pre: [],
+      post: ["mvnw verify", "./scripts/smoke.sh"],
+    });
+
+    // There is nothing before a checkpoint for a hook to precede: a pre stage
+    // written anyway is read as absent rather than silently never running.
+    await writeFile(file, "hooks:\n  checkpoint:\n    pre: [./scripts/before.sh]\n    post: [mvnw verify]\n");
+    assert.deepEqual((await loadSpecsKitConfig(dir)).hooks.checkpoint, { pre: [], post: ["mvnw verify"] });
   });
 });
 

@@ -15,7 +15,7 @@ import { mergeLearnings, parseNewLearnings, loadProjectLearnings, saveProjectLea
 import { parseConfirmations, spawnFailed } from "../phases.ts";
 import type { PhaseRunOutcome } from "../../agent/spawner.ts";
 import type { PhaseOutcome } from "../../measure/ledger.ts";
-import { loopArtifactExclusions } from "../workspace.ts";
+import { changedWorkspaceFiles, loopArtifactExclusions } from "../workspace.ts";
 import type { NodeAction, TaskNodeDeps, TaskNodeEnv } from "./types.ts";
 
 /** Outcome label for a phase without a retry path: hook and spawn failures
@@ -239,16 +239,35 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
     },
 
     checkpoint: async () => {
+      const excluded = loopArtifactExclusions(config.projectRoot, deps.specDir);
+      // Taken before the commit, because the commit is what folds this task's
+      // work into HEAD: afterwards there is nothing left differing from it,
+      // and the hooks would be told the task changed nothing.
+      const readChanged = deps.changedWorkspaceFiles ?? changedWorkspaceFiles;
+      const changed =
+        config.hooks.checkpoint.post.length > 0 ? await readChanged(config.projectRoot, excluded) : null;
       if (!config.run.noCommit) {
         const cp = await deps.commitCheckpoint(
           config.projectRoot,
           `checkpoint: ${id} attempt ${state.retry_count + 1}`,
-          loopArtifactExclusions(config.projectRoot, deps.specDir),
+          excluded,
         );
         notify(
           cp.committed ? `checkpoint committed for ${id}` : `checkpoint skipped for ${id}: ${cp.reason ?? "git error"}`,
           cp.committed ? "info" : "warning",
         );
+      }
+      // The second level of the gate: the phases ran the scope of what the
+      // attempt touched, and what the project cannot afford once per attempt
+      // runs here, once per task that passed. A red one is recorded like the
+      // gate of any phase without a retry path — the task passed its review
+      // and is committed, so there is nothing left here to spend an attempt
+      // on; the range close is what names the gate.
+      const results = await executor.runCheckpointHooks(changed);
+      if (results.some((r) => !r.ok)) {
+        state.postHookGateFailed = "checkpoint";
+        await persist();
+        notify(`checkpoint hook failed after ${id}`, "warning");
       }
       notify(`task ${id} completed`, "info");
       return { kind: "ok" };

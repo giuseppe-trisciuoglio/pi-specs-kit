@@ -83,6 +83,14 @@ if [[ -n "${FAKE_PI_FAIL_PHASE:-}" && "$PHASE" == "$FAKE_PI_FAIL_PHASE" ]]; then
   fi
 fi
 
+# Stand-in for the work an implementation does: without a write there is
+# nothing for the gate to be told about, and the changed-file list every hook
+# receives would be empty for reasons that have nothing to do with the loop.
+if [[ "$PHASE" == "implementation" && -n "${FAKE_PI_TOUCH_FILE:-}" ]]; then
+  mkdir -p "$(dirname "$FAKE_PI_TOUCH_FILE")"
+  printf 'touched by the fake implementation\n' >> "$FAKE_PI_TOUCH_FILE"
+fi
+
 # Assistant text depends on the phase; the learner must produce a bullet list.
 case "$PHASE" in
   learner)

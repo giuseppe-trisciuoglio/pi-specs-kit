@@ -13,8 +13,10 @@ import type { PhaseRunOutcome, PhaseSpawnOptions } from "../agent/spawner.ts";
 import type { PhaseHandle, PhaseMeter } from "../measure/phase-meter.ts";
 import type { PhaseOutcome } from "../measure/ledger.ts";
 import type { LoopBudget } from "./budget.ts";
-import type { HookResult } from "./hooks.ts";
+import type { ChangedFilesProvider, HookResult } from "./hooks.ts";
 import { runPhaseHooks } from "./hooks.ts";
+import { changedFilesProvider, runStageHooks } from "./phase-hooks.ts";
+import type { changedWorkspaceFiles } from "./workspace.ts";
 import { classifyPhaseFailure, DEFAULT_ENVIRONMENT_STREAK, EnvironmentStreakError } from "./phase-failure.ts";
 import type { ListedModel } from "./model-check.ts";
 import type {
@@ -58,6 +60,12 @@ export interface PhaseExecutorDeps {
   listModels?: () => Promise<ListedModel[]>;
   /** Phase measurement; absent in tests that do not care about the ledger. */
   meter?: PhaseMeter;
+  /**
+   * The files the hooks of this run are told about. Absent means the real
+   * reader: what a gate scopes itself to is part of the loop, not of a
+   * particular wiring.
+   */
+  changedWorkspaceFiles?: typeof changedWorkspaceFiles;
 }
 
 export interface PhaseStepResult {
@@ -99,9 +107,12 @@ export class PhaseExecutor {
   readonly #spawner: PhaseSpawner;
   /** Consecutive environmental failures seen so far; a delivered phase clears it. */
   #environmentStreak: string[] = [];
+  /** What the hooks are told has changed; read lazily, per stage. */
+  readonly #changedFiles: ChangedFilesProvider;
 
   constructor(deps: PhaseExecutorDeps) {
     this.#deps = deps;
+    this.#changedFiles = changedFilesProvider(deps.config, deps.specDir, deps.changedWorkspaceFiles);
     this.#context = new PhaseContext({
       config: deps.config,
       specDir: deps.specDir,
@@ -142,7 +153,6 @@ export class PhaseExecutor {
     phase: PhaseName,
     input: ImplementationPhaseInput | ReviewPhaseInput | CleanupPhaseInput | SyncPhaseInput,
   ): Promise<PhaseStepResult> {
-    const { config } = this.#deps;
     const role = PHASE_ROLE[phase];
     const task = input.task;
     // The reload precedes everything the phase reads — hooks, prompt inputs,
@@ -162,10 +172,7 @@ export class PhaseExecutor {
     const hookDuration = (results: HookResult[]): number => results.reduce((sum, r) => sum + (r.durationMs ?? 0), 0);
     let hooksMs = 0;
     try {
-      const preResults = await this.#deps.runHooks(config.hooks, phase, "pre", config.projectRoot, {
-        onStdoutLine: (line) => this.#deps.onLogLine(`[pre-${phase}] ${line}`),
-        onStderrLine: (line) => this.#deps.onLogLine(`[pre-${phase}] ! ${line}`),
-      });
+      const preResults = await this.#runStage(phase, "pre");
       hooksMs += hookDuration(preResults);
       if (preResults.some((r) => !r.ok) && blockOnFailure) {
         return {
@@ -187,10 +194,10 @@ export class PhaseExecutor {
         meterHandle,
       );
       this.#trackEnvironmentStreak(phase, task.frontmatter.id, outcome);
-      const postResults = await this.#deps.runHooks(config.hooks, phase, "post", config.projectRoot, {
-        onStdoutLine: (line) => this.#deps.onLogLine(`[post-${phase}] ${line}`),
-        onStderrLine: (line) => this.#deps.onLogLine(`[post-${phase}] ! ${line}`),
-      });
+      // The changed files are read again here, after the phase: the point of
+      // the post gate is the tree the attempt just left behind, not the one
+      // it started from.
+      const postResults = await this.#runStage(phase, "post");
       hooksMs += hookDuration(postResults);
       const failedPost = postResults.find((r) => !r.ok);
       if (failedPost) this.#deps.onNotify(`post-${phase} hook failed: ${failedPost.command}`, "warning");
@@ -265,6 +272,24 @@ export class PhaseExecutor {
    */
   async compactLearnings(learnings: string[], opts?: { signal?: AbortSignal }): Promise<string[]> {
     return this.#spawner.compactLearnings(learnings, opts);
+  }
+
+  /**
+   * Run the hooks of a passed task's checkpoint: the second level of the
+   * gate, where the suite the phases cannot afford per attempt belongs. The
+   * changed files are handed in rather than read here, because the caller
+   * takes them before the checkpoint commit — afterwards nothing differs
+   * from HEAD any more.
+   */
+  async runCheckpointHooks(changedFiles: readonly string[] | null): Promise<HookResult[]> {
+    const { config, runHooks, onLogLine } = this.#deps;
+    return runStageHooks(runHooks, config, "checkpoint", "post", onLogLine, async () => changedFiles);
+  }
+
+  /** One stage of the phase being run, with the log labels it streams under. */
+  #runStage(phase: PhaseName, stage: "pre" | "post"): Promise<HookResult[]> {
+    const { config, runHooks } = this.#deps;
+    return runStageHooks(runHooks, config, phase, stage, (line) => this.#deps.onLogLine(line), this.#changedFiles);
   }
 
   /** Run a hook command and stream its output through the log channel. */

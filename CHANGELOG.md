@@ -27,6 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A two-level gate.** Every hook command is now told which files the work
+  stands on — `SPECS_KIT_CHANGED_FILES` (newline-separated, relative to the
+  project root) and `SPECS_KIT_CHANGED_FILES_PATH` (the same list in a file) —
+  so the gate of a phase can compile and test that scope instead of the whole
+  suite on every attempt. Both variables are empty when the tree cannot be read,
+  which a hook should treat as "run everything". The suite moves to the new
+  `hooks.checkpoint.post`, which runs after the checkpoint of each task that
+  passed its review; a red one is recorded and named at the range close, like
+  the gate of any other phase without a retry path. See `docs/adr/0039`.
+
 - **Failure memory.** A failed implementation attempt now goes through a
   `failure_learner` node that records what stopped it as *blockers* in
   `fix_plan.state.blockers`, per task and classified. The next attempt of the
