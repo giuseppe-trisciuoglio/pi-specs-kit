@@ -13,8 +13,20 @@ import { graphifyGraphExists, graphifyGraphMissingWarning } from "../../prompt/g
 import { promotableFacts, pruneTaskBlockers, resolveTaskBlockers } from "../blockers.ts";
 import { mergeLearnings, parseNewLearnings, loadProjectLearnings, saveProjectLearnings, MAX_PROJECT_LEARNINGS } from "../learner.ts";
 import { parseConfirmations, spawnFailed } from "../phases.ts";
-import { loopArtifactExclusions } from "../workspace.ts";
+import type { PhaseRunOutcome } from "../../agent/spawner.ts";
+import type { PhaseOutcome } from "../../measure/ledger.ts";
+import { changedWorkspaceFiles, loopArtifactExclusions } from "../workspace.ts";
 import type { NodeAction, TaskNodeDeps, TaskNodeEnv } from "./types.ts";
+
+/** Outcome label for a phase without a retry path: hook and spawn failures
+ * take precedence over the nominal pass, in the order the loop diagnoses
+ * them, so the ledger row names what actually stopped the clean pass. */
+function tailPhaseOutcome(preHooksOk: boolean, outcome: PhaseRunOutcome | null, postHooksOk: boolean): PhaseOutcome {
+  if (!preHooksOk) return "pre_hook_failed";
+  if (spawnFailed(outcome)) return "spawn_failed";
+  if (!postHooksOk) return "gate_failed";
+  return "passed";
+}
 
 /** Collect the public API contracts from the already-completed dependency tasks. */
 export function upstreamProvides(taskFile: TaskFile, selected: TaskFile[], done: string[]): string[] {
@@ -77,7 +89,10 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
         firstAttempt: state.retry_count === 0,
         signal: deps.signal(),
       });
-      if (deps.stopping() === "now") return { kind: "stopped" };
+      if (deps.stopping() === "now") {
+        executor.finishPhase(cl.meterHandle, "halted", cl.hooksMs);
+        return { kind: "stopped" };
+      }
       if (!cl.preHooksOk || spawnFailed(cl.outcome)) notify(`cleanup failed for ${id}, continuing`, "warning");
       // A red post hook does not fail the phase — cleanup has no retry path —
       // but it must not vanish into a transient warning either: record it so
@@ -86,6 +101,7 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
         plan.state.postHookGateFailed = "cleanup";
         await persist();
       }
+      executor.finishPhase(cl.meterHandle, tailPhaseOutcome(cl.preHooksOk, cl.outcome, cl.postHooksOk), cl.hooksMs);
       return { kind: "ok" };
     },
 
@@ -166,7 +182,10 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
         signal: deps.signal(),
       });
       io.runtime.runState.syncRan = true;
-      if (deps.stopping() === "now") return { kind: "stopped" };
+      if (deps.stopping() === "now") {
+        executor.finishPhase(sy.meterHandle, "halted", sy.hooksMs);
+        return { kind: "stopped" };
+      }
       if (!sy.preHooksOk || spawnFailed(sy.outcome)) notify(`sync failed for ${id}, continuing`, "warning");
       // Same rule as cleanup: the phase completes and never retries, so a red
       // post hook is recorded for the run close rather than dropped.
@@ -174,6 +193,7 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
         plan.state.postHookGateFailed = "sync";
         await persist();
       }
+      executor.finishPhase(sy.meterHandle, tailPhaseOutcome(sy.preHooksOk, sy.outcome, sy.postHooksOk), sy.hooksMs);
       return { kind: "ok" };
     },
 
@@ -219,16 +239,35 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
     },
 
     checkpoint: async () => {
+      const excluded = loopArtifactExclusions(config.projectRoot, deps.specDir);
+      // Taken before the commit, because the commit is what folds this task's
+      // work into HEAD: afterwards there is nothing left differing from it,
+      // and the hooks would be told the task changed nothing.
+      const readChanged = deps.changedWorkspaceFiles ?? changedWorkspaceFiles;
+      const changed =
+        config.hooks.checkpoint.post.length > 0 ? await readChanged(config.projectRoot, excluded) : null;
       if (!config.run.noCommit) {
         const cp = await deps.commitCheckpoint(
           config.projectRoot,
           `checkpoint: ${id} attempt ${state.retry_count + 1}`,
-          loopArtifactExclusions(config.projectRoot, deps.specDir),
+          excluded,
         );
         notify(
           cp.committed ? `checkpoint committed for ${id}` : `checkpoint skipped for ${id}: ${cp.reason ?? "git error"}`,
           cp.committed ? "info" : "warning",
         );
+      }
+      // The second level of the gate: the phases ran the scope of what the
+      // attempt touched, and what the project cannot afford once per attempt
+      // runs here, once per task that passed. A red one is recorded like the
+      // gate of any phase without a retry path — the task passed its review
+      // and is committed, so there is nothing left here to spend an attempt
+      // on; the range close is what names the gate.
+      const results = await executor.runCheckpointHooks(changed);
+      if (results.some((r) => !r.ok)) {
+        state.postHookGateFailed = "checkpoint";
+        await persist();
+        notify(`checkpoint hook failed after ${id}`, "warning");
       }
       notify(`task ${id} completed`, "info");
       return { kind: "ok" };

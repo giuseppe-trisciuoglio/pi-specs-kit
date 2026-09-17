@@ -64,6 +64,45 @@ function spawnerDeps(
   };
 }
 
+/** Walk the escalation path with a role layout shared by the two fallback
+ * tests: which model answers with a quota error, the sequence of spawns and
+ * the calls those spawns are expected to produce. The role carries a primary,
+ * a retry and a fallback so every escalation step is reachable. */
+async function runFallbackScenario(opts: {
+  failingModel: string;
+  steps: ReadonlyArray<{ attempt: number; taskId?: string }>;
+  expectedCalls: ReadonlyArray<string>;
+}): Promise<void> {
+  await withConfig(
+    { agent_model: "provider/cheap", agent_retry_model: "provider/strong", agent_fallback_model: "provider/spare" },
+    async (config) => {
+      const calls: string[] = [];
+      const deps = spawnerDeps(config, async (spawnOpts) => {
+        const model = String(spawnOpts.model);
+        calls.push(model);
+        if (model === opts.failingModel) return outcome({ exitCode: 1, stopReason: "error", errorMessage: QUOTA });
+        return outcome();
+      });
+      const spawner = new PhaseSpawner(deps);
+      for (const step of opts.steps) {
+        await spawner.spawn(
+          {
+            taskId: step.taskId ?? "TASK-001",
+            label: "implementation",
+            role: "agent" as const,
+            prompt: "do it",
+            attempt: step.attempt,
+          },
+          undefined,
+          undefined,
+          false,
+        );
+      }
+      assert.deepEqual(calls, opts.expectedCalls);
+    },
+  );
+}
+
 // --- the decision, on its own ------------------------------------------------
 
 const ROLE: RoleConfig = {
@@ -162,61 +201,31 @@ test("the switch to the retry model is notified with the attempt that earned it"
   });
 });
 
-test("the retry model falls back like any primary, and its own death is remembered", async () => {
-  await withConfig(
-    { agent_model: "provider/cheap", agent_retry_model: "provider/strong", agent_fallback_model: "provider/spare" },
-    async (config) => {
-      const calls: string[] = [];
-      const deps = spawnerDeps(config, async (opts) => {
-        const model = String(opts.model);
-        calls.push(model);
-        if (model === "provider/strong") return outcome({ exitCode: 1, stopReason: "error", errorMessage: QUOTA });
-        return outcome();
-      });
-      const spawner = new PhaseSpawner(deps);
-      const request = { taskId: "TASK-001", label: "implementation", role: "agent" as const, prompt: "do it" };
-      await spawner.spawn({ ...request, attempt: 2 }, undefined, undefined, false);
-      await spawner.spawn({ ...request, attempt: 3 }, undefined, undefined, false);
-      // The first attempt is unaffected: it is the retry model that died, and
-      // the sticky memory answers for that model alone.
-      await spawner.spawn({ ...request, taskId: "TASK-002", attempt: 1 }, undefined, undefined, false);
+test("the retry model falls back like any primary, and its own death is remembered", () =>
+  runFallbackScenario({
+    failingModel: "provider/strong",
+    steps: [
+      { attempt: 2 },
+      { attempt: 3 },
+      // The first attempt of a fresh task is unaffected: it is the retry
+      // model that died, and the sticky memory answers for that model alone.
+      { attempt: 1, taskId: "TASK-002" },
+    ],
+    expectedCalls: ["provider/strong", "provider/spare", "provider/spare", "provider/cheap"],
+  }),
+);
 
-      assert.deepEqual(calls, [
-        "provider/strong",
-        "provider/spare",
-        "provider/spare",
-        "provider/cheap",
-      ]);
-    },
-  );
-});
-
-test("a dead primary does not condemn the retry model with it", async () => {
-  await withConfig(
-    { agent_model: "provider/cheap", agent_retry_model: "provider/strong", agent_fallback_model: "provider/spare" },
-    async (config) => {
-      const calls: string[] = [];
-      const deps = spawnerDeps(config, async (opts) => {
-        const model = String(opts.model);
-        calls.push(model);
-        if (model === "provider/cheap") return outcome({ exitCode: 1, stopReason: "error", errorMessage: QUOTA });
-        return outcome();
-      });
-      const spawner = new PhaseSpawner(deps);
-      const request = { taskId: "TASK-001", label: "implementation", role: "agent" as const, prompt: "do it" };
-      await spawner.spawn({ ...request, attempt: 1 }, undefined, undefined, false);
-      await spawner.spawn({ ...request, attempt: 2 }, undefined, undefined, false);
-      await spawner.spawn({ ...request, taskId: "TASK-002", attempt: 1 }, undefined, undefined, false);
-
-      assert.deepEqual(calls, [
-        "provider/cheap",
-        "provider/spare",
-        "provider/strong",
-        "provider/spare",
-      ]);
-    },
-  );
-});
+test("a dead primary does not condemn the retry model with it", () =>
+  runFallbackScenario({
+    failingModel: "provider/cheap",
+    steps: [
+      { attempt: 1 },
+      { attempt: 2 },
+      { attempt: 1, taskId: "TASK-002" },
+    ],
+    expectedCalls: ["provider/cheap", "provider/spare", "provider/strong", "provider/spare"],
+  }),
+);
 
 // --- the pre-flight ---------------------------------------------------------
 

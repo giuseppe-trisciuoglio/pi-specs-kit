@@ -286,15 +286,25 @@ async function runOneReviewSpawn(
     attempt: state.retry_count + 1,
     signal: deps.signal(),
   });
-  if (deps.stopping() === "now") return { kind: "verdict", verdict: { kind: "stopped" } };
-  if (!rev.preHooksOk) return { kind: "verdict", verdict: await onPreHookFailure(deps, plan, id) };
+  if (deps.stopping() === "now") {
+    executor.finishPhase(rev.meterHandle, "halted", rev.hooksMs);
+    return { kind: "verdict", verdict: { kind: "stopped" } };
+  }
+  if (!rev.preHooksOk) {
+    executor.finishPhase(rev.meterHandle, "pre_hook_failed", rev.hooksMs);
+    return { kind: "verdict", verdict: await onPreHookFailure(deps, plan, id) };
+  }
   if (rev.outcome?.aborted) {
+    executor.finishPhase(rev.meterHandle, "spawn_failed", rev.hooksMs);
     const verdict = await onInterruptedReview(deps, plan, id);
     if (verdict) return { kind: "verdict", verdict };
     return { kind: "retry", formatError };
   }
   const failure = classifyPhaseFailure(rev.outcome);
-  if (failure) return { kind: "verdict", verdict: await onSpawnFailure(deps, plan, id, failure) };
+  if (failure) {
+    executor.finishPhase(rev.meterHandle, "spawn_failed", rev.hooksMs);
+    return { kind: "verdict", verdict: await onSpawnFailure(deps, plan, id, failure) };
+  }
   // The reviewer does not write code, so a red gate after it is nothing the
   // review itself can act on and there is no retry path here to spend. It is
   // recorded like the gates of the other phases that cannot react, so the
@@ -303,6 +313,7 @@ async function runOneReviewSpawn(
 
   const report = await readReviewReport(specDir, id);
   if (!report) {
+    executor.finishPhase(rev.meterHandle, "review_failed", rev.hooksMs);
     const missing = await onReportMissing(deps, plan, id);
     if (typeof missing === "string") return { kind: "retry", formatError: missing };
     return { kind: "verdict", verdict: missing };
@@ -317,7 +328,9 @@ async function runOneReviewSpawn(
   if (report.recovered) {
     notify(`review report of ${id} had a malformed frontmatter block, verdict read line by line`, "warning");
   }
-  return { kind: "verdict", verdict: judgeReport(deps, plan, id, report) };
+  const verdict = judgeReport(deps, plan, id, report);
+  executor.finishPhase(rev.meterHandle, verdict.kind === "passed" ? "passed" : "review_failed", rev.hooksMs);
+  return { kind: "verdict", verdict };
 }
 
 /**

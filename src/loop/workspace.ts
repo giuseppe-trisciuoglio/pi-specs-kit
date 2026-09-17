@@ -1,16 +1,18 @@
 /**
- * What git says about the working tree between two moments of a task: the
- * content fingerprint that tells a retry which changed something from a retry
- * which changed nothing, and the patch between the tree an earlier phase saw
- * and the tree as it is now.
+ * What git says about the working tree at three moments: the content fingerprint
+ * that tells a retry which changed something from a retry which changed nothing,
+ * the patch between the tree an earlier phase saw and the tree as it is now, and
+ * the paths standing on top of the last commit so a gate knows what the attempt
+ * touched.
  *
- * Both go through a throwaway git index so the user's staging area is never
- * touched — the tree object git derives from that index is an exact content
- * hash of every tracked and newly added file, and ignored paths (build output)
- * stay out of it for free. The tree objects land in the repository's own object
- * store, which is what makes a fingerprint taken one phase ago still diffable
- * one phase later. Best-effort by design: outside a git repository, or on any
- * git failure, the answer is null and the caller simply loses the signal.
+ * All three go through a throwaway git index so the user's staging area is
+ * never touched — the tree object git derives from that index is an exact
+ * content hash of every tracked and newly added file, and ignored paths
+ * (build output) stay out of it for free. The tree objects land in the
+ * repository's own object store, which is what makes a fingerprint taken one
+ * phase ago still diffable one phase later. Best-effort by design: outside a
+ * git repository, or on any git failure, the answer is null and the caller
+ * simply loses the signal.
  */
 
 import { mkdtemp, rm } from "node:fs/promises";
@@ -21,9 +23,6 @@ import { spawnProcess } from "../util/process.ts";
 
 /** Ceiling for each git call; a hung git must not stall the phase boundary. */
 export const FINGERPRINT_TIMEOUT_MS = 30_000;
-
-/** A git invocation bound to the scratch index, as the helpers below use it. */
-type ScratchGit = (args: string[]) => Promise<{ exitCode: number | null; stdout: string }>;
 
 /**
  * Pathspecs of what the loop itself generates, relative to the project root.
@@ -60,8 +59,20 @@ export function reviewArtifactExclusions(projectRoot: string, specDir: string): 
   return [`${tasks}/*--review.md`, `${tasks}/*--review.attempt-*.md`, `${tasks}/*--review.unreadable.md`];
 }
 
-/** Run `fn` with a git bound to a throwaway index; null when one cannot be made. */
-async function withScratchIndex<T>(projectRoot: string, fn: (git: ScratchGit) => Promise<T | null>): Promise<T | null> {
+type Git = (args: string[]) => Promise<{ exitCode: number | null; stdout: string }>;
+
+/**
+ * Stage the worktree into a throwaway index and hand the caller a git bound
+ * to it. Everything the readers need — the temp index, the exclusions, the
+ * best-effort contract — happens once here: on any failure the callback is
+ * never invoked and the caller gets null, which is how all of them say "the
+ * signal is not available".
+ */
+async function withScratchIndex<T>(
+  projectRoot: string,
+  excluded: readonly string[],
+  read: (git: Git) => Promise<T | null>,
+): Promise<T | null> {
   let dir: string;
   try {
     dir = await mkdtemp(path.join(tmpdir(), "specs-kit-fp-"));
@@ -69,31 +80,23 @@ async function withScratchIndex<T>(projectRoot: string, fn: (git: ScratchGit) =>
     return null;
   }
   const env = { ...process.env, GIT_INDEX_FILE: path.join(dir, "index") };
-  const git: ScratchGit = (args) =>
+  const git: Git = (args) =>
     spawnProcess("git", args, { cwd: projectRoot, env, timeoutMs: FINGERPRINT_TIMEOUT_MS });
   try {
-    return await fn(git);
+    // Seeding the scratch index from HEAD keeps the staging step to the files
+    // that actually differ; without it every blob in the repository would be
+    // re-hashed and written. An unborn HEAD simply leaves the index empty,
+    // which still fingerprints correctly, so the exit code is not checked.
+    await git(["read-tree", "HEAD"]);
+    const pathspec = [".", ...excluded.map((p) => `:(exclude)${p}`)];
+    const add = await git(["add", "-A", "--", ...pathspec]);
+    if (add.exitCode !== 0) return null;
+    return await read(git);
   } catch {
     return null;
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
-}
-
-/** Stage the worktree into the scratch index and write it out as a tree object. */
-async function writeWorktreeTree(git: ScratchGit, excluded: readonly string[]): Promise<string | null> {
-  // Seeding the scratch index from HEAD keeps the staging step to the files
-  // that actually differ; without it every blob in the repository would be
-  // re-hashed and written. An unborn HEAD simply leaves the index empty,
-  // which still fingerprints correctly, so the exit code is not checked.
-  await git(["read-tree", "HEAD"]);
-  const pathspec = [".", ...excluded.map((p) => `:(exclude)${p}`)];
-  const add = await git(["add", "-A", "--", ...pathspec]);
-  if (add.exitCode !== 0) return null;
-  const tree = await git(["write-tree"]);
-  if (tree.exitCode !== 0) return null;
-  const sha = tree.stdout.trim();
-  return sha === "" ? null : sha;
 }
 
 /**
@@ -105,7 +108,12 @@ export async function workspaceFingerprint(
   projectRoot: string,
   excluded: readonly string[] = [],
 ): Promise<string | null> {
-  return withScratchIndex(projectRoot, (git) => writeWorktreeTree(git, excluded));
+  return withScratchIndex(projectRoot, excluded, async (git) => {
+    const tree = await git(["write-tree"]);
+    if (tree.exitCode !== 0) return null;
+    const sha = tree.stdout.trim();
+    return sha === "" ? null : sha;
+  });
 }
 
 /** A patch between two moments of the worktree, bounded in size. */
@@ -134,9 +142,11 @@ export async function workspaceDiff(
   limitChars = 0,
 ): Promise<WorkspaceDiff | null> {
   if (!baseTree || limitChars <= 0) return null;
-  return withScratchIndex(projectRoot, async (git) => {
-    const current = await writeWorktreeTree(git, excluded);
-    if (current === null || current === baseTree) return null;
+  return withScratchIndex(projectRoot, excluded, async (git) => {
+    const tree = await git(["write-tree"]);
+    if (tree.exitCode !== 0) return null;
+    const current = tree.stdout.trim();
+    if (current === "" || current === baseTree) return null;
     const pathspec = ["--", ".", ...excluded.map((p) => `:(exclude)${p}`)];
     const stat = await git(["diff", "--stat", baseTree, current, ...pathspec]);
     if (stat.exitCode !== 0) return null;
@@ -150,5 +160,30 @@ export async function workspaceDiff(
       patch: truncated ? `${full.slice(0, limitChars)}\n…[${full.length - limitChars} characters omitted]…` : full,
       truncated,
     };
+  });
+}
+
+/**
+ * Paths that differ from the last commit, relative to the project root, or
+ * null when the tree cannot be read. This is the work standing on top of
+ * HEAD: the checkpoint commits at every passed task, so what comes back is
+ * what the current task has touched, across all its attempts — a module an
+ * earlier attempt wrote and this one did not still belongs to the scope a
+ * gate has to cover.
+ *
+ * NUL-separated on the git side because a path may legitimately contain
+ * anything else, newlines included.
+ */
+export async function changedWorkspaceFiles(
+  projectRoot: string,
+  excluded: readonly string[] = [],
+): Promise<string[] | null> {
+  return withScratchIndex(projectRoot, excluded, async (git) => {
+    const diff = await git(["diff", "--cached", "--name-only", "-z", "HEAD"]);
+    // An unborn HEAD has nothing to diff against: everything staged into the
+    // scratch index is new, so the index itself is the list.
+    const listed = diff.exitCode === 0 ? diff : await git(["ls-files", "--cached", "-z"]);
+    if (listed.exitCode !== 0) return null;
+    return listed.stdout.split("\0").filter((entry) => entry !== "");
   });
 }
