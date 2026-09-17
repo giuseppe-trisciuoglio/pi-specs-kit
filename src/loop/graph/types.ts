@@ -54,6 +54,7 @@ export type EdgeType =
 export type TaskNodeId =
   | "task_start"
   | "enter_task"
+  | "brief"
   | "implementation"
   | "review"
   | "review_gate"
@@ -123,6 +124,9 @@ export interface TaskRuntime {
   postHookFailures: HookResult[] | null;
   /** Fixes earlier reviews routed to this task, collected once at entry. */
   routedSuggestions: RoutedSuggestion[];
+  /** Path of the reading brief written for this task, relative to the spec
+   * folder; null while the brief node has not produced it (or is disabled). */
+  briefPath: string | null;
   /** What the loop observed about the attempt that just failed, handed to the
    * failure learner; null while nothing has failed. */
   failureDetail: string | null;
@@ -156,13 +160,15 @@ export interface RoutingContext {
   readonly stopping: boolean;
   /** Set once the failure learner found the same unresolvable blocker in two
    * consecutive attempts: no retry can clear it, so the task ends here. */
-  readonly blockerWall: boolean;
-  /** Set once the task is known to need an action only a person can perform.
+  readonly blockerWall: boolean;  /** Set once the task is known to need an action only a person can perform.
    * The task ends, the run does not. */
   readonly operatorWall: boolean;
   /** Run-level facts, read by the end-of-range sync condition. */
   readonly syncRan: boolean;
   readonly hasLastCompleted: boolean;
+  /** The reading brief is enabled and this task enters fresh: the first
+   * implementation attempt is worth one cheap read-only spawn first. */
+  readonly briefWanted: boolean;
 }
 
 /** Facts constant for the whole walk but read fresh at each hop, because the
@@ -171,6 +177,7 @@ export interface RoutingFacts {
   readonly mode: "full" | "fast";
   readonly isLastTask: boolean;
   readonly continueOnFailure: boolean;
+  readonly briefWanted: boolean;
   readonly attemptsLeft: () => boolean;
   readonly stopping: () => boolean;
 }

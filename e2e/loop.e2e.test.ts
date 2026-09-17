@@ -231,8 +231,8 @@ test("e2e: a re-review is handed what to close and the patch of the retry", { ti
       .split("\n")
       .filter((line) => line.startsWith("review "));
     assert.ok(reviews.length >= 2, "the rejected verdict bought a second review");
-    assert.equal(reviews[0], "review retry_review=0 diff=0", "a first review has nothing to close");
-    assert.equal(reviews[1], "review retry_review=1 diff=1", "the re-review reads the checklist and the patch");
+    assert.equal(reviews[0], "review retry_review=0 diff=0 brief=0", "a first review has nothing to close");
+    assert.equal(reviews[1], "review retry_review=1 diff=1 brief=0", "the re-review reads the checklist and the patch");
 
     const plan = await loadFixPlan(project.specDir);
     assert.ok(plan);
@@ -348,6 +348,58 @@ test("e2e: refreshing the fix plan is refused while a loop is running", { timeou
       while (controller.isRunning()) await new Promise((resolve) => setTimeout(resolve, 20));
       assert.equal(await controller.refreshFixPlan(SPEC_REL), "Nothing to refresh");
     });
+  } finally {
+    await rm(project.projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("e2e: the reading brief runs once per task and reaches every attempt", { timeout: 120_000 }, async () => {
+  const project = await setupProject();
+  const promptLog = path.join(project.projectRoot, "prompt-log.txt");
+  try {
+    // The brief is opt-in until the measurement proves it pays for itself.
+    await writeFile(
+      path.join(project.projectRoot, "specs-kit.yaml"),
+      "brief:\n  enabled: true\n",
+      "utf8",
+    );
+    // One implementation fails once, so that task runs two attempts: the
+    // attempts: the brief must be produced once and read by both.
+    const result = await runLoop(project, {
+      FAKE_PI_FAIL_PHASE: "implementation",
+      FAKE_PI_FAIL_TIMES: "1",
+      FAKE_PI_STATE_FILE: path.join(project.projectRoot, "fake-brief-state.txt"),
+      FAKE_PI_IMPL_WRITE: path.join(project.projectRoot, "src", "work.txt"),
+      FAKE_PI_PROMPT_LOG: promptLog,
+    });
+    assert.equal(result.reason, "completed");
+
+    const plan = await loadFixPlan(project.specDir);
+    assert.ok(plan);
+    assert.deepEqual(plan.done, ["TASK-001", "TASK-002", "TASK-003"]);
+
+    // One brief file per task, written by the brief phase.
+    const brief = await readFile(path.join(project.specDir, "tasks", "TASK-001--brief.md"), "utf8");
+    assert.match(brief, /Files to touch/);
+
+    // Ledger: exactly one brief row per task, next to the phases it feeds.
+    const ledgerRows = (await readFile(path.join(project.projectRoot, "docs/specs/measurements.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as LedgerRow);
+    const phaseRows = ledgerRows.filter((r): r is PhaseLedgerRow => r.kind === "phase");
+    const countPhase = (phase: string): number => phaseRows.filter((r) => r.phase === phase).length;
+    assert.equal(countPhase("brief"), 3, "one brief spawn per task, never regenerated on a retry");
+
+    // Every implementation prompt carries the brief block, the first attempt
+    // and the retry alike.
+    const implLines = (await readFile(promptLog, "utf8"))
+      .split("\n")
+      .filter((line) => line.startsWith("implementation "));
+    assert.equal(implLines.length, 4);
+    for (const line of implLines) {
+      assert.match(line, /brief=1/, `the attempt reads the brief: ${line}`);
+    }
   } finally {
     await rm(project.projectRoot, { recursive: true, force: true });
   }

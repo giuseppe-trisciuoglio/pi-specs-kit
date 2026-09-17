@@ -43,6 +43,10 @@ export interface ImplementationPhaseInput extends PhaseSpawnInput {
   upstreamProvides: string[];
   /** Fixes earlier reviews routed to this task. */
   routedSuggestions: RoutedSuggestion[];
+  /** The reading brief produced once for this task, verbatim; null when the
+   * brief is disabled or unreadable. Every attempt receives it, so the
+   * reconnaissance is paid for once, not once per attempt. */
+  brief: string | null;
   /** Drives the pre-hook policy: first attempt blocks, retries feed context. */
   firstAttempt: boolean;
 }

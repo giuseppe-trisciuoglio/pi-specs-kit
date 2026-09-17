@@ -261,6 +261,11 @@ export class PhaseExecutor {
     return this.#spawner.runLearner(task, known, opts);
   }
 
+  /** Run the reading brief for a task and capture its answer. */
+  async runBrief(task: TaskFile, opts?: Parameters<PhaseSpawner["runBrief"]>[1]): Promise<LearnerResult> {
+    return this.#spawner.runBrief(task, opts);
+  }
+
   /** Run the failure learner on a dead attempt and capture its output. */
   async runFailureLearner(task: TaskFile, input: FailureLearnerInput): Promise<LearnerResult> {
     return this.#spawner.runFailureLearner(task, input);

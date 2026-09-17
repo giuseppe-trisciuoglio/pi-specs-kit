@@ -162,6 +162,22 @@ test("the failure learner escalates a repeated wall before anything else", () =>
   );
 });
 
+test("the brief node sits between entry and the first attempt", () => {
+  const g = graph();
+  const entry = g.edges.filter((e) => e.from === "enter_task");
+  const briefEdge = entry.find((e) => e.when === "brief_wanted");
+  assert.ok(briefEdge, "enter_task routes to the brief on brief_wanted");
+  assert.equal(briefEdge?.to, "brief");
+  // The brief edge is evaluated before the catch-all attempt entry: first
+  // match wins, so ordering is what makes the brief run first.
+  const implIndex = entry.findIndex((e) => e.when === "enters_at_implementation");
+  assert.ok(entry.indexOf(briefEdge!) < implIndex, "brief_wanted is evaluated first");
+  assert.deepEqual(
+    g.edges.filter((e) => e.from === "brief").map((e) => [e.when, e.to]),
+    [["always", "implementation"]],
+  );
+});
+
 test("the walk starts at the start marker, which forwards to the task entry", () => {
   const g = graph();
   assert.equal(g.entry, "task_start");

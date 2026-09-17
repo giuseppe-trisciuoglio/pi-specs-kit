@@ -13,6 +13,7 @@ import type { NodeAction, TaskEdge, TaskGraph, TaskNode, TaskNodeId } from "./ty
 const NODE_DECLARATIONS: readonly Pick<TaskNode, "id" | "kind" | "outcome">[] = [
   { id: "task_start", kind: "deterministic" },
   { id: "enter_task", kind: "deterministic" },
+  { id: "brief", kind: "agentic" },
   { id: "implementation", kind: "agentic" },
   { id: "review", kind: "agentic" },
   { id: "review_gate", kind: "deterministic" },
@@ -33,6 +34,13 @@ const NODE_DECLARATIONS: readonly Pick<TaskNode, "id" | "kind" | "outcome">[] = 
  * gone, the failure kind no longer matters to routing. */
 const EDGE_DECLARATIONS: readonly TaskEdge[] = [
   { from: "task_start", to: "enter_task", type: "advance", when: "always" },
+
+  // The reading brief sits between entry and the first attempt, on its own
+  // condition: disabled by default, and skipped on every resume, so a retry
+  // or a restart never pays for it twice. The attempt edges below keep their
+  // catch-all shape because leaving the brief routes straight forward.
+  { from: "enter_task", to: "brief", type: "advance", when: "brief_wanted" },
+  { from: "brief", to: "implementation", type: "advance", when: "always" },
 
   // Entry routing: fresh starts and resumes enter through the same node and
   // fan out on the persisted starting step.

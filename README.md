@@ -121,6 +121,8 @@ agents:
   agent_retry_model: "provider/stronger" # from the second attempt on
   agent_retry_from_attempt: 2
   reviewer_model: "provider/id"
+brief:                      # reading brief: one cheap read-only spawn per task,
+  enabled: false            # writing tasks/<TASK>--brief.md for every attempt
 run:
   max_attempts: 5
   timeout: 60m

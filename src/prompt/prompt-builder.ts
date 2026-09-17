@@ -8,6 +8,7 @@
 
 import {
   blockersBlock,
+  briefBlock,
   contextFilesBlock,
   hookBlock,
   knowledgeBaseBlock,
@@ -146,6 +147,7 @@ export function buildPhasePrompt(ctx: PromptContext): string {
     retryReviewBlock(ctx.priorBlockingFindings, ctx.attemptDiff),
     upstreamContractsBlock(ctx.upstreamProvides),
     routedSuggestionsBlock(ctx.routedSuggestions),
+    briefBlock(ctx.brief),
   ];
   const blocks = candidateBlocks.filter((block): block is string => block !== null);
 

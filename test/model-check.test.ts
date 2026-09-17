@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { CONFIG_FILE_NAME, loadSpecsKitConfig } from "../src/config/specs-kit-config.ts";
 import {
+  configuredFallbackModels,
   configuredModels,
   findMissingModels,
   modelListUnavailableWarning,
@@ -56,6 +57,32 @@ test("configuredModels collects the five roles and drops auto and empty values",
     ]);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the brief role is pre-flighted only when the brief is enabled", async () => {
+  const yaml =
+    "brief:\n  enabled: true\nagents:\n  brief_model: zai/glm-5.2\n  brief_fallback_model: opencode-go/deepseek-v4-flash\n";
+  const root = await project(yaml);
+  try {
+    const config = await loadSpecsKitConfig(root);
+    assert.deepEqual(configuredModels(config).map((m) => [m.role, m.model]), [["brief", "zai/glm-5.2"]]);
+    assert.deepEqual(configuredFallbackModels(config).map((m) => [m.role, m.model]), [
+      ["brief", "opencode-go/deepseek-v4-flash"],
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+  // Same models, brief disabled: nothing to check, the role never spawns.
+  const disabledRoot = await project(
+    "agents:\n  brief_model: zai/glm-5.2\n  brief_fallback_model: opencode-go/deepseek-v4-flash\n",
+  );
+  try {
+    const config = await loadSpecsKitConfig(disabledRoot);
+    assert.deepEqual(configuredModels(config), []);
+    assert.deepEqual(configuredFallbackModels(config), []);
+  } finally {
+    await rm(disabledRoot, { recursive: true, force: true });
   }
 });
 

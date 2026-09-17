@@ -13,6 +13,7 @@ function makeCtx(overrides: Partial<RoutingContext> = {}): RoutingContext {
     mode: "full",
     isLastTask: false,
     continueOnFailure: false,
+    briefWanted: false,
     blockerWall: false,
     operatorWall: false,
     stopping: false,
@@ -34,6 +35,7 @@ test("the registry contains exactly the declared routing predicates", () => {
   assert.deepEqual(Object.keys(CONDITIONS).sort(), [
     "always",
     "blocker_wall_repeated",
+    "brief_wanted",
     "continue_on_failure",
     "enters_at_cleanup_fast_mode",
     "enters_at_cleanup_full_mode",
@@ -100,31 +102,31 @@ test("entry predicates discriminate on the persisted starting step", () => {
     [{}, false],
     [{ entry: { resumed: true, startStep: "implementation" } }, false],
   ]);
-  truth("enters_at_cleanup_full_mode", [
-    [{ entry: { resumed: true, startStep: "cleanup" }, mode: "full" }, true],
-    [{ entry: { resumed: true, startStep: "cleanup" }, mode: "fast" }, false],
-    [{ entry: { resumed: true, startStep: "learner" }, mode: "full" }, false],
-  ]);
-  truth("enters_at_cleanup_fast_mode", [
-    [{ entry: { resumed: true, startStep: "cleanup" }, mode: "fast" }, true],
-    [{ entry: { resumed: true, startStep: "cleanup" }, mode: "full" }, false],
-    [{ entry: { resumed: true, startStep: "learner" }, mode: "fast" }, false],
-  ]);
+  // The cleanup gateways differ only in the mode they open on: one table
+  // per mode, generated from the same rows.
+  for (const mode of ["full", "fast"] as const) {
+    truth(`enters_at_cleanup_${mode}_mode`, [
+      [{ entry: { resumed: true, startStep: "cleanup" }, mode }, true],
+      [{ entry: { resumed: true, startStep: "cleanup" }, mode: mode === "full" ? "fast" : "full" }, false],
+      [{ entry: { resumed: true, startStep: "learner" }, mode }, false],
+    ]);
+  }
   truth("enters_at_learner", [
     [{ entry: { resumed: true, startStep: "learner" } }, true],
     [{ entry: { resumed: true, startStep: "sync" } }, false],
     [{}, false],
   ]);
-  truth("enters_at_sync", [
-    [{ entry: { resumed: true, startStep: "sync" } }, true],
-    [{ entry: { resumed: true, startStep: "update_done" } }, false],
-    [{}, false],
-  ]);
-  truth("enters_at_update_done", [
-    [{ entry: { resumed: true, startStep: "update_done" } }, true],
-    [{ entry: { resumed: true, startStep: "sync" } }, false],
-    [{}, false],
-  ]);
+  // The remaining steps discriminate only on which step they name.
+  for (const [name, step, other] of [
+    ["enters_at_sync", "sync", "update_done"],
+    ["enters_at_update_done", "update_done", "sync"],
+  ] as const) {
+    truth(name, [
+      [{ entry: { resumed: true, startStep: step } }, true],
+      [{ entry: { resumed: true, startStep: other } }, false],
+      [{}, false],
+    ]);
+  }
 });
 
 test("implementation predicates read the implementation outcome and the retry budget", () => {
@@ -134,32 +136,19 @@ test("implementation predicates read the implementation outcome and the retry bu
     [{ implStatus: "spawn-failed" }, false],
     [{ implStatus: "no-op-retry" }, false],
   ]);
-  truth("impl_no_op_retry", [
-    [{ implStatus: "no-op-retry" }, true],
-    [{ implStatus: "ok" }, false],
-    [{ implStatus: "post-hook-failed" }, false],
-  ]);
-  truth("impl_environment_failed", [
-    [{ implStatus: "environment-failed" }, true],
-    [{ implStatus: "spawn-failed" }, false],
-    [{ implStatus: "ok" }, false],
-  ]);
-  truth("impl_pre_hook_failed", [
-    [{ implStatus: "pre-hook-failed" }, true],
-    [{ implStatus: "spawn-failed" }, false],
-    [{ implStatus: "ok" }, false],
-  ]);
-  truth("impl_spawn_failed", [
-    [{ implStatus: "spawn-failed" }, true],
-    [{ implStatus: "pre-hook-failed" }, false],
-    [{ implStatus: "ok" }, false],
-  ]);
-  truth("impl_post_hook_failed", [
-    [{ implStatus: "post-hook-failed" }, true],
-    [{ implStatus: "pre-hook-failed" }, false],
-    [{ implStatus: "spawn-failed" }, false],
-    [{ implStatus: "ok" }, false],
-  ]);
+  // Each failure kind is its own predicate, true on itself and false on the
+  // neighbouring kinds and on the ok status.
+  const failureStatuses = ["no-op-retry", "environment-failed", "pre-hook-failed", "spawn-failed", "post-hook-failed"] as const;
+  for (const status of failureStatuses) {
+    truth(`impl_${status.replaceAll("-", "_")}` as ConditionName, [
+      [{ implStatus: status }, true],
+      ...failureStatuses
+        .filter((other) => other !== status)
+        .slice(0, 2)
+        .map((other): [Partial<RoutingContext>, boolean] => [{ implStatus: other }, false]),
+      [{ implStatus: "ok" }, false],
+    ]);
+  }
   truth("impl_failed_attempts_exhausted", [
     [{ implStatus: "pre-hook-failed", attemptsLeft: false }, true],
     [{ implStatus: "spawn-failed", attemptsLeft: false }, true],
