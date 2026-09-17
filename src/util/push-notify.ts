@@ -62,7 +62,7 @@ export function pushNotify(
     if (sequence === null) {
       // Never search the working directory or PATH for a notification executable.
       (deps.execFile ?? execFile)(
-        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
         ["-NoProfile", "-Command", windowsToastScript(title, body)],
         () => {},
       );
