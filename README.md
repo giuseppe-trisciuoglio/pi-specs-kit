@@ -56,7 +56,7 @@ For each task in the active range, the loop runs a fixed pipeline:
 | Phase | What happens |
 |-------|--------------|
 | **implementation** | pre hooks → phase prompt → `pi` subprocess → post hooks. A failure consumes one attempt (`max_attempts`). |
-| **failure learner** | runs on a failed attempt, before the next one: records what stopped it as *blockers* in the fix plan, so the retry is handed the wall instead of re-deriving it. A blocker that no retry can clear — a contradiction in the task, a decision nobody made — ends the task on its second appearance and names it to the operator. |
+| **failure learner** | runs on a failed attempt, before the next one: records what stopped it as *blockers* in the fix plan, so the retry is handed the wall instead of re-deriving it. A blocker that no retry can clear — a contradiction in the task, a decision nobody made — ends the task on its second appearance and names it to the operator. With `run.failure_learner: when_needed` (the default) a readable FAILED review records its findings directly, with no spawn; the learner session runs only for a red gate, a silent spawn, an unusable report or a wall-kind finding. Skips are marked `outcome: "skipped"` in the measurement ledger. |
 | **review** | must produce `tasks/<TASK>--review.md` with `review_status: PASSED\|FAILED`. The verdict is the only part the loop reads. A negative verdict sends the task back to implementation with the feedback, unless it repeats the previous one verbatim. |
 | **cleanup** | skipped in `mode: fast`. |
 | **learner** | extracts the task's learnings and accumulates them in the fix plan; later tasks receive them as memory. Facts the failed attempts of the task had to establish are offered to it as candidates. |

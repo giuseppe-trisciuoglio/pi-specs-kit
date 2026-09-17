@@ -40,6 +40,12 @@ export interface PhaseLedgerRow {
   duration_ms: number;
   usage: UsageSummary;
   cost_total: number;
+  /** Present only on rows the loop wrote without running the phase: a
+   * failure-learner spawn skipped because the review report already held
+   * the attempt's memory. Readers must treat the field as optional. */
+  outcome?: "skipped";
+  /** Why the phase was skipped; present only with `outcome: "skipped"`. */
+  skip_reason?: string;
 }
 
 /** One authoring window of the interactive session, attributed to a spec. */

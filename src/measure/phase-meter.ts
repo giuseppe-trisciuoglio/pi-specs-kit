@@ -150,6 +150,32 @@ export class PhaseMeter {
     this.#io(() => appendLedgerRow(this.#deps.ledgerFile, row));
   }
 
+  /**
+   * Record a phase the loop decided not to run. The row says so in its
+   * `outcome` field and carries no usage: it exists so the phase count in
+   * the ledger still matches what the loop did, and the saving of the skip
+   * stays measurable next to the spawns it replaced.
+   */
+  recordSkippedPhase(context: PhaseContext, reason: string): void {
+    const row: PhaseLedgerRow = {
+      v: 1,
+      kind: "phase",
+      ts: this.#now().toISOString(),
+      spec: context.spec,
+      task: context.task,
+      phase: context.phase,
+      attempt: context.attempt,
+      role: context.role,
+      model: null,
+      duration_ms: 0,
+      usage: zeroUsage(),
+      cost_total: 0,
+      outcome: "skipped",
+      skip_reason: reason,
+    };
+    this.#io(() => appendLedgerRow(this.#deps.ledgerFile, row));
+  }
+
   #io(fn: () => void): void {
     if (this.#broken) return;
     try {

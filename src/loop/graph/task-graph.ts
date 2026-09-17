@@ -84,18 +84,26 @@ const EDGE_DECLARATIONS: readonly TaskEdge[] = [
 
   // Leaving the failure learner: the wall guard first, then the exhaustion it
   // was called on, then back to the attempt it just wrote the memory for.
+  // The node sits on the rejected-review path too: a readable FAILED report
+  // is the memory of that attempt, so the node records its findings and
+  // moves on without a spawn, while an unreadable one still earns one.
   { from: "failure_learner", to: "task_failed", type: "stall-guard", when: "blocker_wall_repeated" },
   { from: "failure_learner", to: "task_failed", type: "attempts-exhausted", when: "failure_terminal" },
   { from: "failure_learner", to: "implementation", type: "advance", when: "always" },
 
   { from: "review", to: "review_gate", type: "advance", when: "always" },
 
+  // A rejection with the same feedback as the previous round means the
+  // implementation is not acting on it: another round would reproduce the
+  // same pair of outputs. The two rejections that do spend an attempt walk
+  // through the failure learner on their way back: the report of the one
+  // just judged is that attempt's memory, recorded there.
   { from: "review_gate", to: "task_failed", type: "operator-escalation", when: "verdict_escalated" },
   { from: "review_gate", to: "task_failed", type: "report-unusable", when: "verdict_report_unusable" },
   { from: "review_gate", to: "task_failed", type: "stall-guard", when: "verdict_failed_same_feedback" },
   { from: "review_gate", to: "task_failed", type: "attempts-exhausted", when: "verdict_retry_attempts_exhausted" },
-  { from: "review_gate", to: "implementation", type: "failed", when: "verdict_failed_new_feedback" },
-  { from: "review_gate", to: "implementation", type: "attempt-failed", when: "verdict_attempt_failed" },
+  { from: "review_gate", to: "failure_learner", type: "failed", when: "verdict_failed_new_feedback" },
+  { from: "review_gate", to: "failure_learner", type: "attempt-failed", when: "verdict_attempt_failed" },
   { from: "review_gate", to: "cleanup", type: "passed", when: "verdict_passed_full_mode" },
   { from: "review_gate", to: "learner", type: "mode-skip", when: "verdict_passed_fast_mode" },
 

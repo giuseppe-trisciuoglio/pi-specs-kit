@@ -222,6 +222,72 @@ async function runLoop(
   return { result, plan, calls, checkpoints, notifications, pushes, states, engine };
 }
 
+test("a readable FAILED review records its findings without a learner spawn", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(
+    root,
+    specDir,
+    (call) => (call.task === "TASK-001" && call.phase === "review" && call.n === 1 ? { review: "FAILED" } : {}),
+    (config) => {
+      config.mode = "fast";
+    },
+  );
+
+  assert.equal(run.result.reason, "completed");
+  // The rejection costs no learner session: the report on disk is the memory
+  // of the attempt, and its findings reach the retry as feedback anyway.
+  assert.equal(countCalls(run.calls, "TASK-001", "failure_learner"), 0);
+  assert.equal(countCalls(run.calls, "TASK-001", "implementation"), 2);
+  assert.equal(countCalls(run.calls, "TASK-001", "review"), 2);
+  const retry = run.calls.find((c) => c.task === "TASK-001" && c.phase === "implementation" && c.n === 2);
+  assert.ok(retry, "the rejected attempt was retried");
+  assert.match(retry.prompt, /Missing input validation/);
+  // The report's findings were recorded as the attempt's blockers.
+  const recorded = run.states.some(
+    (s) =>
+      s.current_task === "TASK-001" &&
+      s.retry_count === 1 &&
+      s.blockers?.some((b) => b.kind === "env" && b.text === "Missing input validation"),
+  );
+  assert.ok(recorded, "the derived findings are the attempt's blockers");
+  // The task passed, so the run memory died with it.
+  assert.deepEqual(run.plan.state.blockers, []);
+});
+
+test("a red gate after a FAILED review still buys the learner spawn", async () => {
+  const { root, specDir } = await createSpec();
+  const FAILING_POST: HookResult = {
+    command: "npm run build",
+    ok: false,
+    exitCode: 1,
+    timedOut: false,
+    output: "build failed",
+  };
+  let postRuns = 0;
+  const run = await runLoop(
+    root,
+    specDir,
+    (call) => (call.task === "TASK-001" && call.phase === "review" && call.n === 1 ? { review: "FAILED" } : {}),
+    (config) => {
+      config.mode = "fast";
+    },
+    {},
+    async (_hooks, phase, stage) => {
+      if (phase !== "implementation" || stage !== "post") return [];
+      postRuns++;
+      // The gate is red only on the second implementation attempt: the first
+      // rejection walks through the learner without a spawn, then the retry
+      // dies on the gate, which the report never judged.
+      return postRuns === 2 ? [FAILING_POST] : [];
+    },
+  );
+
+  assert.equal(run.result.reason, "completed");
+  assert.equal(countCalls(run.calls, "TASK-001", "failure_learner"), 1, "only the red gate bought a spawn");
+  const learner = run.calls.find((c) => c.task === "TASK-001" && c.phase === "failure_learner");
+  assert.ok(learner, "the learner ran for the gate failure");
+});
+
 const sequence = (calls: SpawnCall[]): string[] => calls.map((c) => `${c.task}:${c.phase}`);
 const countCalls = (calls: SpawnCall[], task: string, phase: string): number =>
   calls.filter((c) => c.task === task && c.phase === phase).length;

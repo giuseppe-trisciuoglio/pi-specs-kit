@@ -109,6 +109,25 @@ test("messages without usage contribute nothing but the row is still written", (
   assert.equal(row.model, "configured/model");
 });
 
+test("a skipped phase writes a row that says so, with no usage", () => {
+  const { deps, ledgerFile } = setup();
+  const meter = new PhaseMeter(deps);
+
+  meter.recordSkippedPhase(
+    { spec: "001-spec", task: "TASK-001", phase: "failure_learner", attempt: 2, role: "learner", model: null },
+    "report-derived",
+  );
+
+  const [row] = ledgerRows(ledgerFile) as PhaseLedgerRow[];
+  assert.equal(row.kind, "phase");
+  assert.equal(row.phase, "failure_learner");
+  assert.equal(row.outcome, "skipped");
+  assert.equal(row.skip_reason, "report-derived");
+  assert.equal(row.duration_ms, 0);
+  assert.deepEqual(row.usage, { input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 });
+  assert.equal(row.cost_total, 0);
+});
+
 test("a killed phase leaves its raw rows in the WAL and no ledger row", () => {
   const { deps, ledgerFile, walFile } = setup();
   const meter = new PhaseMeter(deps);

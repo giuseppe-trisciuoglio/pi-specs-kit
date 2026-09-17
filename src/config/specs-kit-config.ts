@@ -117,6 +117,15 @@ export interface RunConfig {
    * itself, which is what it did before the channel existed.
    */
   reviewDiffMaxKb: number;
+  /**
+   * Failure-learner policy on a failed attempt. "always" spawns the learner
+   * on every failed attempt; "when_needed" spawns only when the review
+   * report cannot stand in for it — a red gate, a silent or refused spawn,
+   * a missing or unreadable report, or a report carrying a finding of the
+   * kinds that escalate — and derives the attempt's memory from the report
+   * otherwise, saving one spawn per failed attempt.
+   */
+  failureLearner: FailureLearnerMode;
 }
 
 export type HookStage = "pre" | "post";
@@ -235,6 +244,7 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
   autoCompactThresholdPercent: DEFAULT_AUTO_COMPACT_PERCENT,
   protectSpecArtifacts: true,
   reviewDiffMaxKb: 64,
+  failureLearner: "when_needed",
 };
 
 export function defaultRoles(): Record<RoleName, RoleConfig> {
@@ -259,6 +269,7 @@ import path from "node:path";
 import YAML from "yaml";
 import { DEFAULT_AUTO_COMPACT_PERCENT, isThresholdPercent } from "../agent/compaction-plan.ts";
 import { parseDurationMs } from "../util/duration.ts";
+import { parseFailureLearnerMode, type FailureLearnerMode } from "../loop/failure-learner-routing.ts";
 
 /** Default config file name, looked up directly under the project root. */
 export const CONFIG_FILE_NAME = "specs-kit.yaml";
@@ -455,6 +466,7 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
   run.autoCompactThresholdPercent = thresholdPercent(src.auto_compact_threshold) ?? run.autoCompactThresholdPercent;
   run.protectSpecArtifacts = flag(src.protect_spec_artifacts) ?? run.protectSpecArtifacts;
   run.reviewDiffMaxKb = count(src.review_diff_max_kb) ?? run.reviewDiffMaxKb;
+  run.failureLearner = parseFailureLearnerMode(src.failure_learner) ?? run.failureLearner;
   const fromTask = text(src.from_task);
   if (fromTask !== undefined) run.fromTask = fromTask;
   const toTask = text(src.to_task);

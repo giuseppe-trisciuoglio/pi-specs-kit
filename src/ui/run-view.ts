@@ -18,7 +18,7 @@ import { hardRunDurationMs } from "../loop/budget.ts";
 import type { LoopController } from "../loop/loop-controller.ts";
 import { formatDurationMs, parseDurationMs } from "../util/duration.ts";
 
-type FieldKind = "boolean" | "duration" | "number" | "percent";
+type FieldKind = "boolean" | "duration" | "number" | "percent" | "choice";
 
 interface RunFieldDef {
   field: RunField;
@@ -66,7 +66,13 @@ const FIELDS: readonly RunFieldDef[] = [
     label: "re-review diff ceiling (KB)",
     display: (r) => (r.reviewDiffMaxKb === 0 ? "0 (off)" : `${r.reviewDiffMaxKb}`),
   },
+  { field: "failure_learner", kind: "choice", label: "failure learner", display: (r) => r.failureLearner },
 ];
+
+/** The values a "choice" field accepts, per field. */
+const CHOICES: Partial<Record<RunField, readonly string[]>> = {
+  failure_learner: ["when_needed", "always"],
+};
 
 /** Persist a single field after confirmation; returns the freshest config. */
 async function writeField(
@@ -103,6 +109,13 @@ async function editField(
     if (choice === undefined) return config;
     const value = choice === "true";
     return writeField(ctx, controller, config, def, value, String(value));
+  }
+
+  if (def.kind === "choice") {
+    const options = CHOICES[def.field] ?? [];
+    const choice = await ctx.ui.select(`${def.label} (current ${current})`, [...options]);
+    if (choice === undefined) return config;
+    return writeField(ctx, controller, config, def, choice, choice);
   }
 
   let placeholder = `current ${current} — e.g. 5`;

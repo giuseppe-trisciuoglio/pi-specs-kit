@@ -217,6 +217,10 @@ export interface TaskNodeDeps {
   workspaceDiff: typeof workspaceDiff;
   /** Re-extract the codebase graph the phases read; best-effort. */
   refreshCodebaseGraph: typeof refreshCodebaseGraph;
+  /** Record a failure-learner spawn that was skipped because the review
+   * report already carried the attempt's memory. Absent means silent: the
+   * skip is a measurement concern, never a loop concern. */
+  recordLearnerSkip?: (task: string, attempt: number, reason: string) => void;
   /**
    * Content hashes of the documents a phase must not rewrite, read around the
    * implementation. Absent means the real one: the check is part of the loop,

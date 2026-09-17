@@ -49,7 +49,8 @@ export type RunField =
   | "auto_compact"
   | "auto_compact_threshold"
   | "protect_spec_artifacts"
-  | "review_diff_max_kb";
+  | "review_diff_max_kb"
+  | "failure_learner";
 
 export interface RunFieldUpdate {
   field: RunField;
