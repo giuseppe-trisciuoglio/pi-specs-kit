@@ -187,7 +187,7 @@ export class PhaseExecutor {
       }
       const { prompt, systemPromptOverride } = await this.#context.buildPrompt(phase, input, preResults);
       const { outcome } = await this.#spawner.spawn(
-        { taskId: task.frontmatter.id, label: phase, role, prompt },
+        { taskId: task.frontmatter.id, label: phase, role, prompt, attempt: input.attempt },
         systemPromptOverride,
         input.signal,
         false,

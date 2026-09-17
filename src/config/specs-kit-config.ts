@@ -31,7 +31,22 @@ export interface RoleConfig {
    * after the first failure.
    */
   fallbackModel?: string;
+  /**
+   * Model the role is spawned on from `retryFromAttempt` onwards. The first
+   * attempt is the cheap one; once it has failed, the run is already paying
+   * for another review and another gate behind every further attempt, so the
+   * intelligence spent on it is worth more. Absent means the role uses its
+   * primary model for every attempt.
+   */
+  retryModel?: string;
+  /** Thinking level for the retry model; absent keeps the role's own. */
+  retryThinkingLevel?: string;
+  /** First attempt that spawns on the retry model; never below two. */
+  retryFromAttempt?: number;
 }
+
+/** Attempt the retry model takes over from when the file names no other. */
+export const DEFAULT_RETRY_FROM_ATTEMPT = 2;
 
 export interface RunConfig {
   maxAttempts: number;
@@ -324,7 +339,7 @@ function commandList(value: unknown): string[] {
   return [];
 }
 
-/** The role model/thinking/fallback triples under the agents section. */
+/** The role model/thinking/fallback/retry values under the agents section. */
 function parseRoles(doc: Record<string, unknown>): SpecsKitConfig["roles"] {
   const agents = record(doc.agents);
   const roles = {} as SpecsKitConfig["roles"];
@@ -333,6 +348,12 @@ function parseRoles(doc: Record<string, unknown>): SpecsKitConfig["roles"] {
       model: text(agents[`${role}_model`]) ?? "auto",
       thinkingLevel: text(agents[`${role}_thinking_level`]),
       fallbackModel: text(agents[`${role}_fallback_model`]),
+      retryModel: text(agents[`${role}_retry_model`]),
+      retryThinkingLevel: text(agents[`${role}_retry_thinking_level`]),
+      // Below two the field would name the first attempt, which is not a
+      // retry at all: the role would simply have two names for its primary
+      // model. Such a value is read as absent, and the default applies.
+      retryFromAttempt: count(agents[`${role}_retry_from_attempt`], DEFAULT_RETRY_FROM_ATTEMPT),
     };
   }
   return roles;

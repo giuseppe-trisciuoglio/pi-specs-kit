@@ -118,6 +118,8 @@ mode: fast
 agents:
   agent_model: "provider/id"
   agent_thinking_level: medium
+  agent_retry_model: "provider/stronger" # from the second attempt on
+  agent_retry_from_attempt: 2
   reviewer_model: "provider/id"
 run:
   max_attempts: 5
@@ -157,6 +159,20 @@ which leaves the choice to the agent CLI: in ephemeral mode that means the last
 model used interactively, so pin `<role>_model` for reproducible runs (the loop
 warns once per role). `/specs-kit-config` rewrites these fields surgically (with
 a `.bak` backup on the first write of each session).
+
+**A stronger model once an attempt has failed.** `<role>_retry_model` (with an
+optional `<role>_retry_thinking_level`) is the model the role is spawned on from
+`<role>_retry_from_attempt` onwards, `2` by default; leave it out and the role
+uses its primary model for every attempt, as before. It exists because the
+attempts of a task are not worth the same: the first one is speculative and
+cheap, while every later one is spawned *because* the first was wrong and drags
+another review and another gate behind it. A value below `2` is ignored — the
+first attempt is not a retry. The retry model is checked against the model
+catalogue like a primary (an unknown one refuses the start, naming the field),
+it escalates to `<role>_fallback_model` on an environment failure exactly like a
+primary, and the switch is notified once per spawn with the attempt that earned
+it. It is distinct from the fallback on purpose: the fallback answers a refusing
+or silent provider, the retry model answers a wrong diff.
 
 **Editing the configuration while a loop runs** takes effect at the next phase:
 the loop re-reads the file before every phase, so a model fix, a repaired hook

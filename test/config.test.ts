@@ -41,6 +41,9 @@ agents:
   agent_model: provider/fast
   agent_thinking_level: high
   agent_fallback_model: provider/slow
+  agent_retry_model: provider/strong
+  agent_retry_thinking_level: max
+  agent_retry_from_attempt: 3
   reviewer_model: provider/careful
   learner_thinking_level: low
 run:
@@ -117,10 +120,38 @@ test("full yaml maps every field", async () => {
     assert.equal(config.mode, "full");
     assert.equal(config.pollIntervalMs, 250);
 
-    assert.deepEqual(config.roles.agent, { model: "provider/fast", thinkingLevel: "high", fallbackModel: "provider/slow" });
-    assert.deepEqual(config.roles.reviewer, { model: "provider/careful", thinkingLevel: undefined, fallbackModel: undefined });
-    assert.deepEqual(config.roles.learner, { model: "auto", thinkingLevel: "low", fallbackModel: undefined });
-    assert.deepEqual(config.roles.cleaner, { model: "auto", thinkingLevel: undefined, fallbackModel: undefined });
+    assert.deepEqual(config.roles.agent, {
+      model: "provider/fast",
+      thinkingLevel: "high",
+      fallbackModel: "provider/slow",
+      retryModel: "provider/strong",
+      retryThinkingLevel: "max",
+      retryFromAttempt: 3,
+    });
+    assert.deepEqual(config.roles.reviewer, {
+      model: "provider/careful",
+      thinkingLevel: undefined,
+      fallbackModel: undefined,
+      retryModel: undefined,
+      retryThinkingLevel: undefined,
+      retryFromAttempt: undefined,
+    });
+    assert.deepEqual(config.roles.learner, {
+      model: "auto",
+      thinkingLevel: "low",
+      fallbackModel: undefined,
+      retryModel: undefined,
+      retryThinkingLevel: undefined,
+      retryFromAttempt: undefined,
+    });
+    assert.deepEqual(config.roles.cleaner, {
+      model: "auto",
+      thinkingLevel: undefined,
+      fallbackModel: undefined,
+      retryModel: undefined,
+      retryThinkingLevel: undefined,
+      retryFromAttempt: undefined,
+    });
 
     assert.equal(config.run.maxAttempts, 7);
     assert.equal(config.run.timeoutMs, 3_600_000);
@@ -247,7 +278,14 @@ test("writer creates a missing file with a minimal structure", async () => {
     assert.deepEqual(doc, { agents: { learner_model: "provider/x", learner_thinking_level: "low" } });
     // Reloading the written file works and maps the role.
     const config = await loadSpecsKitConfig(dir);
-    assert.deepEqual(config.roles.learner, { model: "provider/x", thinkingLevel: "low", fallbackModel: undefined });
+    assert.deepEqual(config.roles.learner, {
+      model: "provider/x",
+      thinkingLevel: "low",
+      fallbackModel: undefined,
+      retryModel: undefined,
+      retryThinkingLevel: undefined,
+      retryFromAttempt: undefined,
+    });
     await updateRoleConfig(file, "learner", { fallbackModel: "provider/y" });
     const escalated = await loadSpecsKitConfig(dir);
     assert.equal(escalated.roles.learner.fallbackModel, "provider/y");

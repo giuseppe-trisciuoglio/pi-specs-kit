@@ -48,3 +48,12 @@ from spawn counts.
 
 The budget sees only what actually ran: the skipped primary is never spawned,
 so it is never charged.
+
+## Amended by 0042
+
+A role can now name a retry model, so it has two models that can be the primary
+of a spawn. The memory is therefore held as a set of dead model names rather
+than one entry per role: a cheap model that died does not condemn the strong one
+the later attempts use, and vice versa. The rule itself is unchanged — only an
+environment failure earns the memory, it is run-scoped, and it is about the
+model, not about the role.
