@@ -713,7 +713,7 @@ Only continue with brainstorming if the user explicitly confirms they want a **n
        - "Continue with a single large specification" (not recommended - warn about task count limit)
    - If user chooses to split: Focus the current brainstorming session on the FIRST part of the split.
    - If user chooses to focus on one part: Focus the current session on that part.
-   - If user chooses to continue: Proceed with a warning that `spec-to-tasks` will reject the spec if it exceeds 15 tasks.
+   - If user chooses to continue: Proceed with a warning that `spec-to-tasks` will reject the spec if it exceeds 15 tasks, and that even within the limit any single task declaring more than 8 files or more than 6 acceptance criteria will trigger a split proposal: oversized tasks are what measurably need repeated implementation attempts in the loop.
 
 ---
 

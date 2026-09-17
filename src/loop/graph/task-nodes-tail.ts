@@ -10,7 +10,7 @@
 import { computeRangeProgress, type FixPlan } from "../../fixplan/fix-plan.ts";
 import { updateTaskStatus, type TaskFile } from "../../tasks/task-parser.ts";
 import { graphifyGraphExists, graphifyGraphMissingWarning } from "../../prompt/graphify.ts";
-import { promotableFacts, pruneTaskBlockers, resolveTaskBlockers } from "../blockers.ts";
+import { attemptCostCandidate, promotableFacts, pruneTaskBlockers, resolveTaskBlockers } from "../blockers.ts";
 import { mergeLearnings, parseNewLearnings, loadProjectLearnings, saveProjectLearnings, MAX_PROJECT_LEARNINGS } from "../learner.ts";
 import { parseConfirmations, spawnFailed } from "../phases.ts";
 import { loopArtifactExclusions } from "../workspace.ts";
@@ -101,6 +101,12 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
       // offered to the learner as candidates, and it is the learner — the
       // sanctioned channel — that decides whether they reach project memory.
       const candidates = promotableFacts(state.blockers, id);
+      // A task that needed more than one attempt paid a price worth reporting:
+      // the summary of what it cost goes to the learner with the facts, so the
+      // lesson can reach the project memory the task author reads.
+      if (state.retry_count > 0) {
+        candidates.unshift(attemptCostCandidate(state.blockers, id, state.retry_count + 1));
+      }
       state.blockers = resolveTaskBlockers(state.blockers, id);
       const lr = await executor.runLearner(taskFile, known, { signal: deps.signal(), candidates });
       if (deps.stopping() === "now") return { kind: "stopped" };
