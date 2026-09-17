@@ -89,8 +89,8 @@ A fix a reviewer defers to a later task instead of the one just reviewed: it liv
 _Avoid_: deferred suggestion, textual handoff
 
 **Review verdict**:
-The structured outcome the review phase projects back to the loop at the end of its sub-cycle: passed, failed (with feedback), attemptFailed, reportUnusable or stopped. It lives in the report's frontmatter; the loop routes the task's transitions on it.
-_Avoid_: review outcome, report (it is the file, not the outcome)
+The structured outcome the review phase projects back to the loop at the end of its sub-cycle: passed, failed (with feedback), attemptFailed, reportUnusable or stopped. It lives in the report's frontmatter; the loop routes the task's transitions on it. One rule makes it negative, and the review skill states it once: a `blocking` finding, an acceptance criterion or DoD item not met, a non-empty `spec_conflicts`, a non-empty `escalation`. A `warning` or a `suggestion` never flips it, whatever their number; they leave the review as routed suggestions. A criterion called "partially met" is not a reason on its own — either what is missing is worth a blocking finding, or the criterion is met.
+_Avoid_: review outcome, report (it is the file, not the outcome), partially met (as a verdict)
 
 **Per-attempt review archive**:
 A copy of a previous review report, saved as `tasks/<TASK>--review.attempt-N.md` before a retry overwrites the canonical report `<TASK>--review.md`. Preserves the verdict history (including FAILED) for audit and debug; the canonical file is always the latest verdict.

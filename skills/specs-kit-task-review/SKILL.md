@@ -153,7 +153,11 @@ If any required input is missing or ambiguous, ask the user via ask_user_questio
 4. Mark each item as:
    - ✅ Met (with evidence)
    - ❌ Not met (with explanation)
-   - ⚠️ Partially met (with details) — treated as FAILED for `review_status`
+   - ⚠️ Partially met (with details) — allowed only with a `blocking` issue that
+     names exactly what is missing. Without that issue the criterion is met:
+     "partially" is not a verdict, it is a finding waiting to be written. What
+     is left is a `warning` or a `suggestion`, the criterion counts as met, and
+     the remainder is routed to the task that owns it (Phase 7).
 
 5. **Update traceability-matrix.md**:
    - Read `docs/specs/[id]/traceability-matrix.md`
@@ -373,11 +377,30 @@ is the cheapest place to intervene.
 **Actions**:
 
 1. **Calculate overall status** — `review_status` takes one of two values and no
-   others:
-   - `PASSED`: all ACs and DoD met, no critical code issue, no architectural drift
-   - `FAILED`: anything else — an unmet or partially met AC, a DoD item left
-     open, a critical finding, a spec contradiction without a DEC, an
-     architectural drift or an impossible requirement
+   others, and one rule decides between them. The verdict is `FAILED` when, and
+   only when, at least one of these is true:
+
+   - an `issues` entry is `blocking`
+   - an acceptance criterion or a DoD item is **not met**
+   - `spec_conflicts` is not empty
+   - `escalation` is not empty
+
+   Everything else is `PASSED`. There is no other reason to fail a task, and no
+   count of non-blocking findings adds up to one: `warning` and `suggestion`
+   never flip the verdict, however many there are. A report that carries no
+   blocking issue, no unmet criterion, no conflict and no escalation is
+   `PASSED` even when its findings tables are long.
+
+   A criterion you were tempted to call "partially met" is the case this rule
+   exists for. Either what is missing is worth a `blocking` issue — then write
+   that issue, mark the criterion not met and fail — or it is not, and the
+   criterion is met with a `warning` or a `suggestion` recorded beside it. The
+   report cannot fail a task on "partially" alone.
+
+   The non-blocking findings are not lost, they are routed: send each one to
+   the final cleanup task or to the next task that owns the area, as a `routed`
+   entry (below). That is the channel for everything a passing review still
+   wants fixed.
 
    A finding too large for the next implementation pass is still `FAILED`: put
    the escalation in the first `issues` entry rather than inventing a status
@@ -490,10 +513,10 @@ review summary, not buried in the issues table.
 
    - any `blocking` `invented-convention` → `FAILED`
    - only `warning` / `suggestion` → still `PASSED`, but the report must
-     enumerate them
+     enumerate them and route them
 
-   This rule mirrors the existing rule that an unmet AC flips the status
-   to `FAILED`. The motivation is the same: the implementation may have
-   shipped working code, but the loop cannot move on to the next task
-   while the codebase carries undocumented conventions that future tasks
-   will treat as canonical.
+   This is the single verdict rule of Phase 7 applied to this phase's
+   findings, not a second rule: the motivation is the same, the
+   implementation may have shipped working code, but the loop cannot move
+   on to the next task while the codebase carries undocumented conventions
+   that future tasks will treat as canonical.
