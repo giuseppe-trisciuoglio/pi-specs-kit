@@ -10,6 +10,7 @@ import { LoopEngine, type LoopEndReason, type LoopStartOptions } from "../src/lo
 import type { PhaseRunOutcome, PhaseSpawnOptions } from "../src/agent/spawner.ts";
 import { runPhaseHooks, type HookResult } from "../src/loop/hooks.ts";
 import { reviewFilePath } from "../src/loop/review-report.ts";
+import { ledgerPath, type LedgerRow, type PhaseLedgerRow } from "../src/measure/ledger.ts";
 
 const tmpDirs: string[] = [];
 after(async () => {
@@ -973,6 +974,18 @@ test("rejected review feeds back into the next implementation prompt", async () 
   assert.ok(retries[1].prompt.includes("<review_feedback>"));
   assert.ok(retries[1].prompt.includes("Found problems"));
   assert.ok(retries[1].prompt.includes("Missing input validation"));
+
+  // The ledger keeps one row per review spawn, and the outcome names why
+  // each one ended: the rejected first attempt, the accepted second.
+  const config = await loadSpecsKitConfig(root);
+  const rows = (await readFile(ledgerPath(config.projectRoot, config.specsDir), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as LedgerRow);
+  const reviewRows = rows.filter(
+    (r): r is PhaseLedgerRow => r.kind === "phase" && r.task === "TASK-001" && r.phase === "review",
+  );
+  assert.deepEqual(reviewRows.map((r) => r.outcome), ["review_failed", "passed"]);
 });
 
 test("missing review file triggers review file retries and re-spawns", async () => {
@@ -1353,6 +1366,16 @@ test("a red implementation post hook fails the attempt and does not reach review
   const review = run.calls.find((c) => c.task === "TASK-001" && c.phase === "review");
   assert.ok(review, "the reviewer is only spawned after a green gate");
   assert.ok(run.plan.done.includes("TASK-001"), "the task completes once the gate is green");
+
+  const config = await loadSpecsKitConfig(root);
+  const rows = (await readFile(ledgerPath(config.projectRoot, config.specsDir), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as LedgerRow);
+  const implRows = rows.filter(
+    (r): r is PhaseLedgerRow => r.kind === "phase" && r.task === "TASK-001" && r.phase === "implementation",
+  );
+  assert.deepEqual(implRows.map((r) => r.outcome), ["gate_failed", "passed"]);
 });
 
 test("with attempts exhausted a red implementation post hook closes the task through the funnel", async () => {

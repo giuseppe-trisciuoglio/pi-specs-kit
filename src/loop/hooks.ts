@@ -10,6 +10,8 @@ export interface HookResult {
   timedOut: boolean;
   /** Combined stdout+stderr, trimmed and stripped of control characters. */
   output: string;
+  /** Wall-clock time the command ran; absent when the caller built the result by hand. */
+  durationMs?: number;
 }
 
 export interface HookStreamCallbacks {
@@ -26,6 +28,7 @@ export async function runHook(
 ): Promise<HookResult> {
   // spawnProcess captures stdout/stderr itself and returns them in the result,
   // so we only forward each chunk to the streaming callbacks here.
+  const startedAt = Date.now();
   const res = await spawnProcess("/bin/sh", ["-c", command], {
     cwd: opts.cwd,
     // Added to the inherited environment, never substituted for it: a hook is
@@ -45,6 +48,7 @@ export async function runHook(
     // attempt's prompt, and a NUL from a tool printing binary would otherwise
     // make the spawn of that attempt impossible.
     output: stripControlChars(`${res.stdout}\n${res.stderr}`).trim(),
+    durationMs: Date.now() - startedAt,
   };
 }
 

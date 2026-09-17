@@ -1,7 +1,9 @@
+import { readFile } from "node:fs/promises";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { PhaseName, SpecsKitConfig } from "./config/specs-kit-config.ts";
 import type { LoopStartOptions, LoopStatus } from "./loop/engine.ts";
 import { registerAuthoringCommands } from "./authoring/authoring-commands.ts";
+import { computeSpecStats, formatSpecStats, parseLedgerRows } from "./measure/ledger-stats.ts";
 import { ledgerPath } from "./measure/ledger.ts";
 import { AuthoringWindowTracker } from "./measure/authoring-window.ts";
 import { walPath } from "./measure/wal.ts";
@@ -254,6 +256,30 @@ export default function specsKitExtension(pi: ExtensionAPI): void {
         report(ctx, `[specs-kit] ${outcome}`);
       } catch (err) {
         report(ctx, `[specs-kit] refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+  });
+
+  pi.registerCommand("specs-kit-stats", {
+    description: "Print loop KPIs for a spec: attempts, review pass rate, gate/loop minutes",
+    handler: async (args, ctx) => {
+      lastCtx = ctx;
+      tracker.close();
+      const config = await ensureConfig(ctx);
+      let spec = parseRunArgs(args).spec ?? config.spec;
+      if (!spec) {
+        if (!ctx.hasUI) {
+          report(ctx, "[specs-kit] Specify the spec: /specs-kit-stats --spec <path>");
+          return;
+        }
+        spec = await pickSpec(controller, ctx, { onlyWithTasks: true, active: config.spec });
+        if (!spec) return;
+      }
+      try {
+        const raw = await readFile(ledgerPath(config.projectRoot, config.specsDir), "utf8");
+        report(ctx, formatSpecStats(computeSpecStats(parseLedgerRows(raw), spec)));
+      } catch (err) {
+        report(ctx, `[specs-kit] stats unavailable: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
   });

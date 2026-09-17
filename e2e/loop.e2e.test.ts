@@ -139,6 +139,12 @@ test("e2e: full loop over three tasks completes with the expected fix plan", { t
       assert.deepEqual(row.usage, { input: 300, output: 30, cache_read: 0, cache_write: 0, total: 330 });
       assert.equal(row.model, "fake/fake-model");
       assert.ok(row.duration_ms >= 0);
+      // A clean run: every phase closes with a "passed" outcome. Only the
+      // phases that run hooks (not the learner) carry hooks_ms.
+      assert.equal(row.outcome, "passed", `${row.task}:${row.phase} should have passed`);
+      if (["implementation", "review", "sync"].includes(row.phase)) {
+        assert.ok((row.hooks_ms ?? -1) >= 0, `${row.task}:${row.phase} is missing hooks_ms`);
+      }
     }
     // Completed phases prune their raw rows from the write-ahead file.
     const walRows = readWalRows(
@@ -171,6 +177,21 @@ test("e2e: a failing implementation phase is retried and the loop completes", { 
     const plan = await loadFixPlan(project.specDir);
     assert.ok(plan);
     assert.deepEqual(plan.done, ["TASK-001", "TASK-002", "TASK-003"]);
+
+    // The failed and the successful attempt of the retried task each
+    // leave their own row, with the outcome that decided the retry.
+    const ledgerRows = (await readFile(path.join(project.projectRoot, "docs/specs/measurements.jsonl"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as LedgerRow);
+    const implRows = ledgerRows.filter(
+      (r): r is PhaseLedgerRow => r.kind === "phase" && r.phase === "implementation" && r.task === "TASK-001",
+    );
+    assert.deepEqual(
+      implRows.map((r) => r.outcome),
+      ["spawn_failed", "passed"],
+      "the forced failure and the successful retry are both recorded",
+    );
   } finally {
     await rm(project.projectRoot, { recursive: true, force: true });
   }
