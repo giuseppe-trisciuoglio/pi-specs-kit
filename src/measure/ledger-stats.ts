@@ -68,6 +68,34 @@ function median(values: number[]): number | null {
 
 const CYCLE_PHASES = new Set(["implementation", "review", "failure_learner"]);
 
+/** A cycle counts as failed — the work paid for a retry rather than for the
+ * task's progress — when the implementation or the review of that attempt
+ * recorded an outcome that is not a pass. */
+function outcomeFailed(row: PhaseLedgerRow | undefined): boolean {
+  return row?.outcome !== undefined && row.outcome !== "passed";
+}
+
+/** Duration, in minutes, of every failed attempt cycle: a cycle groups every
+ * implementation/review/learner row of one attempt of one task. */
+function failedCycleDurations(phaseRows: PhaseLedgerRow[]): number[] {
+  const byAttempt = new Map<string, PhaseLedgerRow[]>();
+  for (const r of phaseRows) {
+    if (!CYCLE_PHASES.has(r.phase)) continue;
+    const key = `${r.task}#${r.attempt}`;
+    const list = byAttempt.get(key);
+    if (list) list.push(r);
+    else byAttempt.set(key, [r]);
+  }
+  const durations: number[] = [];
+  for (const list of byAttempt.values()) {
+    const implRow = list.find((r) => r.phase === "implementation");
+    const reviewRow = list.find((r) => r.phase === "review");
+    if (!outcomeFailed(implRow) && !outcomeFailed(reviewRow)) continue;
+    durations.push(list.reduce((sum, r) => sum + r.duration_ms, 0) / 60_000);
+  }
+  return durations;
+}
+
 /** Compute the KPIs of one spec from its ledger rows. */
 export function computeSpecStats(rows: LedgerRow[], spec: string): SpecStats {
   const phaseRows = rows.filter((r): r is PhaseLedgerRow => isPhaseRow(r, spec));
@@ -92,26 +120,7 @@ export function computeSpecStats(rows: LedgerRow[], spec: string): SpecStats {
       ? classifiedReviews.filter((r) => r.outcome === "passed").length / classifiedReviews.length
       : null;
 
-  // A cycle groups every phase row of one attempt of one task; it is "failed"
-  // when the implementation or the review of that attempt did not pass, i.e.
-  // the work paid for a retry rather than for the task's progress.
-  const byAttempt = new Map<string, PhaseLedgerRow[]>();
-  for (const r of phaseRows) {
-    if (!CYCLE_PHASES.has(r.phase)) continue;
-    const key = `${r.task}#${r.attempt}`;
-    const list = byAttempt.get(key);
-    if (list) list.push(r);
-    else byAttempt.set(key, [r]);
-  }
-  const failedCycleMinutes: number[] = [];
-  for (const list of byAttempt.values()) {
-    const implRow = list.find((r) => r.phase === "implementation");
-    const reviewRow = list.find((r) => r.phase === "review");
-    const failed = (implRow && implRow.outcome !== undefined && implRow.outcome !== "passed") ||
-      (reviewRow && reviewRow.outcome !== undefined && reviewRow.outcome !== "passed");
-    if (!failed) continue;
-    failedCycleMinutes.push(list.reduce((sum, r) => sum + r.duration_ms, 0) / 60_000);
-  }
+  const failedCycleMinutes = failedCycleDurations(phaseRows);
 
   const gateMinutes = implRows.filter((r) => r.hooks_ms !== undefined).map((r) => (r.hooks_ms ?? 0) / 60_000);
 
@@ -143,6 +152,10 @@ function minutes(value: number | null): string {
   return value === null ? "n/a" : `${value.toFixed(1)} min`;
 }
 
+function hours(value: number | null): string {
+  return value === null ? "n/a" : `${value.toFixed(1)} h`;
+}
+
 /** Render the KPIs as the multi-line notification `/specs-kit-stats` and the
  * range close summary both print. */
 export function formatSpecStats(stats: SpecStats): string {
@@ -153,7 +166,7 @@ export function formatSpecStats(stats: SpecStats): string {
     `review: first-pass ${pct(stats.firstPassReviewRate)} · pass rate ${pct(stats.reviewPassRate)}`,
     `minutes per failed cycle: ${minutes(stats.minutesPerFailedCycle)}`,
     `gate: ${minutes(stats.gateMinutesPerAttempt.mean)}/attempt · ${stats.gateMinutesPerAttempt.total.toFixed(1)} min total`,
-    `loop: ${stats.loopHours.toFixed(1)} h · wall clock: ${stats.wallClockHours === null ? "n/a" : `${stats.wallClockHours.toFixed(1)} h`}`,
+    `loop: ${stats.loopHours.toFixed(1)} h · wall clock: ${hours(stats.wallClockHours)}`,
   ];
   if (stats.unclassifiedRows > 0) {
     lines.push(`${stats.unclassifiedRows} phase row(s) unclassified (no outcome recorded)`);

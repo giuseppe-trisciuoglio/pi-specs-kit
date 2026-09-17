@@ -13,8 +13,20 @@ import { graphifyGraphExists, graphifyGraphMissingWarning } from "../../prompt/g
 import { promotableFacts, pruneTaskBlockers, resolveTaskBlockers } from "../blockers.ts";
 import { mergeLearnings, parseNewLearnings, loadProjectLearnings, saveProjectLearnings, MAX_PROJECT_LEARNINGS } from "../learner.ts";
 import { parseConfirmations, spawnFailed } from "../phases.ts";
+import type { PhaseRunOutcome } from "../../agent/spawner.ts";
+import type { PhaseOutcome } from "../../measure/ledger.ts";
 import { loopArtifactExclusions } from "../workspace.ts";
 import type { NodeAction, TaskNodeDeps, TaskNodeEnv } from "./types.ts";
+
+/** Outcome label for a phase without a retry path: hook and spawn failures
+ * take precedence over the nominal pass, in the order the loop diagnoses
+ * them, so the ledger row names what actually stopped the clean pass. */
+function tailPhaseOutcome(preHooksOk: boolean, outcome: PhaseRunOutcome | null, postHooksOk: boolean): PhaseOutcome {
+  if (!preHooksOk) return "pre_hook_failed";
+  if (spawnFailed(outcome)) return "spawn_failed";
+  if (!postHooksOk) return "gate_failed";
+  return "passed";
+}
 
 /** Collect the public API contracts from the already-completed dependency tasks. */
 export function upstreamProvides(taskFile: TaskFile, selected: TaskFile[], done: string[]): string[] {
@@ -89,11 +101,7 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
         plan.state.postHookGateFailed = "cleanup";
         await persist();
       }
-      executor.finishPhase(
-        cl.meterHandle,
-        !cl.preHooksOk ? "pre_hook_failed" : spawnFailed(cl.outcome) ? "spawn_failed" : !cl.postHooksOk ? "gate_failed" : "passed",
-        cl.hooksMs,
-      );
+      executor.finishPhase(cl.meterHandle, tailPhaseOutcome(cl.preHooksOk, cl.outcome, cl.postHooksOk), cl.hooksMs);
       return { kind: "ok" };
     },
 
@@ -185,11 +193,7 @@ export function makeTailNodeActions(env: TaskNodeEnv): TailNodeActions {
         plan.state.postHookGateFailed = "sync";
         await persist();
       }
-      executor.finishPhase(
-        sy.meterHandle,
-        !sy.preHooksOk ? "pre_hook_failed" : spawnFailed(sy.outcome) ? "spawn_failed" : !sy.postHooksOk ? "gate_failed" : "passed",
-        sy.hooksMs,
-      );
+      executor.finishPhase(sy.meterHandle, tailPhaseOutcome(sy.preHooksOk, sy.outcome, sy.postHooksOk), sy.hooksMs);
       return { kind: "ok" };
     },
 
