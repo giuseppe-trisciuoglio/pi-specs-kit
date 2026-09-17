@@ -21,6 +21,8 @@ export interface WalkDeps {
    * how the loop behaved before they existed.
    */
   rangeClose?: RangeCloseDeps;
+  /** The loop KPI summary printed at range close; absent means none is read. */
+  statsSummary?: () => Promise<string | null>;
 }
 
 export interface WalkStart {
@@ -89,6 +91,8 @@ async function finishRange(
   notifyRangeFailures(failures, deps);
   const p = plan.range_progress;
   deps.notify(`range completed: ${p.done_in_range}/${p.total_in_range} tasks (${p.percent}%)`, "info");
+  const summary = await deps.statsSummary?.();
+  if (summary) deps.notify(summary, "info");
   await closeOutstandingNotices(plan, deps);
   return { reason: "completed" };
 }

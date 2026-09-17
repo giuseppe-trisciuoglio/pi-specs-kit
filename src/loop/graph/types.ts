@@ -20,7 +20,7 @@ import type {
 import type { PhaseExecutor } from "../phases.ts";
 import type { snapshotProtectedPaths } from "../protected-paths.ts";
 import type { RoutedSuggestion } from "../review-report.ts";
-import type { workspaceFingerprint } from "../workspace.ts";
+import type { changedWorkspaceFiles, workspaceFingerprint } from "../workspace.ts";
 import type { ConditionName } from "./conditions.ts";
 
 /** Terminal results of one task's walk through the graph. */
@@ -218,6 +218,12 @@ export interface TaskNodeDeps {
   captureLearningsGuard?: typeof captureLearningsGuard;
   /** Revert of the learnings file when the implementation rewrote it. */
   enforceLearningsGuard?: typeof enforceLearningsGuard;
+  /**
+   * The files standing on top of the last commit, read before the checkpoint
+   * so its hooks know what the task touched. Same contract as above: absent
+   * means the real reader.
+   */
+  changedWorkspaceFiles?: typeof changedWorkspaceFiles;
   now: () => Date;
 }
 

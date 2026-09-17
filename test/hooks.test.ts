@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, existsSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runHook, runPhaseHooks } from "../src/loop/hooks.ts";
@@ -87,4 +87,63 @@ test("runHook strips NUL bytes and other control characters from the output", as
   });
   assert.equal(res.output.includes("\0"), false, `NUL survived in: ${JSON.stringify(res.output)}`);
   assert.equal(res.output, "Tests run: 3 failures[31m");
+});
+
+test("a hook reads the changed files from the environment, inline and from the file", async () => {
+  const cwd = workDir();
+  const out = path.join(cwd, "seen.txt");
+  const hooks = hooksWith({
+    post: [`printf '%s' "$SPECS_KIT_CHANGED_FILES" > ${out}; cat "$SPECS_KIT_CHANGED_FILES_PATH" >> ${out}`],
+  });
+
+  const results = await runPhaseHooks(hooks, "implementation", "post", cwd, undefined, async () => [
+    "src/a.ts",
+    "src/b.ts",
+  ]);
+
+  assert.equal(results[0].ok, true, results[0].output);
+  assert.equal(readFileSync(out, "utf8"), "src/a.ts\nsrc/b.ts" + "src/a.ts\nsrc/b.ts\n");
+});
+
+test("a tree that cannot be read leaves both variables empty for the hook to decide", async () => {
+  const cwd = workDir();
+  const out = path.join(cwd, "seen.txt");
+  const hooks = hooksWith({ post: [`printf '[%s][%s]' "$SPECS_KIT_CHANGED_FILES" "$SPECS_KIT_CHANGED_FILES_PATH" > ${out}`] });
+
+  await runPhaseHooks(hooks, "implementation", "post", cwd, undefined, async () => null);
+
+  assert.equal(readFileSync(out, "utf8"), "[][]");
+});
+
+test("the hook keeps the environment the loop was started with", async () => {
+  const cwd = workDir();
+  const out = path.join(cwd, "seen.txt");
+  const hooks = hooksWith({ post: [`printf '%s' "$PATH" > ${out}`] });
+
+  await runPhaseHooks(hooks, "implementation", "post", cwd, undefined, async () => ["src/a.ts"]);
+
+  assert.equal(readFileSync(out, "utf8"), process.env.PATH);
+});
+
+test("a target with no command never reads the changed files", async () => {
+  let read = 0;
+  const results = await runPhaseHooks(defaultHooks(), "checkpoint", "post", workDir(), undefined, async () => {
+    read++;
+    return [];
+  });
+
+  assert.deepEqual(results, []);
+  assert.equal(read, 0, "the git calls are not paid for a target with nothing to run");
+});
+
+test("the checkpoint target runs its own command list", async () => {
+  const cwd = workDir();
+  const marker = path.join(cwd, "suite.marker");
+  const hooks = defaultHooks();
+  hooks.checkpoint = { pre: [], post: [`touch ${marker}`] };
+
+  const results = await runPhaseHooks(hooks, "checkpoint", "post", cwd);
+
+  assert.equal(results.length, 1);
+  assert.equal(existsSync(marker), true);
 });
