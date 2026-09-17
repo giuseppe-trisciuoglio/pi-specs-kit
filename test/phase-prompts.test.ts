@@ -156,6 +156,8 @@ async function expectedPrompt(h: Harness, phase: PhaseName, input: PhaseInput): 
     reviewFeedback: "reviewFeedback" in input ? input.reviewFeedback : null,
     reviewFormatError: "reviewFormatError" in input ? input.reviewFormatError : null,
     priorAttemptArchives: "priorAttemptArchives" in input ? input.priorAttemptArchives : undefined,
+    priorBlockingFindings: "priorBlockingFindings" in input ? input.priorBlockingFindings : undefined,
+    attemptDiff: "attemptDiff" in input ? input.attemptDiff : null,
     upstreamProvides: "upstreamProvides" in input ? input.upstreamProvides : undefined,
     routedSuggestions: "routedSuggestions" in input ? input.routedSuggestions : undefined,
     projectLearnings: projectLearnings.length > 0 ? projectLearnings : undefined,
@@ -317,7 +319,7 @@ test("a failing post hook is exposed and feeds the retry prompt, labeled against
 
 test("review on first spawn has no format error and no routed suggestions", async () => {
   const h = await harness();
-  const input: ReviewPhaseInput = { ...baseInput(h), reviewFormatError: null, priorAttemptArchives: [] };
+  const input: ReviewPhaseInput = { ...baseInput(h), reviewFormatError: null, priorAttemptArchives: [], priorBlockingFindings: [], attemptDiff: null };
 
   const prompt = await capturePrompt(h, () => h.executor.run("review", input));
   assert.equal(prompt, await expectedPrompt(h, "review", input));
@@ -333,7 +335,7 @@ test("review on first spawn has no format error and no routed suggestions", asyn
 test("review re-spawn is told what was wrong with the previous report", async () => {
   const h = await harness();
   const formatError = "The review report for TASK-001 is missing or invalid: frontmatter with review_status required.";
-  const input: ReviewPhaseInput = { ...baseInput(h), reviewFormatError: formatError, priorAttemptArchives: [] };
+  const input: ReviewPhaseInput = { ...baseInput(h), reviewFormatError: formatError, priorAttemptArchives: [], priorBlockingFindings: [], attemptDiff: null };
 
   const prompt = await capturePrompt(h, () => h.executor.run("review", input));
   assert.equal(prompt, await expectedPrompt(h, "review", input));
@@ -345,7 +347,7 @@ test("review re-spawn is told what was wrong with the previous report", async ()
 test("a retried review is handed where the earlier verdicts are archived, not what they say", async () => {
   const h = await harness();
   const archives = ["tasks/TASK-001--review.attempt-1.md", "tasks/TASK-001--review.attempt-2.md"];
-  const input: ReviewPhaseInput = { ...baseInput(h, 3), reviewFormatError: null, priorAttemptArchives: archives };
+  const input: ReviewPhaseInput = { ...baseInput(h, 3), reviewFormatError: null, priorAttemptArchives: archives, priorBlockingFindings: [], attemptDiff: null };
 
   const prompt = await capturePrompt(h, () => h.executor.run("review", input));
   assert.equal(prompt, await expectedPrompt(h, "review", input));
@@ -360,6 +362,70 @@ test("a retried review is handed where the earlier verdicts are archived, not wh
   ].join("\n");
   assert.ok(prompt.includes(block), "the pointer is delivered as paths alone, nothing from the verdicts");
   assert.ok(!prompt.includes("<review_feedback>"), "the reviewer still never receives its own feedback");
+});
+
+test("a re-review is handed the list to close and the patch of the retry", async () => {
+  // The two channels a retried review adds: what the rejected verdict asked to
+  // close, and what the retry changed since the tree that verdict judged. The
+  // verdict itself — the status, the summary — still never travels.
+  const h = await harness();
+  const input: ReviewPhaseInput = {
+    ...baseInput(h, 2),
+    reviewFormatError: null,
+    priorAttemptArchives: ["tasks/TASK-001--review.attempt-1.md"],
+    priorBlockingFindings: ["the guard is never called", "requirement conflict: the tip is reused"],
+    attemptDiff: {
+      stat: " src/guard.ts | 4 ++--",
+      patch: "--- a/src/guard.ts\n+++ b/src/guard.ts\n+  assertGuard(value);\n",
+      truncated: false,
+    },
+  };
+
+  const prompt = await capturePrompt(h, () => h.executor.run("review", input));
+  assert.equal(prompt, await expectedPrompt(h, "review", input));
+
+  assert.ok(prompt.includes("<retry_review>"));
+  assert.ok(prompt.includes("Do not review it from scratch."));
+  assert.ok(prompt.includes("- the guard is never called"));
+  assert.ok(prompt.includes("- requirement conflict: the tip is reused"));
+  assert.ok(prompt.includes("<diff>\n--- a/src/guard.ts"));
+  assert.ok(prompt.includes(" src/guard.ts | 4 ++--"));
+  assert.ok(!prompt.includes("truncated=\"true\""), "a whole patch is not announced as cut");
+  assert.ok(
+    prompt.includes("The patch\nbounds your reading, not your verdict"),
+    "the narrowed reading is not a narrowed verdict",
+  );
+});
+
+test("a cut patch says so and points back at the workspace", async () => {
+  const h = await harness();
+  const input: ReviewPhaseInput = {
+    ...baseInput(h, 2),
+    reviewFormatError: null,
+    priorAttemptArchives: [],
+    priorBlockingFindings: [],
+    attemptDiff: { stat: " src/big.ts | 900 +++++", patch: "--- a/src/big.ts\n…[4000 characters omitted]…", truncated: true },
+  };
+
+  const prompt = await capturePrompt(h, () => h.executor.run("review", input));
+  assert.equal(prompt, await expectedPrompt(h, "review", input));
+
+  assert.ok(prompt.includes('<diff truncated="true">'));
+  assert.ok(prompt.includes("the summary names every file, read the rest from the workspace"));
+});
+
+test("a first review is handed neither a checklist nor a patch", async () => {
+  const h = await harness();
+  const input: ReviewPhaseInput = {
+    ...baseInput(h),
+    reviewFormatError: null,
+    priorAttemptArchives: [],
+    priorBlockingFindings: [],
+    attemptDiff: null,
+  };
+
+  const prompt = await capturePrompt(h, () => h.executor.run("review", input));
+  assert.ok(!prompt.includes("<retry_review>"), "nothing was rejected yet, so there is nothing to close");
 });
 
 test("cleanup prompt carries contracts and routed fixes but never review feedback", async () => {

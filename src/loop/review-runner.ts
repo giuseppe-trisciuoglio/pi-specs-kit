@@ -30,6 +30,7 @@ import {
 } from "./review-report.ts";
 import type { ReviewReport } from "./review-report.ts";
 import type { TaskRunnerDeps } from "./task-runner.ts";
+import { retryReviewIngress, type RetryIngress } from "./review-retry.ts";
 
 /**
  * What the review step reports back to the task state machine.
@@ -51,8 +52,9 @@ export type ReviewVerdict =
 /** The slice of the task runner dependencies the review step needs. */
 export type ReviewStepDeps = Pick<
   TaskRunnerDeps,
-  "config" | "specDir" | "executor" | "persist" | "notify" | "stopping" | "signal"
+  "config" | "specDir" | "executor" | "persist" | "notify" | "stopping" | "signal" | "workspaceDiff"
 >;
+
 
 /** Where an unreadable report is kept so the next spawn can repair it. */
 export function reviewUnreadablePath(specDir: string, taskId: string): string {
@@ -64,35 +66,43 @@ export function reviewUnreadablePath(specDir: string, taskId: string): string {
  *
  * A readable verdict is archived per attempt, so a retried review never
  * silently discards the reasoning it replaces, and then removed so the next
- * evaluation only sees fresh output. An unreadable one is moved aside instead
- * of deleted: its findings are the expensive part of a review and the next
- * spawn is asked to repair the block rather than to review the task again.
- * Every step is best-effort — rotation must never gate the review itself.
+ * evaluation only sees fresh output. It is also handed back to the caller:
+ * the only readable report a rotation ever finds is the rejected verdict of
+ * the previous attempt, since a readable one inside the same attempt would
+ * have ended the review loop with a verdict. An unreadable one is moved aside
+ * instead of deleted: its findings are the expensive part of a review and the
+ * next spawn is asked to repair the block rather than to review the task
+ * again. Every step is best-effort — rotation must never gate the review.
  */
-async function rotatePriorReview(specDir: string, taskId: string, retryCount: number): Promise<string | null> {
+async function rotatePriorReview(
+  specDir: string,
+  taskId: string,
+  retryCount: number,
+): Promise<{ preserved: string | null; prior: ReviewReport | null }> {
   const target = reviewFilePath(specDir, taskId);
   let raw: string;
   try {
     raw = await readFile(target, "utf8");
   } catch {
-    return null;
+    return { preserved: null, prior: null };
   }
-  if (parseReviewReport(raw)) {
+  const prior = parseReviewReport(raw);
+  if (prior) {
     try {
       await writeFile(reviewAttemptArchivePath(specDir, taskId, retryCount), raw, "utf8");
     } catch {
       // Archiving is advisory: a failed write must not block the review.
     }
     await rm(target, { force: true }).catch(() => {});
-    return null;
+    return { preserved: null, prior };
   }
   const preserved = reviewUnreadablePath(specDir, taskId);
   try {
     await rename(target, preserved);
-    return preserved;
+    return { preserved, prior: null };
   } catch {
     await rm(target, { force: true }).catch(() => {});
-    return null;
+    return { preserved: null, prior: null };
   }
 }
 
@@ -251,6 +261,7 @@ async function runOneReviewSpawn(
   plan: FixPlan,
   taskFile: TaskFile,
   formatError: string | null,
+  retry: RetryIngress,
 ): Promise<ReviewSpawnResult> {
   const { specDir, executor, notify } = deps;
   const state = plan.state;
@@ -266,6 +277,11 @@ async function runOneReviewSpawn(
     learnings: plan.learnings,
     reviewFormatError: formatError,
     priorAttemptArchives: await listReviewAttemptArchives(specDir, id),
+    // The two channels a re-review adds to the first one's ingress: what the
+    // rejected verdict asked to close, and what the retry changed since the
+    // tree that verdict judged. Empty and null on a first review.
+    priorBlockingFindings: retry.findings,
+    attemptDiff: retry.diff,
     specId: plan.spec_id,
     attempt: state.retry_count + 1,
     signal: deps.signal(),
@@ -322,16 +338,21 @@ export async function runReviewStep(
   // Set after a report the loop could not read, so the next spawn is told what
   // was wrong with the previous one instead of repeating it verbatim.
   let formatError: string | null = null;
+  // Gathered from the rotation of the rejected verdict, which happens once per
+  // attempt, and then carried across the re-spawns of the same attempt: they
+  // judge the same tree, so they deserve the same mandate.
+  let retry: RetryIngress = { findings: [], diff: null };
 
   for (;;) {
-    const preserved = await rotatePriorReview(specDir, id, state.retry_count);
-    if (preserved !== null && formatError !== null) {
+    const rotated = await rotatePriorReview(specDir, id, state.retry_count);
+    if (rotated.preserved !== null && formatError !== null) {
       formatError = reviewFormatReminder(id, {
-        preservedPath: path.relative(config.projectRoot, preserved),
+        preservedPath: path.relative(config.projectRoot, rotated.preserved),
       });
     }
+    if (rotated.prior) retry = await retryReviewIngress(deps, plan, rotated.prior);
     if (deps.stopping()) return { kind: "stopped" };
-    const result = await runOneReviewSpawn(deps, plan, taskFile, formatError);
+    const result = await runOneReviewSpawn(deps, plan, taskFile, formatError, retry);
     if (result.kind === "verdict") return result.verdict;
     formatError = result.formatError;
   }

@@ -72,6 +72,9 @@ export function defaultConfigYaml(): string {
       // of its contracts: what the work is measured against is not the work's
       // to edit.
       protect_spec_artifacts: run.protectSpecArtifacts,
+      // Ceiling of the patch a re-review is handed: what the retry changed
+      // since the tree the previous review judged. Zero turns the channel off.
+      review_diff_max_kb: run.reviewDiffMaxKb,
     },
     // Empty on purpose: the review panel is declared model by model, because
     // reviewing spends on every model listed here.

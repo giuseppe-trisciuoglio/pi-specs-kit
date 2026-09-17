@@ -10,6 +10,7 @@ import { loadFixPlan, type FixPlan } from "../src/fixplan/fix-plan.ts";
 import { LoopController } from "../src/loop/loop-controller.ts";
 import type { LedgerRow, PhaseLedgerRow } from "../src/measure/ledger.ts";
 import { readWalRows } from "../src/measure/wal.ts";
+import { spawnSync } from "node:child_process";
 
 const E2E_DIR = path.dirname(fileURLToPath(import.meta.url));
 const FAKE_BIN_DIR = path.join(E2E_DIR, "fake-bin");
@@ -25,6 +26,10 @@ const FAKE_VARS = [
   "FAKE_PI_STATE_FILE",
   "FAKE_PI_REVIEW_VERDICT",
   "FAKE_PI_SKIP_REVIEW_FILE",
+  "FAKE_PI_REVIEW_FAIL_TIMES",
+  "FAKE_PI_REVIEW_STATE_FILE",
+  "FAKE_PI_PROMPT_LOG",
+  "FAKE_PI_IMPL_WRITE",
   "HOME",
 ];
 
@@ -163,6 +168,47 @@ test("e2e: a failing implementation phase is retried and the loop completes", { 
       states.some((s) => s.state.retry_count >= 1),
       "a retry should be observable in the state history",
     );
+    const plan = await loadFixPlan(project.specDir);
+    assert.ok(plan);
+    assert.deepEqual(plan.done, ["TASK-001", "TASK-002", "TASK-003"]);
+  } finally {
+    await rm(project.projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("e2e: a re-review is handed what to close and the patch of the retry", { timeout: 120_000 }, async () => {
+  const project = await setupProject();
+  try {
+    // The patch is a git fact: without a repository the loop simply runs the
+    // re-review without it, which is the fallback and not what this pins.
+    for (const args of [
+      ["init"],
+      ["config", "user.email", "loop@example.invalid"],
+      ["config", "user.name", "Loop Test"],
+      ["add", "-A"],
+      ["commit", "-m", "first"],
+    ]) {
+      assert.equal(spawnSync("git", args, { cwd: project.projectRoot, stdio: "ignore" }).status, 0, `git ${args[0]}`);
+    }
+
+    const promptLog = path.join(project.projectRoot, "prompt-log.txt");
+    const result = await runLoop(project, {
+      // The first review of the run rejects; the retried implementation writes
+      // something, so the second review judges a tree that really moved.
+      FAKE_PI_REVIEW_FAIL_TIMES: "1",
+      FAKE_PI_REVIEW_STATE_FILE: path.join(project.projectRoot, "fake-review-state.txt"),
+      FAKE_PI_IMPL_WRITE: path.join(project.projectRoot, "src", "work.txt"),
+      FAKE_PI_PROMPT_LOG: promptLog,
+    });
+    assert.equal(result.reason, "completed");
+
+    const reviews = (await readFile(promptLog, "utf8"))
+      .split("\n")
+      .filter((line) => line.startsWith("review "));
+    assert.ok(reviews.length >= 2, "the rejected verdict bought a second review");
+    assert.equal(reviews[0], "review retry_review=0 diff=0", "a first review has nothing to close");
+    assert.equal(reviews[1], "review retry_review=1 diff=1", "the re-review reads the checklist and the patch");
+
     const plan = await loadFixPlan(project.specDir);
     assert.ok(plan);
     assert.deepEqual(plan.done, ["TASK-001", "TASK-002", "TASK-003"]);

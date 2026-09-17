@@ -60,6 +60,12 @@ const FIELDS: readonly RunFieldDef[] = [
   { field: "auto_compact", kind: "boolean", label: "compact a phase mid-run", display: (r) => String(r.autoCompact) },
   { field: "auto_compact_threshold", kind: "percent", label: "compact at (% of context window)", display: (r) => String(r.autoCompactThresholdPercent) },
   { field: "protect_spec_artifacts", kind: "boolean", label: "guard spec artifacts", display: (r) => String(r.protectSpecArtifacts) },
+  {
+    field: "review_diff_max_kb",
+    kind: "number",
+    label: "re-review diff ceiling (KB)",
+    display: (r) => (r.reviewDiffMaxKb === 0 ? "0 (off)" : `${r.reviewDiffMaxKb}`),
+  },
 ];
 
 /** Persist a single field after confirmation; returns the freshest config. */

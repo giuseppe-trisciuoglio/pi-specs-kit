@@ -142,6 +142,7 @@ The yaml configuration at `specs-kit.yaml` is the operator-facing surface. Each 
 | `run.auto_compact` | bool | `false` | Phase spawn: loads the compaction extension into the phase subprocess | ADR-0031 |
 | `run.auto_compact_threshold` | int (10-90) | `50` | Share of the model context window at which a phase summarizes itself | ADR-0031 |
 | `run.protect_spec_artifacts` | bool | `true` | Implementation phase: refuses an attempt that rewrote the spec's requirement document or a file under `contracts/` | ADR-0019 |
+| `run.review_diff_max_kb` | int | `64` | Review phase on a retry: ceiling of the patch handed to the re-review; `0` turns the channel off | ADR-0043 |
 | `git.base_branch` | string | `main` | Delivery PR target | ADR-0007 / technical-plan AD-003; default document in spec REQ-028 |
 | `git.pull_request` | bool | `false` | Delivery step (opt-in) | technical-plan AD-003 / F2 follow-up |
 | `hooks.timeout` | duration string | `4m` | Hook executor | — |

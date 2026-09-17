@@ -100,6 +100,14 @@ _Avoid_: review outcome, report (it is the file, not the outcome)
 A copy of a previous review report, saved as `tasks/<TASK>--review.attempt-N.md` before a retry overwrites the canonical report `<TASK>--review.md`. Preserves the verdict history (including FAILED) for audit and debug; the canonical file is always the latest verdict.
 _Avoid_: review backup, review snapshot
 
+**Re-review**:
+The review of a retried task: the second (or later) review of the same task, spawned after a rejected verdict. It receives, on top of the archive map, the blocking findings of the verdict it replaces as a checklist to close and the patch of what the retry changed, so it verifies a bounded list instead of reading the task again. It never receives the previous verdict itself.
+_Avoid_: second review, review retry (that is the review file re-spawn, a different budget)
+
+**Attempt diff**:
+The patch from the worktree as the previous review judged it to the worktree as the retry left it, handed to the re-review and bounded by `run.review_diff_max_kb`. Built against the tree object the no-op guard already writes before a retried implementation, and absent outside a git repository.
+_Avoid_: task diff, checkpoint diff (no commit is involved)
+
 **Measurement documents**:
 The documents the implementation is judged against: the functional specification of the spec and the files under `contracts/`. The loop compares their fingerprint before and after each implementation phase (`run.protect_spec_artifacts`, on by default) and rejects the attempt that rewrote one, naming the files. Working documents (decision log, task file, technical plan) stay writable.
 _Avoid_: protected files (generic), read-only files

@@ -13,6 +13,7 @@ import {
   knowledgeBaseBlock,
   memoryBlocks,
   priorAttemptsBlock,
+  retryReviewBlock,
   reviewFeedbackBlock,
   reviewFormatErrorBlock,
   routedSuggestionsBlock,
@@ -142,6 +143,7 @@ export function buildPhasePrompt(ctx: PromptContext): string {
     reviewFeedbackBlock(ctx.reviewFeedback),
     reviewFormatErrorBlock(ctx.reviewFormatError),
     priorAttemptsBlock(ctx.priorAttemptArchives),
+    retryReviewBlock(ctx.priorBlockingFindings, ctx.attemptDiff),
     upstreamContractsBlock(ctx.upstreamProvides),
     routedSuggestionsBlock(ctx.routedSuggestions),
   ];

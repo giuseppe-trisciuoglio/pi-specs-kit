@@ -1,13 +1,16 @@
 /**
- * Content fingerprint of the working tree: the signal that tells a retry which
- * changed something from a retry which changed nothing at all.
+ * What git says about the working tree between two moments of a task: the
+ * content fingerprint that tells a retry which changed something from a retry
+ * which changed nothing, and the patch between the tree an earlier phase saw
+ * and the tree as it is now.
  *
- * Computed through a throwaway git index so the user's staging area is never
+ * Both go through a throwaway git index so the user's staging area is never
  * touched — the tree object git derives from that index is an exact content
  * hash of every tracked and newly added file, and ignored paths (build output)
- * stay out of it for free. Best-effort by design: outside a git repository, or
- * on any git failure, the answer is null and the caller simply loses the
- * signal.
+ * stay out of it for free. The tree objects land in the repository's own object
+ * store, which is what makes a fingerprint taken one phase ago still diffable
+ * one phase later. Best-effort by design: outside a git repository, or on any
+ * git failure, the answer is null and the caller simply loses the signal.
  */
 
 import { mkdtemp, rm } from "node:fs/promises";
@@ -18,6 +21,9 @@ import { spawnProcess } from "../util/process.ts";
 
 /** Ceiling for each git call; a hung git must not stall the phase boundary. */
 export const FINGERPRINT_TIMEOUT_MS = 30_000;
+
+/** A git invocation bound to the scratch index, as the helpers below use it. */
+type ScratchGit = (args: string[]) => Promise<{ exitCode: number | null; stdout: string }>;
 
 /**
  * Pathspecs of what the loop itself generates, relative to the project root.
@@ -40,6 +46,57 @@ export function loopArtifactExclusions(projectRoot: string, specDir: string): st
 }
 
 /**
+ * Pathspecs of the review artifacts, kept out of the patch a re-review reads.
+ *
+ * Between the two trees the loop archives the rejected verdict and removes the
+ * report it replaced, so an unfiltered patch would carry the whole text of the
+ * previous review as an added file — the conclusion the review ingress
+ * deliberately does not deliver, handed over by accident.
+ */
+export function reviewArtifactExclusions(projectRoot: string, specDir: string): string[] {
+  const rel = path.relative(projectRoot, specDir);
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return [];
+  const tasks = path.posix.join(rel.split(path.sep).join("/"), "tasks");
+  return [`${tasks}/*--review.md`, `${tasks}/*--review.attempt-*.md`, `${tasks}/*--review.unreadable.md`];
+}
+
+/** Run `fn` with a git bound to a throwaway index; null when one cannot be made. */
+async function withScratchIndex<T>(projectRoot: string, fn: (git: ScratchGit) => Promise<T | null>): Promise<T | null> {
+  let dir: string;
+  try {
+    dir = await mkdtemp(path.join(tmpdir(), "specs-kit-fp-"));
+  } catch {
+    return null;
+  }
+  const env = { ...process.env, GIT_INDEX_FILE: path.join(dir, "index") };
+  const git: ScratchGit = (args) =>
+    spawnProcess("git", args, { cwd: projectRoot, env, timeoutMs: FINGERPRINT_TIMEOUT_MS });
+  try {
+    return await fn(git);
+  } catch {
+    return null;
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Stage the worktree into the scratch index and write it out as a tree object. */
+async function writeWorktreeTree(git: ScratchGit, excluded: readonly string[]): Promise<string | null> {
+  // Seeding the scratch index from HEAD keeps the staging step to the files
+  // that actually differ; without it every blob in the repository would be
+  // re-hashed and written. An unborn HEAD simply leaves the index empty,
+  // which still fingerprints correctly, so the exit code is not checked.
+  await git(["read-tree", "HEAD"]);
+  const pathspec = [".", ...excluded.map((p) => `:(exclude)${p}`)];
+  const add = await git(["add", "-A", "--", ...pathspec]);
+  if (add.exitCode !== 0) return null;
+  const tree = await git(["write-tree"]);
+  if (tree.exitCode !== 0) return null;
+  const sha = tree.stdout.trim();
+  return sha === "" ? null : sha;
+}
+
+/**
  * Tree object id of the current worktree, or null when it cannot be computed.
  * Equal ids mean the two moments are byte-identical over everything git would
  * track; a different id means at least one file changed.
@@ -48,31 +105,50 @@ export async function workspaceFingerprint(
   projectRoot: string,
   excluded: readonly string[] = [],
 ): Promise<string | null> {
-  let dir: string;
-  try {
-    dir = await mkdtemp(path.join(tmpdir(), "specs-kit-fp-"));
-  } catch {
-    return null;
-  }
-  const env = { ...process.env, GIT_INDEX_FILE: path.join(dir, "index") };
-  const git = (args: string[]): Promise<{ exitCode: number | null; stdout: string }> =>
-    spawnProcess("git", args, { cwd: projectRoot, env, timeoutMs: FINGERPRINT_TIMEOUT_MS });
-  try {
-    // Seeding the scratch index from HEAD keeps the staging step to the files
-    // that actually differ; without it every blob in the repository would be
-    // re-hashed and written. An unborn HEAD simply leaves the index empty,
-    // which still fingerprints correctly, so the exit code is not checked.
-    await git(["read-tree", "HEAD"]);
-    const pathspec = [".", ...excluded.map((p) => `:(exclude)${p}`)];
-    const add = await git(["add", "-A", "--", ...pathspec]);
-    if (add.exitCode !== 0) return null;
-    const tree = await git(["write-tree"]);
-    if (tree.exitCode !== 0) return null;
-    const sha = tree.stdout.trim();
-    return sha === "" ? null : sha;
-  } catch {
-    return null;
-  } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
-  }
+  return withScratchIndex(projectRoot, (git) => writeWorktreeTree(git, excluded));
+}
+
+/** A patch between two moments of the worktree, bounded in size. */
+export interface WorkspaceDiff {
+  /** `--stat` summary of the patch, always complete. */
+  stat: string;
+  /** The patch itself, cut at the configured ceiling. */
+  patch: string;
+  /** True when the patch was cut; the stat still describes the whole change. */
+  truncated: boolean;
+}
+
+/**
+ * Patch from `baseTree` to the worktree as it is now, or null when there is
+ * nothing to show: no base, no git, an empty change, or a ceiling of zero.
+ *
+ * The head is what is kept when the patch is too long. Unlike a build log,
+ * whose verdict is in the last lines, a patch is read from the top and git
+ * orders it by path: a cut tail loses the files a reader would reach last,
+ * while the stat above it still names every one of them.
+ */
+export async function workspaceDiff(
+  projectRoot: string,
+  baseTree: string | null,
+  excluded: readonly string[] = [],
+  limitChars = 0,
+): Promise<WorkspaceDiff | null> {
+  if (!baseTree || limitChars <= 0) return null;
+  return withScratchIndex(projectRoot, async (git) => {
+    const current = await writeWorktreeTree(git, excluded);
+    if (current === null || current === baseTree) return null;
+    const pathspec = ["--", ".", ...excluded.map((p) => `:(exclude)${p}`)];
+    const stat = await git(["diff", "--stat", baseTree, current, ...pathspec]);
+    if (stat.exitCode !== 0) return null;
+    const patch = await git(["diff", "--no-color", baseTree, current, ...pathspec]);
+    if (patch.exitCode !== 0) return null;
+    const full = patch.stdout.trim();
+    if (full === "") return null;
+    const truncated = full.length > limitChars;
+    return {
+      stat: stat.stdout.trim(),
+      patch: truncated ? `${full.slice(0, limitChars)}\n…[${full.length - limitChars} characters omitted]…` : full,
+      truncated,
+    };
+  });
 }

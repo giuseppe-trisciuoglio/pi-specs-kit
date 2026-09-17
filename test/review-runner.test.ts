@@ -47,11 +47,19 @@ const preHookFailure: PhaseStepResult = {
 const abortedResult: PhaseStepResult = { ...okResult, outcome: { ...okResult.outcome!, aborted: true } };
 const crashedResult: PhaseStepResult = { ...okResult, outcome: { ...okResult.outcome!, exitCode: 1, stopReason: "error" } };
 
+/** The slice of the review ingress these tests assert on. */
+interface ReviewIngress {
+  reviewFormatError: string | null;
+  priorAttemptArchives: string[];
+  priorBlockingFindings: string[];
+  attemptDiff: { stat: string; patch: string; truncated: boolean } | null;
+}
+
 interface Harness {
   deps: ReviewStepDeps;
   plan: FixPlan;
   /** Declared input of every review spawn, in order. */
-  prompts: { reviewFormatError: string | null; priorAttemptArchives: string[] }[];
+  prompts: ReviewIngress[];
   /** Spawns performed so far, across every review step call. */
   spawns: () => number;
 }
@@ -64,11 +72,11 @@ async function harness(script: (spawn: number) => PhaseStepResult): Promise<Harn
   const plan = emptyFixPlan("001-spec", "docs/specs/001-spec");
 
   let spawns = 0;
-  const prompts: { reviewFormatError: string | null; priorAttemptArchives: string[] }[] = [];
+  const prompts: ReviewIngress[] = [];
   const executor = {
     run: async (
       _phase: string,
-      input: { reviewFormatError: string | null; priorAttemptArchives: string[] },
+      input: ReviewIngress,
     ): Promise<PhaseStepResult> => {
       prompts.push(input);
       return script(++spawns);
@@ -87,6 +95,7 @@ async function harness(script: (spawn: number) => PhaseStepResult): Promise<Harn
       notify: () => {},
       stopping: () => null,
       signal: () => undefined,
+      workspaceDiff: async () => null,
     },
   };
 }
@@ -184,6 +193,66 @@ test("a retried review is handed the archive of the earlier attempt", async () =
   assert.deepEqual(h.prompts[0].priorAttemptArchives, ["tasks/TASK-001--review.attempt-1.md"]);
 });
 
+test("a re-review is handed the findings to close and the patch of the retry", async () => {
+  // The channel a retry opens: what the rejected verdict blocked on, taken
+  // from the report the rotation is archiving anyway, and the patch against
+  // the tree that verdict judged. The verdict itself does not travel.
+  const h = await harness(() => okResult);
+  await writeFile(
+    reviewFilePath(h.deps.specDir, "TASK-001"),
+    "---\nreview_status: FAILED\nsummary: the guard is missing\nissues:\n  - the guard is never called\n  - \"\"\n" +
+      "routed: []\nspec_conflicts:\n  - the tip is reused\nescalation: []\n---\n\nbody\n",
+    "utf8",
+  );
+  h.plan.state.retry_count = 1;
+  h.plan.state.review_base_tree = "cafebabe";
+  const diff = { stat: " src/guard.ts | 2 +-", patch: "+  assertGuard(v);", truncated: false };
+  (h.deps as { workspaceDiff: unknown }).workspaceDiff = async () => diff;
+
+  await runReviewStep(h.deps, h.plan, TASK);
+
+  assert.deepEqual(
+    h.prompts[0].priorBlockingFindings,
+    ["the guard is never called", "requirement conflict: the tip is reused"],
+    "the issues and the conflicts travel, the status and the summary do not",
+  );
+  assert.deepEqual(h.prompts[0].attemptDiff, diff);
+  // Every re-spawn of the same attempt judges the same tree, so it deserves
+  // the same mandate: the ingress is gathered once and carried across them.
+  assert.equal(h.spawns(), 3, "the review file budget is spent without a readable report");
+  for (const ingress of h.prompts.slice(1)) {
+    assert.deepEqual(ingress.priorBlockingFindings, h.prompts[0].priorBlockingFindings);
+    assert.deepEqual(ingress.attemptDiff, diff);
+  }
+});
+
+test("a first review is handed no checklist and no patch", async () => {
+  const h = await harness(() => okResult);
+  await runReviewStep(h.deps, h.plan, TASK);
+
+  assert.deepEqual(h.prompts[0].priorBlockingFindings, [], "nothing was rejected yet");
+  assert.equal(h.prompts[0].attemptDiff, null);
+});
+
+test("a re-review without a base tree still gets the checklist", async () => {
+  // Outside a git repository the patch is simply absent, and the reviewer
+  // falls back to reading the workspace — but what it must close is a fact
+  // the loop has on disk either way.
+  const h = await harness(() => okResult);
+  await writeFile(
+    reviewFilePath(h.deps.specDir, "TASK-001"),
+    "---\nreview_status: FAILED\nsummary: broken\nissues:\n  - the guard is never called\nrouted: []\n---\n\nbody\n",
+    "utf8",
+  );
+  h.plan.state.retry_count = 1;
+  h.plan.state.review_base_tree = null;
+
+  await runReviewStep(h.deps, h.plan, TASK);
+
+  assert.deepEqual(h.prompts[0].priorBlockingFindings, ["the guard is never called"]);
+  assert.equal(h.prompts[0].attemptDiff, null);
+});
+
 test("an interrupted review is re-spawned rather than paid for with a task attempt", async () => {
   // An interrupt says nothing about the implementation: it was never judged.
   // Re-implementing working code to reach a second opinion costs two agent
@@ -239,6 +308,7 @@ test("a prior verdict is archived before the canonical report is wiped", async (
     notify: () => {},
     stopping: () => null,
     signal: () => undefined,
+    workspaceDiff: async () => null,
   };
 
   const verdict = await runReviewStep(deps, plan, TASK);
@@ -285,6 +355,7 @@ test("a red post-hook gate after the review is recorded on the run", async () =>
     notify: () => {},
     stopping: () => null,
     signal: () => undefined,
+    workspaceDiff: async () => null,
   };
 
   const verdict = await runReviewStep(deps, plan, TASK);
@@ -315,7 +386,7 @@ async function reportingHarness(
     plan,
     specDir,
     prompts,
-    deps: { config, specDir, executor, persist: async () => {}, notify: () => {}, stopping: () => null, signal: () => undefined },
+    deps: { config, specDir, executor, persist: async () => {}, notify: () => {}, stopping: () => null, signal: () => undefined, workspaceDiff: async () => null },
   };
 }
 
