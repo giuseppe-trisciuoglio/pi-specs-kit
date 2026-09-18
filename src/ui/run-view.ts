@@ -118,6 +118,17 @@ async function editField(
     return writeField(ctx, controller, config, def, choice, choice);
   }
 
+  return editTextField(ctx, controller, config, def, current);
+}
+
+/** Capture a free-form value (number, duration or percentage); returns the freshest config. */
+async function editTextField(
+  ctx: ExtensionCommandContext,
+  controller: LoopController,
+  config: SpecsKitConfig,
+  def: RunFieldDef,
+  current: string,
+): Promise<SpecsKitConfig> {
   let placeholder = `current ${current} — e.g. 5`;
   if (def.kind === "duration") placeholder = `current ${current} — e.g. 40m, 1h, 240s`;
   if (def.kind === "percent") {

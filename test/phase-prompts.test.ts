@@ -24,13 +24,11 @@ import { PhaseExecutor, type PhaseStepResult } from "../src/loop/phases.ts";
 import { LoopBudget } from "../src/loop/budget.ts";
 import type { HookResult } from "../src/loop/hooks.ts";
 import type {
-  CleanupPhaseInput,
-  FinalSyncPhaseInput,
+  CleanupPhaseInput,  FinalSyncPhaseInput,
   ImplementationPhaseInput,
   PhaseSpawnInput,
   ReviewPhaseInput,
   SyncPhaseInput,
-  TaskSyncPhaseInput,
 } from "../src/loop/phase-inputs.ts";
 import { loadProjectLearnings } from "../src/loop/learner.ts";
 import type { PhaseRunOutcome, PhaseSpawnOptions } from "../src/agent/spawner.ts";
@@ -435,42 +433,31 @@ test("a first review is handed neither a checklist nor a patch", async () => {
   assert.ok(!prompt.includes("<retry_review>"), "nothing was rejected yet, so there is nothing to close");
 });
 
-test("cleanup prompt carries contracts and routed fixes but never review feedback", async () => {
+test("cleanup and sync prompts carry contracts and routed fixes but never review feedback", async () => {
   const h = await harness();
-  const input: CleanupPhaseInput = {
-    ...baseInput(h),
-    upstreamProvides: ["parseSpec(text: string): Spec"],
-    routedSuggestions: [{ to: "TASK-001", text: "extract the retry helper", from: "TASK-000" }],
-    firstAttempt: true,
-  };
+  const cases: [phase: "cleanup" | "sync", fragment: string][] = [
+    ["cleanup", "Clean up the code touched by the task above"],
+    ["sync", "Update the specification documentation to reflect the implemented task"],
+  ];
+  for (const [phase, fragment] of cases) {
+    const input = {
+      ...baseInput(h),
+      upstreamProvides: ["parseSpec(text: string): Spec"],
+      routedSuggestions: [{ to: "TASK-001", text: "extract the retry helper", from: "TASK-000" }],
+      firstAttempt: true,
+    } as PhaseInput;
 
-  const prompt = await capturePrompt(h, () => h.executor.run("cleanup", input));
-  assert.equal(prompt, await expectedPrompt(h, "cleanup", input));
+    // The executor's run is overloaded per phase; the table drives it generically.
+    const runPhase = h.executor.run.bind(h.executor) as (p: PhaseName, i: PhaseInput) => Promise<PhaseStepResult>;
+    const prompt = await capturePrompt(h, () => runPhase(phase, input));
+    assert.equal(prompt, await expectedPrompt(h, phase, input), `${phase} prompt matches`);
 
-  assert.ok(prompt.includes("Clean up the code touched by the task above"));
-  assert.ok(prompt.includes("<upstream_contracts>"));
-  assert.ok(prompt.includes("<routed_suggestions>"));
-  assert.ok(!prompt.includes("<review_feedback>"), "cleanup has no review feedback channel");
-  assert.ok(!prompt.includes("<review_format_error>"));
-});
-
-test("sync prompt carries contracts and routed fixes but never review feedback", async () => {
-  const h = await harness();
-  const input: TaskSyncPhaseInput = {
-    ...baseInput(h),
-    upstreamProvides: ["parseSpec(text: string): Spec"],
-    routedSuggestions: [{ to: "TASK-001", text: "extract the retry helper", from: "TASK-000" }],
-    firstAttempt: true,
-  };
-
-  const prompt = await capturePrompt(h, () => h.executor.run("sync", input));
-  assert.equal(prompt, await expectedPrompt(h, "sync", input));
-
-  assert.ok(prompt.includes("Update the specification documentation to reflect the implemented task"));
-  assert.ok(prompt.includes("<upstream_contracts>"));
-  assert.ok(prompt.includes("<routed_suggestions>"));
-  assert.ok(!prompt.includes("<review_feedback>"), "sync has no review feedback channel");
-  assert.ok(!prompt.includes("<review_format_error>"));
+    assert.ok(prompt.includes(fragment));
+    assert.ok(prompt.includes("<upstream_contracts>"));
+    assert.ok(prompt.includes("<routed_suggestions>"));
+    assert.ok(!prompt.includes("<review_feedback>"), `${phase} has no review feedback channel`);
+    assert.ok(!prompt.includes("<review_format_error>"));
+  }
 });
 
 test("the end-of-range sync spawns alone: no upstream contracts, no routed fixes", async () => {

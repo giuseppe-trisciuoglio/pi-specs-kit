@@ -8,7 +8,15 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { appendLedgerRow, type PhaseLedgerRow, type SpawnLedgerRow, type SpawnOutcomeSummary, type UsageSummary, zeroUsage } from "./ledger.ts";
+import {
+  appendLedgerRow,
+  type PhaseLedgerRow,
+  type PhaseOutcome,
+  type SpawnLedgerRow,
+  type SpawnOutcomeSummary,
+  type UsageSummary,
+  zeroUsage,
+} from "./ledger.ts";
 import { addUsage, messageUsage } from "./usage.ts";
 import { appendWalRow, pruneWalRows } from "./wal.ts";
 
@@ -99,8 +107,14 @@ export class PhaseMeter {
    * Consolidate the phase into the ledger and drop its raw rows. When the
    * process is killed before this point the raw rows stay in the buffer, so
    * the consumption is never lost — only the consolidated row is missing.
+   *
+   * `outcome` and `hooksMs` are known only where the phase result is judged —
+   * the task nodes, not this handle — so they arrive here as the caller's
+   * own closing facts instead of being derived from anything on the handle.
+   * Omitted, they leave the row exactly as it read before either field
+   * existed.
    */
-  finishPhase(handle: PhaseHandle): void {
+  finishPhase(handle: PhaseHandle, info?: { outcome?: PhaseOutcome; hooksMs?: number }): void {
     const { context } = handle;
     const row: PhaseLedgerRow = {
       v: 1,
@@ -115,6 +129,8 @@ export class PhaseMeter {
       duration_ms: this.#now().getTime() - handle.startedAtMs,
       usage: handle.usage,
       cost_total: handle.cost,
+      ...(info?.outcome !== undefined ? { outcome: info.outcome } : {}),
+      ...(info?.hooksMs !== undefined ? { hooks_ms: info.hooksMs } : {}),
     };
     this.#io(() => appendLedgerRow(this.#deps.ledgerFile, row));
     this.#io(() => pruneWalRows(this.#deps.walFile, (raw) => raw.scope_id !== handle.id));

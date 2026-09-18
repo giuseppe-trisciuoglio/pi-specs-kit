@@ -18,12 +18,18 @@ routed: []
 > **The frontmatter above is the verdict.** It must be the first thing in the
 > file, before this heading, and `review_status` takes one of two values:
 >
-> - `PASSED` ✅ — all acceptance criteria and DoD met, no critical code issue,
->   no architectural drift. `issues` is an empty list (`issues: []`).
-> - `FAILED` ❌ — anything else: an unmet criterion, a critical finding, a
->   spec contradiction or a drift that needs a decision. Every reason goes in
->   `issues`, one entry per line, phrased as something the next implementation
->   pass can act on.
+> - `FAILED` ❌ — one of exactly four reasons: a `blocking` entry in `issues`,
+>   an acceptance criterion or DoD item **not met**, a non-empty
+>   `spec_conflicts`, a non-empty `escalation`. Every reason goes in `issues`,
+>   one entry per line, phrased as something the next implementation pass can
+>   act on.
+> - `PASSED` ✅ — anything else, including a report whose findings tables are
+>   long: `warning` and `suggestion` never flip the verdict, and no number of
+>   them adds up to a `blocking`. Route them instead (see `routed`).
+>
+> A criterion marked ⚠️ Partial needs a `blocking` issue naming what is
+> missing — and is then ❌ Not Met. Without that issue it is ✅ Met with a
+> warning beside it. "Partially met" is not, by itself, a reason to fail.
 >
 > `summary` is a single line. Everything below is the detailed report a human
 > reads; it never changes the verdict.
@@ -48,7 +54,9 @@ routed: []
 > **`routed`** lists fixes you defer to a *later* task rather than to this one
 > (an optional suggestion that fits a known downstream task better). Each entry
 > is `{ to: "<task-id>", text: "<one-line fix>" }`. Leave it `[]` when there is
-> nothing to route. The loop feeds routed entries to the target task's
+> nothing to route. This is where the `warning` and `suggestion` findings of a
+> passing review go: to the final cleanup task, or to the next task that owns
+> the area. The loop feeds routed entries to the target task's
 > implementation prompt automatically, so they are not lost between reviews.
 >
 > **A routed suggestion left unactioned is a finding.** If a prior review routed
@@ -105,6 +113,10 @@ routed: []
 | 1 | 🔴 Critical / 🟡 Warning / 🔵 Info | `${FILE_PATH}` | L${LINE} | Security / Performance / Maintainability / Convention | ${DESCRIPTION} | ${RECOMMENDATION} |
 | 2 | ... | | | | | |
 
+<!-- Severity maps one to one onto the frontmatter vocabulary:
+     🔴 Critical = blocking (fails the task), 🟡 Warning = warning,
+     🔵 Info = suggestion. Only the first flips `review_status`. -->
+
 <!-- If no findings, state: "No code review findings." -->
 
 ---
@@ -143,7 +155,9 @@ routed: []
 
 ## Required Fixes
 
-> If `review_status` is `PASSED`, state: "No required fixes."
+> If `review_status` is `PASSED`, the Critical table is empty; state "No
+> required fixes." there. The Warnings and Suggestions tables may still carry
+> entries — route them rather than failing the task.
 > Every entry listed here must also appear in the `issues` list of the frontmatter.
 
 ### Critical (must fix before proceeding)
@@ -172,6 +186,10 @@ routed: []
 |-----------|--------|
 | `PASSED` | Run Phase T-7 cleanup in `task-implementation`, then proceed to next task |
 | `FAILED` | Address every entry of `issues`, re-run the implementation, then re-review |
+
+Only a `blocking` issue, an unmet criterion, a `spec_conflicts` entry or an
+`escalation` entry produces `FAILED`. The Warnings and Suggestions tables above
+belong to a `PASSED` report as much as to a failed one; route them.
 
 Findings too large for one implementation pass — an architectural drift, a spec
 contradiction, an impossible requirement — are still `FAILED`; say so in the
