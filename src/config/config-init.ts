@@ -75,6 +75,11 @@ export function defaultConfigYaml(): string {
       // Ceiling of the patch a re-review is handed: what the retry changed
       // since the tree the previous review judged. Zero turns the channel off.
       review_diff_max_kb: run.reviewDiffMaxKb,
+      // "when_needed" derives a failed attempt's memory from a readable
+      // FAILED review report instead of spending a spawn to restate it; the
+      // learner still runs for a red gate, a silent spawn or an unreadable
+      // report.
+      failure_learner: run.failureLearner,
     },
     // Empty on purpose: the review panel is declared model by model, because
     // reviewing spends on every model listed here.

@@ -18,7 +18,7 @@ import { hardRunDurationMs } from "../loop/budget.ts";
 import type { LoopController } from "../loop/loop-controller.ts";
 import { formatDurationMs, parseDurationMs } from "../util/duration.ts";
 
-type FieldKind = "boolean" | "duration" | "number" | "percent";
+type FieldKind = "boolean" | "duration" | "number" | "percent" | "choice";
 
 interface RunFieldDef {
   field: RunField;
@@ -66,7 +66,13 @@ const FIELDS: readonly RunFieldDef[] = [
     label: "re-review diff ceiling (KB)",
     display: (r) => (r.reviewDiffMaxKb === 0 ? "0 (off)" : `${r.reviewDiffMaxKb}`),
   },
+  { field: "failure_learner", kind: "choice", label: "failure learner", display: (r) => r.failureLearner },
 ];
+
+/** The values a "choice" field accepts, per field. */
+const CHOICES: Partial<Record<RunField, readonly string[]>> = {
+  failure_learner: ["when_needed", "always"],
+};
 
 /** Persist a single field after confirmation; returns the freshest config. */
 async function writeField(
@@ -105,6 +111,24 @@ async function editField(
     return writeField(ctx, controller, config, def, value, String(value));
   }
 
+  if (def.kind === "choice") {
+    const options = CHOICES[def.field] ?? [];
+    const choice = await ctx.ui.select(`${def.label} (current ${current})`, [...options]);
+    if (choice === undefined) return config;
+    return writeField(ctx, controller, config, def, choice, choice);
+  }
+
+  return editTextField(ctx, controller, config, def, current);
+}
+
+/** Capture a free-form value (number, duration or percentage); returns the freshest config. */
+async function editTextField(
+  ctx: ExtensionCommandContext,
+  controller: LoopController,
+  config: SpecsKitConfig,
+  def: RunFieldDef,
+  current: string,
+): Promise<SpecsKitConfig> {
   let placeholder = `current ${current} — e.g. 5`;
   if (def.kind === "duration") placeholder = `current ${current} — e.g. 40m, 1h, 240s`;
   if (def.kind === "percent") {

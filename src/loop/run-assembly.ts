@@ -11,6 +11,7 @@ import { toLogLines } from "../agent/stream-format.ts";
 import type { PhaseRunOutcome, PhaseSpawnOptions } from "../agent/spawner.ts";
 import type { PhaseName, SpecsKitConfig } from "../config/specs-kit-config.ts";
 import type { FixPlan, LoopStep } from "../fixplan/fix-plan.ts";
+import path from "node:path";
 import type { TaskFile } from "../tasks/task-parser.ts";
 import { ledgerPath } from "../measure/ledger.ts";
 import { PhaseMeter } from "../measure/phase-meter.ts";
@@ -159,6 +160,11 @@ export function assembleRun(deps: RunAssemblyDeps): AssembledRun {
     workspaceFingerprint: deps.workspaceFingerprint,
     workspaceDiff: deps.workspaceDiff,
     refreshCodebaseGraph: deps.refreshCodebaseGraph,
+    recordLearnerSkip: (task, attempt, reason) =>
+      meter.recordSkippedPhase(
+        { spec: path.basename(deps.specDir), task, phase: "failure_learner", attempt, role: "learner", model: null },
+        reason,
+      ),
     now: deps.now,
   };
   const runner = new TaskRunner(runnerDeps);

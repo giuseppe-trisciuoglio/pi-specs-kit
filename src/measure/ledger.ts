@@ -38,7 +38,8 @@ export type PhaseOutcome =
   | "pre_hook_failed"
   | "protected_paths"
   | "unchanged_tree"
-  | "halted";
+  | "halted"
+  | "skipped";
 
 /** One executed phase of the loop, hooks included in the duration. */
 export interface PhaseLedgerRow {
@@ -57,6 +58,8 @@ export interface PhaseLedgerRow {
   cost_total: number;
   /** Why the phase ended; absent on rows written before this field existed. */
   outcome?: PhaseOutcome;
+  /** Why the phase was skipped; present only with `outcome: "skipped"`. */
+  skip_reason?: string;
   /** Time spent in pre/post hooks, a subset of duration_ms; absent on rows written before this field existed. */
   hooks_ms?: number;
 }
