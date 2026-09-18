@@ -65,11 +65,11 @@
     "@earendil-works/pi-ai": "^0.85.1",
     "@earendil-works/pi-coding-agent": "^0.85.1",
     "@earendil-works/pi-tui": "^0.85.1",
-    "@types/node": "^24.0.0",
-    "eslint": "^9.0.0",
-    "globals": "^15.0.0",
+    "@types/node": "^26.5.1",
+    "eslint": "^10.10.0",
+    "globals": "^17.12.0",
     "typebox": "^1.3.30",
-    "typescript": "^5.9.0",
-    "typescript-eslint": "^8.0.0"
+    "typescript": "^7.0.2",
+    "typescript-eslint": "^8.70.0"
   }
 }
