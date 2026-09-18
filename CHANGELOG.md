@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A reading brief no longer aborts the next run of its own spec.** The brief
+  the brief phase leaves in `tasks/` carries no frontmatter by design, but the
+  loader read `TASK-007--brief.md` as a task and refused the whole run over the
+  missing `---` delimiters. Briefs are now excluded from the task set the way
+  review reports already were, through the marker the brief file name itself is
+  built from.
 - **A build tool printing binary no longer kills the run.** The output of a
   failed hook is stripped of NUL bytes and the other non-printable control
   characters before it enters the next attempt's prompt, and the prompt is

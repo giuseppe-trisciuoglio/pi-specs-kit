@@ -12,6 +12,7 @@ import {
   type TaskFile,
 } from "../src/tasks/task-parser.ts";
 import { dependencyWarnings, filterRange, loadTasks, taskBoundNumber } from "../src/tasks/task-loader.ts";
+import { briefFileName } from "../src/loop/brief.ts";
 import { TaskValidationError, taskValidationLines } from "../src/tasks/task-validation.ts";
 
 const VALID = `---
@@ -191,6 +192,22 @@ test("loadTasks orders by number and skips review files", async () => {
     const tasks = await loadTasks(specDir);
     assert.deepEqual(tasks.map((t) => t.frontmatter.id), ["TASK-002", "TASK-010"]);
     assert.deepEqual(tasks.map((t) => t.num), [2, 10]);
+  });
+});
+
+// The brief a previous run left behind must not abort the next one: it carries
+// no frontmatter, so parsing it as a task would fail the whole run's validation.
+test("loadTasks skips the reading brief a task left behind", async () => {
+  await withSpec(async (specDir) => {
+    const dir = path.join(specDir, "tasks");
+    await writeFile(path.join(dir, "TASK-002.md"), taskFile("TASK-002", "Two"), "utf8");
+    await writeFile(
+      path.join(dir, briefFileName("TASK-002")),
+      "# TASK-002 Reading Brief\n\nFiles to touch: none.\n",
+      "utf8",
+    );
+    const tasks = await loadTasks(specDir);
+    assert.deepEqual(tasks.map((t) => t.frontmatter.id), ["TASK-002"]);
   });
 });
 

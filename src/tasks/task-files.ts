@@ -15,9 +15,17 @@ export const REVIEW_FILE_SUFFIX = "--review.md";
  */
 export const REVIEW_MARKER = "--review";
 
+/**
+ * Marker of the reading brief the brief phase leaves next to its task. The
+ * brief is reconnaissance addressed to the implementation, not a task: it has
+ * no frontmatter by design, so parsing it as one would abort the next run of
+ * the spec on the artifact the previous run just produced.
+ */
+export const BRIEF_MARKER = "--brief";
+
 /** True for a `tasks/` entry the loader will parse as a task. */
 export function isTaskFileName(name: string): boolean {
-  if (name.includes(REVIEW_MARKER)) return false;
+  if (name.includes(REVIEW_MARKER) || name.includes(BRIEF_MARKER)) return false;
   const lower = name.toLowerCase();
   return /^task-\d+/.test(lower) && lower.endsWith(".md");
 }

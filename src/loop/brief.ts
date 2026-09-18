@@ -10,11 +10,14 @@
  */
 
 import type { RoutedSuggestion } from "./review-report.ts";
+import { BRIEF_MARKER } from "../tasks/task-files.ts";
 import type { TaskFile } from "../tasks/task-parser.ts";
 
-/** File name of the brief of one task, relative to the spec's tasks folder. */
+/** File name of the brief of one task, relative to the spec's tasks folder.
+ * Built from the marker the loader excludes on, so the name written here and
+ * the name kept out of the task set cannot drift apart. */
 export function briefFileName(taskId: string): string {
-  return `${taskId}--brief.md`;
+  return `${taskId}${BRIEF_MARKER}.md`;
 }
 
 /**
