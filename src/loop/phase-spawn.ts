@@ -7,8 +7,13 @@
 import path from "node:path";
 import type { PiStreamEvent } from "../agent/json-stream.ts";
 import { assistantText, formatStreamEvent } from "../agent/stream-format.ts";
-import { attemptModel, type AttemptModel } from "./phase-escalation.ts";
-import { classifyPhaseFailure, spawnFailed } from "./phase-failure.ts";
+import {
+  attemptModel,
+  combineEscalationFailures,
+  fallbackDeservesRetry,
+  type AttemptModel,
+} from "./phase-escalation.ts";
+import { classifyPhaseFailure, composeFailureOutcome, spawnFailed } from "./phase-failure.ts";
 import type { PhaseRunOutcome, PhaseSpawnOptions } from "../agent/spawner.ts";
 import type { RoleName, SpecsKitConfig } from "../config/specs-kit-config.ts";
 import type { RoutedSuggestion } from "./review-report.ts";
@@ -201,9 +206,10 @@ export class PhaseSpawner {
     // attempt against it is skipped for the rest of the run and only the
     // fallback is spawned.
     if (fallback !== null && primary.model !== undefined && this.#deadModels.has(primary.model)) {
-      return await this.#spawnOnce(
+      const only = await this.#spawnOnce(
         request, fallback, systemPromptOverride, signal, captureText, meterHandle,
       );
+      return this.#named(only, fallback!.model);
     }
     if (primary.retry) {
       this.#deps.onNotify(
@@ -220,22 +226,87 @@ export class PhaseSpawner {
     // about the prompt. When the role declares a second model, exactly one
     // spawn goes to it before the usual routing takes over — a ladder of
     // fallbacks would spend the run budget proving the same outage per task.
-    if (fallback === null || escalation === null) return first;
+    if (fallback === null || escalation === null) return this.#named(first, primary.model);
     this.#deps.onNotify(await this.#escalationNotice(taskId, label, failure, primary.model, escalation), "warning");
-    const second = await this.#spawnOnce(
+    let second = await this.#spawnOnce(
       request, fallback, systemPromptOverride, signal, captureText, meterHandle,
     );
-    if (classifyPhaseFailure(second.outcome) !== null) return first;
-    // Only an environment failure earns the memory: a prompt the model
-    // could not answer says nothing about the next phase's prompt.
-    if (failure.environment && primary.model) {
-      this.#deadModels.add(primary.model);
+    let secondFailure = classifyPhaseFailure(second.outcome);
+    if (secondFailure && fallbackDeservesRetry(secondFailure)) {
       this.#deps.onNotify(
-        `the ${role} role stays on the fallback model ${escalation} for the rest of this run: ${primary.model} failed with ${failure.kind}`,
+        `${label} for ${taskId} failed on the fallback model ${escalation} too (${secondFailure.kind}: ${secondFailure.detail}); retrying it once`,
         "warning",
       );
+      const retried = await this.#retryFallback(
+        request, fallback, systemPromptOverride, signal, captureText, meterHandle,
+      );
+      if (retried) {
+        second = retried;
+        secondFailure = classifyPhaseFailure(second.outcome);
+      }
     }
-    return second;
+    // Only an environment failure earns the memory: a prompt the model could
+    // not answer says nothing about the next phase's prompt. The primary's
+    // verdict is complete on its own — whether the fallback then delivered or
+    // not, later phases of this run have nothing to gain from probing it again.
+    if (failure.environment && primary.model) this.#rememberDeadModel(primary.model, escalation, failure);
+    if (!secondFailure) return second;
+    // Both models are spent. The outcome returned is the fallback's, because
+    // that is where the path ended, carrying a diagnosis that names them both:
+    // returning the primary's hid the fact that the fallback ran at all, and
+    // its environmental verdict ended runs the fallback had merely stumbled in.
+    return {
+      outcome: composeFailureOutcome(
+        second.outcome,
+        combineEscalationFailures(
+          { failure, model: primary.model },
+          { failure: secondFailure, model: escalation },
+        ),
+      ),
+      text: second.text,
+    };
+  }
+
+  /** Name the model on a failing outcome, so the operator message can cite it. */
+  #named(result: LearnerResult, model: string | undefined): LearnerResult {
+    const failure = classifyPhaseFailure(result.outcome);
+    if (!failure || !model || model === "auto" || failure.model) return result;
+    return { outcome: composeFailureOutcome(result.outcome, { ...failure, model }), text: result.text };
+  }
+
+  /**
+   * The one extra spawn a stumbling fallback earns. It is charged to the
+   * ordinary ceilings, and a ceiling that refuses it is not an error: the
+   * caller already holds a diagnosable failure, and turning it into a thrown
+   * budget exception would lose it.
+   */
+  async #retryFallback(
+    request: PhaseSpawnRequest,
+    model: AttemptModel,
+    systemPromptOverride: SystemPromptOverrideText | undefined,
+    signal: AbortSignal | undefined,
+    captureText: boolean,
+    meterHandle: PhaseHandle | null,
+  ): Promise<LearnerResult | null> {
+    try {
+      return await this.#spawnOnce(request, model, systemPromptOverride, signal, captureText, meterHandle);
+    } catch (error) {
+      this.#deps.onNotify(
+        `the retry on the fallback model ${model.model} could not start: ${error instanceof Error ? error.message : String(error)}`,
+        "warning",
+      );
+      return null;
+    }
+  }
+
+  /** Record a model that answered with an environment failure, once. */
+  #rememberDeadModel(model: string, escalation: string, failure: NonNullable<ReturnType<typeof classifyPhaseFailure>>): void {
+    if (this.#deadModels.has(model)) return;
+    this.#deadModels.add(model);
+    this.#deps.onNotify(
+      `spawns stay on the fallback model ${escalation} for the rest of this run: ${model} failed with ${failure.kind}`,
+      "warning",
+    );
   }
 
   /** The role's escalation model, when it differs from the one just tried. */

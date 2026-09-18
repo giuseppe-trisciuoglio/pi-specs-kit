@@ -8,7 +8,8 @@ import type { PhaseRunOutcome, PhaseSpawnOptions } from "../src/agent/spawner.ts
 import type { SpecsKitConfig } from "../src/config/specs-kit-config.ts";
 import { loadSpecsKitConfig } from "../src/config/specs-kit-config.ts";
 import { LoopBudget } from "../src/loop/budget.ts";
-import { classifyPhaseFailure } from "../src/loop/phase-failure.ts";
+import { classifyPhaseFailure, environmentFailureMessage } from "../src/loop/phase-failure.ts";
+import { fallbackDeservesRetry } from "../src/loop/phase-escalation.ts";
 import { PhaseSpawner } from "../src/loop/phase-spawn.ts";
 import type { ListedModel } from "../src/loop/model-check.ts";
 
@@ -27,6 +28,8 @@ function outcome(over: Partial<PhaseRunOutcome> = {}): PhaseRunOutcome {
 }
 
 const QUOTA = '429 {"type":"error","error":{"type":"rate_limit_error"}}';
+/** A truncated provider stream: an error with nothing environmental about it. */
+const TRUNCATED = "Upstream stream ended before terminal chunk";
 
 function spawnerDeps(
   config: SpecsKitConfig,
@@ -93,7 +96,7 @@ test("a refused primary is retried once on the configured fallback model", async
     assert.equal(notices.length, 2);
     assert.match(notices[0], /fallback model provider\/b/);
     assert.match(notices[0], /quota/);
-    assert.match(notices[1], /stays on the fallback model provider\/b/);
+    assert.match(notices[1], /spawns stay on the fallback model provider\/b for the rest of this run/);
   });
 });
 
@@ -185,7 +188,7 @@ test("every escalation attempt is charged to the budget like any other subproces
   });
 });
 
-test("once the primary died of an environment failure the role stays on the fallback", async () => {
+test("once the primary died of an environment failure spawns stay on the fallback", async () => {
   await withConfig({ reviewer_model: "provider/a", reviewer_fallback_model: "provider/b" }, async (config) => {
     const { calls, deps } = quotaEscalationDeps(config);
     const notices: string[] = [];
@@ -203,7 +206,7 @@ test("once the primary died of an environment failure the role stays on the fall
     // One escalation notice plus the single switch notice: the later phases
     // do not repeat either.
     assert.equal(notices.length, 2);
-    assert.match(notices[1], /reviewer role stays on the fallback model provider\/b for the rest of this run/);
+    assert.match(notices[1], /spawns stay on the fallback model provider\/b for the rest of this run/);
   });
 });
 
@@ -239,4 +242,91 @@ test("the skipped primary is not charged to the budget", async () => {
     assert.equal(calls.length, 4);
     assert.throws(() => deps.budget.consume(), /run budget exhausted/);
   });
+});
+
+test("a fallback that stumbles is retried once and its success is what comes back", async () => {
+  await withConfig({ reviewer_model: "provider/a", reviewer_fallback_model: "provider/b" }, async (config) => {
+    const calls: string[] = [];
+    const deps = spawnerDeps(config, async (opts) => {
+      const model = String(opts.model ?? "auto");
+      calls.push(model);
+      if (model === "provider/a") return outcome({ exitCode: 1, stopReason: "error", errorMessage: QUOTA });
+      if (calls.length === 2) return outcome({ exitCode: 1, stopReason: "error", errorMessage: TRUNCATED });
+      return outcome();
+    });
+    const notices: string[] = [];
+    deps.onNotify = (message: string) => {
+      notices.push(message);
+    };
+    const spawner = new PhaseSpawner(deps);
+    const result = await spawner.spawn({ taskId: "TASK-001", label: "implementation", role: "reviewer", prompt: TASK_PROMPT }, undefined, undefined, false);
+
+    assert.deepEqual(calls, ["provider/a", "provider/b", "provider/b"]);
+    assert.equal(classifyPhaseFailure(result.outcome), null, "the retried fallback delivered");
+    assert.match(notices[1], /failed on the fallback model provider\/b too .*retrying it once/);
+  });
+});
+
+test("primary quota plus fallback agent-error does not stop the run and names both models", async () => {
+  await withConfig({ reviewer_model: "provider/a", reviewer_fallback_model: "provider/b" }, async (config) => {
+    const calls: string[] = [];
+    const deps = spawnerDeps(config, async (opts) => {
+      const model = String(opts.model ?? "auto");
+      calls.push(model);
+      if (model === "provider/a") return outcome({ exitCode: 1, stopReason: "error", errorMessage: QUOTA });
+      return outcome({ exitCode: 1, stopReason: "error", errorMessage: TRUNCATED });
+    });
+    const spawner = new PhaseSpawner(deps);
+    const result = await spawner.spawn({ taskId: "TASK-001", label: "implementation", role: "reviewer", prompt: TASK_PROMPT }, undefined, undefined, false);
+
+    assert.deepEqual(calls, ["provider/a", "provider/b", "provider/b"], "the fallback gets its single retry");
+    const failure = classifyPhaseFailure(result.outcome);
+    // The fallback is the last state of the path actually taken: its
+    // non-environmental verdict buys another attempt instead of ending the run.
+    assert.equal(failure?.kind, "agent-error");
+    assert.equal(failure?.environment, false);
+    assert.equal(failure?.model, "provider/b");
+    assert.match(failure?.detail ?? "", /primary provider\/a quota: .*429/);
+    assert.match(failure?.detail ?? "", /fallback provider\/b agent-error: .*terminal chunk/);
+  });
+});
+
+test("primary quota plus fallback quota still stops, with both refusals in the message", async () => {
+  await withConfig({ reviewer_model: "provider/a", reviewer_fallback_model: "provider/b" }, async (config) => {
+    const calls: string[] = [];
+    const deps = spawnerDeps(config, async (opts) => {
+      calls.push(String(opts.model ?? "auto"));
+      return outcome({ exitCode: 1, stopReason: "error", errorMessage: QUOTA });
+    });
+    const spawner = new PhaseSpawner(deps);
+    const result = await spawner.spawn({ taskId: "TASK-001", label: "review", role: "reviewer", prompt: TASK_PROMPT }, undefined, undefined, false);
+
+    assert.deepEqual(calls, ["provider/a", "provider/b"], "an environmental fallback failure earns no retry");
+    const failure = classifyPhaseFailure(result.outcome);
+    assert.equal(failure?.kind, "quota");
+    assert.equal(failure?.environment, true);
+    const message = environmentFailureMessage("review", "TASK-001", failure!);
+    assert.match(message, /could not run for TASK-001 on provider\/b/);
+    assert.match(message, /primary provider\/a quota/);
+    assert.match(message, /fallback provider\/b quota/);
+  });
+});
+
+test("a refusal with no fallback configured still names the model that produced it", async () => {
+  await withConfig({ reviewer_model: "provider/a" }, async (config) => {
+    const deps = spawnerDeps(config, async () => outcome({ exitCode: 1, stopReason: "error", errorMessage: QUOTA }));
+    const spawner = new PhaseSpawner(deps);
+    const result = await spawner.spawn({ taskId: "TASK-001", label: "review", role: "reviewer", prompt: TASK_PROMPT }, undefined, undefined, false);
+    assert.equal(classifyPhaseFailure(result.outcome)?.model, "provider/a");
+  });
+});
+
+test("only a transient fallback failure earns the extra spawn", () => {
+  const base = { detail: "d", environment: false } as const;
+  assert.equal(fallbackDeservesRetry({ ...base, kind: "agent-error" }), true);
+  assert.equal(fallbackDeservesRetry({ ...base, kind: "no-output" }), true);
+  // Asked for, answered identically, or paid for twice in wall clock.
+  assert.equal(fallbackDeservesRetry({ ...base, kind: "aborted" }), false);
+  assert.equal(fallbackDeservesRetry({ ...base, kind: "timeout" }), false);
+  assert.equal(fallbackDeservesRetry({ kind: "quota", detail: "d", environment: true }), false);
 });

@@ -43,6 +43,28 @@ export interface PhaseFailure {
    * stops and names them instead of spending the task's attempts on them.
    */
   environment: boolean;
+  /**
+   * The model the failed spawn ran on, when the loop knows which one it
+   * picked. The classifier reads only the CLI text and cannot tell: it is
+   * filled in by the spawner, which is the one that chose the model.
+   */
+  model?: string;
+}
+
+/**
+ * An outcome whose diagnosis the loop composed itself rather than leaving it
+ * to be re-read off the CLI text. The escalation path needs it: the text of a
+ * failure it wants to report names the primary's refusal too, and re-matching
+ * the signatures against that sentence would classify the fallback's failure
+ * as the primary's.
+ */
+export interface ComposedOutcome extends PhaseRunOutcome {
+  composedFailure: PhaseFailure;
+}
+
+/** Carry a ready-made diagnosis on an outcome, for `classifyPhaseFailure`. */
+export function composeFailureOutcome(base: PhaseRunOutcome, failure: PhaseFailure): ComposedOutcome {
+  return { ...base, composedFailure: failure };
 }
 
 /** Longest failure text carried into a notification; the tail is dropped. */
@@ -83,6 +105,9 @@ export function classifyPhaseFailure(outcome: PhaseRunOutcome | null): PhaseFail
   // No outcome at all means the subprocess never produced one, which is the
   // same dead end as a spawn that could not start.
   if (!outcome) return { kind: "agent-error", detail: "the phase produced no outcome", environment: false };
+  // A diagnosis the loop already reached beats any re-reading of the text.
+  const composed = (outcome as Partial<ComposedOutcome>).composedFailure;
+  if (composed) return composed;
   if (outcome.timedOut) return { kind: "timeout", detail: "the phase outlived its timeout", environment: false };
   if (outcome.aborted) return { kind: "aborted", detail: "the phase was interrupted", environment: false };
   if (outcome.signal) {
@@ -161,8 +186,9 @@ export function environmentFailureMessage(phase: string, taskId: string, failure
     "no-output": "the phase ran but produced no output at all",
     "agent-error": "the agent reported an error",
   }[failure.kind];
+  const on = failure.model ? ` on ${failure.model}` : "";
   return (
-    `${phase} could not run for ${taskId}: ${cause}. ${failure.detail} — ` +
+    `${phase} could not run for ${taskId}${on}: ${cause}. ${failure.detail} — ` +
     "spawning it again against the same configuration fails identically, so the task stops here " +
     "instead of spending its attempts; change the model for this role, or restore its access, before resuming."
   );

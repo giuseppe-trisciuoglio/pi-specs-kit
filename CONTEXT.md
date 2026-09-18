@@ -64,6 +64,10 @@ _Avoid_: failure learning, memory (that one is project memory), issue
 The same blocker of kind `spec_contradiction`, `unowned_decision` or `operator_action` in two consecutive attempts of the same task: no further attempt can resolve it, so the task closes immediately and the operator receives the blocker text instead of paying for another agent session.
 _Avoid_: escalation (too generic), definitive block
 
+**Escalation**:
+The single extra spawn on `<role>_fallback_model` after a classified failure of the primary, plus the one retry the fallback earns when its own failure is not environmental. It is not an attempt: the task's attempt counter does not move, and a spent escalation reports both failures with the fallback's kind routing.
+_Avoid_: retry (that is the task's attempt), fallback chain, ladder
+
 **Operator wall**:
 Work only a person can perform — an account, a credential, a signature, a purchase, physical or console access — discovered while a task runs, either through the review report's `escalation` list or through an `operator_action` blocker hit twice. It closes that task and, alone among the failures, never stops the run: the tasks that follow are not the ones missing a credential.
 _Avoid_: manual task, procurement task (such a task is never generated), blocked task
