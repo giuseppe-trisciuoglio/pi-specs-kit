@@ -178,6 +178,32 @@ export function repeatedWall(blockers: readonly Blocker[], task: string, attempt
   return null;
 }
 
+/**
+ * One-line summary of what a task cost, offered to the learner as a
+ * candidate when the task did not pass at the first attempt: how many
+ * attempts it took and what stopped the failed ones. Verified facts are left
+ * out — they already travel as candidates of their own — and the learner
+ * decides whether the price this task paid is a lesson for whoever writes
+ * the next tasks.
+ */
+export function attemptCostCandidate(
+  blockers: readonly Blocker[] | undefined,
+  task: string,
+  attempts: number,
+): string {
+  const reasons: string[] = [];
+  const seen = new Set<string>();
+  for (const blocker of blockersForTask(blockers, task)) {
+    if (blocker.kind === "verified_fact") continue;
+    const key = identity(blocker.text);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    reasons.push(`${blockerLabel(blocker.kind)}: ${blocker.text}`);
+  }
+  const summary = `This task passed review after ${attempts} attempts`;
+  return reasons.length === 0 ? `${summary}.` : `${summary}; the failed attempts were stopped by: ${reasons.join("; ")}.`;
+}
+
 /** Facts a passing task may hand to the learner: paid for once, worth keeping. */
 export function promotableFacts(blockers: readonly Blocker[] | undefined, task: string): string[] {
   const facts: string[] = [];
