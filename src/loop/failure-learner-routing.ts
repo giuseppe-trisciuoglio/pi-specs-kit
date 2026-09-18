@@ -64,7 +64,11 @@ export interface LearnerRoutingDecision {
 
 /** Failures the report never saw: the gate rejected the tree after the fact,
  * or the spawn never produced anything to review. */
-const SPAWN_OR_GATE: readonly ImplStatus[] = ["post-hook-failed", "spawn-failed", "environment-failed"];
+const SPAWN_OR_GATE: ReadonlySet<ImplStatus> = new Set([
+  "post-hook-failed",
+  "spawn-failed",
+  "environment-failed",
+]);
 
 /**
  * Decide whether the failure learner runs for this attempt. A readable FAILED
@@ -74,7 +78,7 @@ const SPAWN_OR_GATE: readonly ImplStatus[] = ["post-hook-failed", "spawn-failed"
 export function decideFailureLearner(input: LearnerRoutingInput): LearnerRoutingDecision {
   if (input.mode === "always") return { run: true, reason: "always" };
   if (input.implStatus === "post-hook-failed") return { run: true, reason: "gate-failed" };
-  if (SPAWN_OR_GATE.includes(input.implStatus)) return { run: true, reason: "spawn-failed" };
+  if (SPAWN_OR_GATE.has(input.implStatus)) return { run: true, reason: "spawn-failed" };
   if (input.report === null) return { run: true, reason: "report-missing" };
   // The review machinery itself broke — a red gate before the reviewer, an
   // interrupted spawn beyond its budget — so whatever is on disk does not
