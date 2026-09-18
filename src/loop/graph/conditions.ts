@@ -21,6 +21,10 @@ const registry = {
   // running a phase the budget would not have allowed.
   enters_at_implementation: (ctx) =>
     (ctx.entry.startStep === null || ctx.entry.startStep === "implementation") && ctx.attemptsLeft,
+  // Fresh entry of a task whose reading brief is enabled: one cheap read-only
+  // spawn before the first attempt. A resume enters at a named step and never
+  // matches, so a retry or a restart does not regenerate the brief.
+  brief_wanted: (ctx) => ctx.entry.startStep === null && ctx.briefWanted,
   enters_at_review: (ctx) => ctx.entry.startStep === "review" && ctx.attemptsLeft,
   // Cleanup is skipped in fast mode; the resume point and the mode together
   // decide whether it runs.

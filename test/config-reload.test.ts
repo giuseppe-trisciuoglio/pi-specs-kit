@@ -228,7 +228,7 @@ test("the executor awaits the reload before the pre-hooks of the phase", async (
   const executor = new PhaseExecutor({
     config,
     specDir,
-    budget: new LoopBudget({ maxSpawnsPerTask: 10, maxSpawnsPerRun: 10, maxRunDurationMs: 3_600_000 }),
+    budget: new LoopBudget({ maxSpawnsPerTask: 10, maxSpawnsPerRun: 10, maxRunDurationMs: 3_600_000, maxRunDurationHardMs: null }),
     spawnPhase: async () => okOutcome,
     runHooks: async (hooks, _phase, stage) => {
       order.push(`hooks:${stage}`);
@@ -256,10 +256,53 @@ test("the executor awaits the reload before the pre-hooks of the phase", async (
     postHookFailures: null,
     upstreamProvides: [],
     routedSuggestions: [],
+    brief: null,
     firstAttempt: true,
   };
   await executor.run("implementation", input);
 
   assert.deepEqual(order, ["reload", "hooks:pre", "hooks:post"]);
   assert.deepEqual(hooksSeen[0], ["npm test"], "the phase gates on the hooks of the fresh load");
+});
+
+test("both duration ceilings follow the reloaded file into the budget", async () => {
+  const root = await tmpRoot();
+  const config = await loadSpecsKitConfig(root);
+  const clock = { t: 0 };
+  const warnings: string[] = [];
+  const budget = new LoopBudget(
+    {
+      maxSpawnsPerTask: 10,
+      maxSpawnsPerRun: 10,
+      maxRunDurationMs: config.run.maxRunDurationMs,
+      maxRunDurationHardMs: config.run.maxRunDurationHardMs,
+    },
+    { now: () => clock.t, notify: (m) => warnings.push(m) },
+  );
+
+  // The wiring the run assembly installs: the reload re-applies the ceilings
+  // because the budget copied them into limits of its own.
+  const reloader = new ConfigReloader(config, {
+    load: () => freshConfig(root, (c) => {
+      c.run.maxRunDurationMs = 1_000;
+      c.run.maxRunDurationHardMs = 2_000;
+    }),
+    notify: () => {},
+    onReloaded: (cfg) =>
+      budget.reconfigure({
+        maxSpawnsPerTask: cfg.run.maxSpawnsPerTask,
+        maxSpawnsPerRun: cfg.run.maxSpawnsPerRun,
+        maxRunDurationMs: cfg.run.maxRunDurationMs,
+        maxRunDurationHardMs: cfg.run.maxRunDurationHardMs,
+      }),
+  });
+
+  clock.t = 1_500;
+  await reloader.refresh();
+  budget.startTask("TASK-001");
+  budget.consume();
+  assert.equal(warnings.length, 1, "the lowered expectation is already crossed: one warning");
+
+  clock.t = 2_000;
+  assert.throws(() => budget.consume(), /hard limit/);
 });

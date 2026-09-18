@@ -72,6 +72,43 @@ Idea → Functional Specification → Architecture & Ontology Definition → Tas
 
 3. **If <= 15 tasks**: Proceed normally with task generation
 
+### Per-Task Size Limit
+
+**CRITICAL**: The spec-level ceilings above do not measure the size of a *single* task, and an oversized
+task is what makes a loop run retry the same work over and over. From the measured runs (getokens specs
+011–015): tasks that passed review at the first attempt declare a median of **5 files**; tasks that needed
+3 or more attempts declare a median of **8 files**, and no task declaring **more than 8 files** passed at
+the first attempt. Acceptance-criteria count is a weaker signal (median 4 in both groups), so it guards
+against ambiguity rather than size.
+
+Before writing any task file (Phase 4, step 8), check **each planned task** against these ceilings:
+
+- **More than 8 files** declared in "Files to Create/Modify" (Implementation Details)
+- **More than 6 acceptance criteria** in the task's Acceptance Criteria section
+
+**If a task exceeds either ceiling**:
+
+1. **Do not write its task file yet**
+2. **Propose a split** with **ask_user_question**:
+   ```
+   Oversized Task
+
+   Task "[title]" declares N files / M acceptance criteria, above the per-task ceiling
+   (8 files, 6 acceptance criteria). Tasks this size measurably need repeated implementation
+   attempts to land.
+
+   Proposed split:
+   - Task A: [sub-scope with its files and criteria]
+   - Task B: [sub-scope with its files and criteria]
+   ```
+   - Options:
+     - "Split the task as proposed" (recommended)
+     - "Keep the task as it is" (not recommended - expect repeated attempts in the loop)
+3. **If the user splits**: replace the task with the parts, re-check the parts against the ceilings,
+   and re-check the total task count against the 15-task limit
+4. **If the user keeps it**: proceed and record a warning in the Phase 7 summary, next to any
+   spec-level warning
+
 ## Usage
 
 ```bash
@@ -128,7 +165,7 @@ You are converting a functional specification into executable tasks. Follow a sy
 - **No time estimates**: DO NOT provide or request time estimates
 - **Test instructions**: **Each task MUST include explicit and detailed instructions on what to test, specifying test types (unit, integration) and behaviors to verify, NEVER including test code.**
 - **Mandatory final tasks**: Every spec MUST end with (1) a documentation task and (2) a code cleanup task
-- **Spec size limit**: If > 15 implementation tasks, reject and recommend returning to brainstorm
+- **Spec size limit**: If > 15 implementation tasks, reject and recommend returning to brainstorm. If a single task exceeds the per-task ceiling (>8 declared files or >6 acceptance criteria), propose a split before writing its task file
 
 ---
 
@@ -573,6 +610,13 @@ Provide a summary that will inform task generation with the detected stack's spe
    - Example: If AC-5 (`git worktree list` shows worktree) is `[SEF]`, it does NOT get a task. It is a natural side effect of using `git worktree add`, which is covered by AC-1's task.
    - **Why this matters**: Creating tasks for `[SEF]` criteria produces "false work" — tasks that verify natural behavior rather than implement functionality. In spec 025, AC-5 (`git worktree list`) and AC-2 (second run reuses) are `[SEF]` and should not generate dedicated tasks.
 
+1.0. **Load the project learnings** (if present):
+   - Read `docs/specs/learnings.md`: it is the memory the loop writes after every run, and it
+     includes how many attempts past tasks needed and what stopped them
+   - Apply its lessons while decomposing: task shapes that previously needed repeated attempts
+     (too many files, ambiguous scope, cross-context changes) must be split or sharpened now,
+     not paid for again in the loop
+
 1.1. **If codebase graph context is available** (from Phase 2.5 cached only):
    - Review KG patterns: Architectural patterns to follow in each task
    - Review KG components: Existing components to reuse or integrate with
@@ -806,6 +850,10 @@ Provide a summary that will inform task generation with the detected stack's spe
      - Present warning message to user
      - Offer to return to brainstorm or continue anyway
    - **If <= 15 tasks**: Proceed with task file generation
+   - **Per-task size**: check every planned task against the Per-Task Size Limit section
+     (more than 8 declared files or more than 6 acceptance criteria): propose a split before
+     writing its task file, and record a "continued anyway" warning in the Phase 7 summary if
+     the user keeps the oversized task
 
 ---
 
@@ -1129,7 +1177,7 @@ Provide a summary that will inform task generation with the detected stack's spe
       - File Collision Detection: [N collisions detected and resolved]
       - Test Fidelity Check: [N invented test scenarios removed]
     - **Dependency Structure**: Brief overview of task dependencies
-    - **Spec Size Status**: [If >15 tasks were detected: "WARNING: Spec exceeds 15-task limit. User chose to continue anyway" OR "Aborted: User returned to brainstorm to split specification"]
+    - **Spec Size Status**: [If >15 tasks were detected: "WARNING: Spec exceeds 15-task limit. User chose to continue anyway" OR "Aborted: User returned to brainstorm to split specification"] [If any task exceeded the per-task ceiling: "WARNING: Task TASK-XXX exceeds the per-task size limit (N files / M criteria). User chose to continue anyway"]
     - **Output Files**:
       - Task list: `docs/specs/[id]/YYYY-MM-DD--feature-name--tasks.md`
       - Data model: `docs/specs/[id]/data-model.md`

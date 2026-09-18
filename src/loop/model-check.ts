@@ -1,5 +1,5 @@
 /**
- * Pre-flight validation of the models configured for the five roles against
+ * Pre-flight validation of the models configured for the roles against
  * the catalogue the agent CLI actually knows. A mistyped model id is only
  * discovered at spawn time today, once per attempt; checking it before the
  * loop starts turns an infrastructure failure into a cheap refusal. The CLI
@@ -30,6 +30,12 @@ export interface ListedModel {
 export interface ConfiguredModel {
   role: RoleName;
   model: string;
+  /**
+   * Which of the role's model fields carries it, when the role has more than
+   * one. Absent means the primary, so a message about it reads as it always
+   * did.
+   */
+  field?: "retry" | "fallback";
 }
 
 /**
@@ -49,14 +55,26 @@ export function parseModelList(output: string): ListedModel[] {
 }
 
 /**
- * The models configured for the five roles, with "auto" and empty values
+ * The models configured for the roles, with "auto" and empty values
  * dropped: both mean the CLI picks the model, so there is nothing to check.
+ *
+ * A declared retry model is one of these, not an escalation: every attempt
+ * after the first spawns on it, so a mistyped id there fails as certainly as a
+ * mistyped primary — just one attempt later, with the first one's tokens
+ * already spent.
  */
 export function configuredModels(config: SpecsKitConfig): ConfiguredModel[] {
   const models: ConfiguredModel[] = [];
   for (const role of ROLE_NAMES) {
-    const model = config.roles[role].model;
+    // The reading brief spawns only when enabled, and its default model is
+    // the learner's: checking an unused or inherited id would refuse a run
+    // over a model no spawn ever asks for.
+    if (role === "brief" && !config.brief.enabled) continue;
+    const { model, retryModel } = config.roles[role];
     if (model !== "" && model !== AUTO_MODEL) models.push({ role, model });
+    if (retryModel && retryModel !== AUTO_MODEL && retryModel !== model) {
+      models.push({ role, model: retryModel, field: "retry" });
+    }
   }
   return models;
 }
@@ -71,10 +89,23 @@ export function configuredModels(config: SpecsKitConfig): ConfiguredModel[] {
 export function configuredFallbackModels(config: SpecsKitConfig): ConfiguredModel[] {
   const models: ConfiguredModel[] = [];
   for (const role of ROLE_NAMES) {
+    if (role === "brief" && !config.brief.enabled) continue;
     const { model, fallbackModel } = config.roles[role];
     if (fallbackModel && fallbackModel !== model) models.push({ role, model: fallbackModel });
   }
   return models;
+}
+
+/**
+ * Role and model of each entry, naming the field when the role carries more
+ * than one model: "agent: x" and "agent (retry): y" are two different lines to
+ * fix in the file, and an operator reading one of them has to know which.
+ */
+function describe(models: readonly ConfiguredModel[]): string {
+  return models.map((m) => {
+    const fieldTag = m.field ? ` (${m.field})` : "";
+    return `${m.role}${fieldTag}: ${m.model}`;
+  }).join(", ");
 }
 
 /**
@@ -121,7 +152,7 @@ export function modelListUnavailableWarning(): string {
  * refuses to start instead of spending its budget on it.
  */
 export function unknownModelsError(missing: readonly ConfiguredModel[]): string {
-  const entries = missing.map((m) => `${m.role}: ${m.model}`).join(", ");
+  const entries = describe(missing);
   return (
     `cannot start the loop: model(s) not known to the agent CLI: ${entries}. ` +
     "Check the agents.*_model values in specs-kit.yaml."
@@ -134,7 +165,7 @@ export function unknownModelsError(missing: readonly ConfiguredModel[]): string 
  * ever needs the fallback.
  */
 export function unknownFallbackModelsWarning(missing: readonly ConfiguredModel[]): string {
-  const entries = missing.map((m) => `${m.role}: ${m.model}`).join(", ");
+  const entries = describe(missing);
   return (
     `[specs-kit] escalation model(s) not known to the agent CLI: ${entries}. ` +
     "The loop starts anyway; when a phase falls back it will fail like any other unknown model."

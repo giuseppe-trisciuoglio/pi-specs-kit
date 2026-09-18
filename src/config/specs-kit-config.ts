@@ -7,10 +7,10 @@
 /** Loop phases that map to an agent role. */
 export type PhaseName = "implementation" | "review" | "cleanup" | "sync";
 
-/** Agent roles, one per phase plus the learnings extractor. */
-export type RoleName = "agent" | "reviewer" | "cleaner" | "synchronizer" | "learner";
+/** Agent roles, one per phase plus the learnings extractor and the reading brief. */
+export type RoleName = "agent" | "reviewer" | "cleaner" | "synchronizer" | "learner" | "brief";
 
-export const ROLE_NAMES: readonly RoleName[] = ["agent", "reviewer", "cleaner", "synchronizer", "learner"];
+export const ROLE_NAMES: readonly RoleName[] = ["agent", "reviewer", "cleaner", "synchronizer", "learner", "brief"];
 
 /** Role responsible for each phase. */
 export const PHASE_ROLE: Readonly<Record<PhaseName, RoleName>> = {
@@ -31,7 +31,22 @@ export interface RoleConfig {
    * after the first failure.
    */
   fallbackModel?: string;
+  /**
+   * Model the role is spawned on from `retryFromAttempt` onwards. The first
+   * attempt is the cheap one; once it has failed, the run is already paying
+   * for another review and another gate behind every further attempt, so the
+   * intelligence spent on it is worth more. Absent means the role uses its
+   * primary model for every attempt.
+   */
+  retryModel?: string;
+  /** Thinking level for the retry model; absent keeps the role's own. */
+  retryThinkingLevel?: string;
+  /** First attempt that spawns on the retry model; never below two. */
+  retryFromAttempt?: number;
 }
+
+/** Attempt the retry model takes over from when the file names no other. */
+export const DEFAULT_RETRY_FROM_ATTEMPT = 2;
 
 export interface RunConfig {
   maxAttempts: number;
@@ -60,8 +75,17 @@ export interface RunConfig {
   maxSpawnsPerTask: number;
   /** Agent subprocesses the whole run may spend. */
   maxSpawnsPerRun: number;
-  /** Wall-clock limit of the whole run. */
+  /**
+   * Wall-clock the run is expected to fit in. Soft: crossing it warns once and
+   * the run carries on, because a run slower than planned is ordinary work.
+   */
   maxRunDurationMs: number;
+  /**
+   * Wall-clock the run may never cross: it halts there, which is the ceiling
+   * that exists against a runaway. Null when the file leaves it out, and the
+   * budget then derives it from the soft one.
+   */
+  maxRunDurationHardMs: number | null;
   /**
    * Let sync correct source-of-truth context documents (AGENTS.md,
    * architecture.md, ontology.md, .pi/rules) when a consolidated learning
@@ -86,6 +110,22 @@ export interface RunConfig {
    * Turn it off only for a run whose job is to revise those documents.
    */
   protectSpecArtifacts: boolean;
+  /**
+   * Ceiling, in kilobytes, of the patch a re-review receives: what the retried
+   * implementation changed since the tree the previous review judged. Zero
+   * turns the channel off and the re-review falls back to reading the workspace
+   * itself, which is what it did before the channel existed.
+   */
+  reviewDiffMaxKb: number;
+  /**
+   * Failure-learner policy on a failed attempt. "always" spawns the learner
+   * on every failed attempt; "when_needed" spawns only when the review
+   * report cannot stand in for it — a red gate, a silent or refused spawn,
+   * a missing or unreadable report, or a report carrying a finding of the
+   * kinds that escalate — and derives the attempt's memory from the report
+   * otherwise, saving one spawn per failed attempt.
+   */
+  failureLearner: FailureLearnerMode;
 }
 
 export type HookStage = "pre" | "post";
@@ -95,6 +135,15 @@ export interface PhaseHooks {
   post: string[];
 }
 
+/**
+ * Everything the loop can hang a shell command off: the four phases plus the
+ * checkpoint of a passed task. The checkpoint is not a phase — no agent runs
+ * there, no prompt is built — but it is the second level of the gate: the
+ * phase hooks run the scope of what the attempt touched, and the suite the
+ * project cannot afford per attempt runs here, once per task that passed.
+ */
+export type HookTarget = PhaseName | "checkpoint";
+
 export interface HooksConfig {
   /** Timeout for each hook command. */
   timeoutMs: number;
@@ -102,6 +151,11 @@ export interface HooksConfig {
   review: PhaseHooks;
   cleanup: PhaseHooks;
   sync: PhaseHooks;
+  /**
+   * Commands run after a passed task's checkpoint. Only the post stage is
+   * read: there is nothing before a checkpoint for a hook to precede.
+   */
+  checkpoint: PhaseHooks;
 }
 
 /**
@@ -141,6 +195,18 @@ export interface PromptsConfig {
   phaseOverrides: Partial<Record<PhaseName, SystemPromptOverride>>;
 }
 
+/**
+ * The reading brief: one cheap, read-only spawn per task that writes a short
+ * brief file every implementation attempt of the task then receives. Off by
+ * default: the extra spawn has to pay for itself in shorter attempts, and the
+ * measurement is what decides that.
+ */
+export interface BriefConfig {
+  enabled: boolean;
+}
+
+export const DEFAULT_BRIEF_CONFIG: BriefConfig = { enabled: false };
+
 export interface SpecsKitConfig {
   version: string;
   /** Absolute path of the project root (directory holding the config file). */
@@ -153,6 +219,8 @@ export interface SpecsKitConfig {
   spec?: string;
   mode: "fast" | "full";
   pollIntervalMs: number;
+  /** Reading-brief behavior; only the flag is behavioral, the role lives in roles. */
+  brief: BriefConfig;
   roles: Record<RoleName, RoleConfig>;
   /** Declared adversarial review panel, in persona order; empty when unset. */
   reviewPanel: PanelReviewer[];
@@ -184,10 +252,13 @@ export const DEFAULT_RUN_CONFIG: RunConfig = {
   maxSpawnsPerTask: 8,
   maxSpawnsPerRun: 60,
   maxRunDurationMs: 6 * 60 * 60 * 1000,
+  maxRunDurationHardMs: null,
   reconcileContext: false,
   autoCompact: false,
   autoCompactThresholdPercent: DEFAULT_AUTO_COMPACT_PERCENT,
   protectSpecArtifacts: true,
+  reviewDiffMaxKb: 64,
+  failureLearner: "when_needed",
 };
 
 export function defaultRoles(): Record<RoleName, RoleConfig> {
@@ -204,6 +275,7 @@ export function defaultHooks(): HooksConfig {
     review: empty(),
     cleanup: empty(),
     sync: empty(),
+    checkpoint: empty(),
   };
 }
 
@@ -212,6 +284,7 @@ import path from "node:path";
 import YAML from "yaml";
 import { DEFAULT_AUTO_COMPACT_PERCENT, isThresholdPercent } from "../agent/compaction-plan.ts";
 import { parseDurationMs } from "../util/duration.ts";
+import { parseFailureLearnerMode, type FailureLearnerMode } from "../loop/failure-learner-routing.ts";
 
 /** Default config file name, looked up directly under the project root. */
 export const CONFIG_FILE_NAME = "specs-kit.yaml";
@@ -299,7 +372,7 @@ function commandList(value: unknown): string[] {
   return [];
 }
 
-/** The role model/thinking/fallback triples under the agents section. */
+/** The role model/thinking/fallback/retry values under the agents section. */
 function parseRoles(doc: Record<string, unknown>): SpecsKitConfig["roles"] {
   const agents = record(doc.agents);
   const roles = {} as SpecsKitConfig["roles"];
@@ -308,6 +381,12 @@ function parseRoles(doc: Record<string, unknown>): SpecsKitConfig["roles"] {
       model: text(agents[`${role}_model`]) ?? "auto",
       thinkingLevel: text(agents[`${role}_thinking_level`]),
       fallbackModel: text(agents[`${role}_fallback_model`]),
+      retryModel: text(agents[`${role}_retry_model`]),
+      retryThinkingLevel: text(agents[`${role}_retry_thinking_level`]),
+      // Below two the field would name the first attempt, which is not a
+      // retry at all: the role would simply have two names for its primary
+      // model. Such a value is read as absent, and the default applies.
+      retryFromAttempt: count(agents[`${role}_retry_from_attempt`], DEFAULT_RETRY_FROM_ATTEMPT),
     };
   }
   return roles;
@@ -342,6 +421,7 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
     specsDir: DEFAULT_SPECS_DIR,
     mode: "fast",
     pollIntervalMs: 100,
+    brief: { ...DEFAULT_BRIEF_CONFIG },
     roles: defaultRoles(),
     reviewPanel: [],
     run: { ...DEFAULT_RUN_CONFIG },
@@ -371,6 +451,7 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
   config.spec = text(doc.spec);
   config.mode = doc.mode === "full" ? "full" : "fast";
   config.pollIntervalMs = parseDurationMs(doc.poll_interval) ?? config.pollIntervalMs;
+  config.brief = { enabled: flag(record(doc.brief).enabled) ?? config.brief.enabled };
 
   config.roles = parseRoles(doc);
 
@@ -393,10 +474,14 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
   run.maxSpawnsPerTask = count(src.max_spawns_per_task, 1) ?? run.maxSpawnsPerTask;
   run.maxSpawnsPerRun = count(src.max_spawns_per_run, 1) ?? run.maxSpawnsPerRun;
   run.maxRunDurationMs = positiveDuration(src.max_run_duration, file, "run.max_run_duration") ?? run.maxRunDurationMs;
+  run.maxRunDurationHardMs =
+    positiveDuration(src.max_run_duration_hard, file, "run.max_run_duration_hard") ?? run.maxRunDurationHardMs;
   run.reconcileContext = flag(src.reconcile_context) ?? run.reconcileContext;
   run.autoCompact = flag(src.auto_compact) ?? run.autoCompact;
   run.autoCompactThresholdPercent = thresholdPercent(src.auto_compact_threshold) ?? run.autoCompactThresholdPercent;
   run.protectSpecArtifacts = flag(src.protect_spec_artifacts) ?? run.protectSpecArtifacts;
+  run.reviewDiffMaxKb = count(src.review_diff_max_kb) ?? run.reviewDiffMaxKb;
+  run.failureLearner = parseFailureLearnerMode(src.failure_learner) ?? run.failureLearner;
   const fromTask = text(src.from_task);
   if (fromTask !== undefined) run.fromTask = fromTask;
   const toTask = text(src.to_task);
@@ -410,6 +495,16 @@ export async function loadSpecsKitConfig(projectRoot: string, configPath?: strin
     const ph = record(hooks[phase]);
     config.hooks[phase] = { pre: commandList(ph.pre), post: commandList(ph.post) };
   }
+  // The checkpoint accepts the map the phases use — only its post stage —
+  // and a bare command list, which is what the target reads as anyway.
+  const checkpoint = hooks.checkpoint;
+  config.hooks.checkpoint = {
+    pre: [],
+    post:
+      typeof checkpoint === "string" || Array.isArray(checkpoint)
+        ? commandList(checkpoint)
+        : commandList(record(checkpoint).post),
+  };
 
   config.knowledgeBase.files = commandList(record(doc.knowledge_base).files);
 

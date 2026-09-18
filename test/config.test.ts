@@ -11,6 +11,7 @@ import {
   loadSpecsKitConfig,
 } from "../src/config/specs-kit-config.ts";
 import { ensureConfigFile } from "../src/config/config-init.ts";
+import { hardRunDurationMs } from "../src/loop/budget.ts";
 import {
   updateActiveSpec,
   updateHooksTimeout,
@@ -40,6 +41,9 @@ agents:
   agent_model: provider/fast
   agent_thinking_level: high
   agent_fallback_model: provider/slow
+  agent_retry_model: provider/strong
+  agent_retry_thinking_level: max
+  agent_retry_from_attempt: 3
   reviewer_model: provider/careful
   learner_thinking_level: low
 run:
@@ -67,6 +71,8 @@ hooks:
   review: { pre: [], post: [] }
   cleanup: { pre: [], post: [] }
   sync: { pre: [], post: [] }
+  checkpoint:
+    post: [mvnw verify]
 knowledge_base:
   files: ["./docs/a.md", "./docs/b.md"]
 prompts:
@@ -96,9 +102,26 @@ test("missing file yields all defaults", async () => {
     assert.equal(config.git.baseBranch, "main");
     assert.equal(config.hooks.timeoutMs, 240_000);
     assert.deepEqual(config.hooks.implementation, { pre: [], post: [] });
+    assert.deepEqual(config.hooks.checkpoint, { pre: [], post: [] });
     assert.deepEqual(config.knowledgeBase.files, []);
     assert.equal(config.prompts.unsupportedPolicy, "error");
     assert.deepEqual(config.prompts.phaseOverrides, {});
+  });
+});
+
+test("the reading brief is off by default and parses its flag and role", async () => {
+  await withTempDir(async (dir) => {
+    const config = await loadSpecsKitConfig(dir);
+    assert.deepEqual(config.brief, { enabled: false });
+    await writeFile(
+      path.join(dir, CONFIG_FILE_NAME),
+      "brief:\n  enabled: true\nagents:\n  brief_model: minimax/MiniMax-M3\n  brief_thinking_level: low\n",
+      "utf8",
+    );
+    const loaded = await loadSpecsKitConfig(dir);
+    assert.deepEqual(loaded.brief, { enabled: true });
+    assert.equal(loaded.roles.brief.model, "minimax/MiniMax-M3");
+    assert.equal(loaded.roles.brief.thinkingLevel, "low");
   });
 });
 
@@ -113,10 +136,38 @@ test("full yaml maps every field", async () => {
     assert.equal(config.mode, "full");
     assert.equal(config.pollIntervalMs, 250);
 
-    assert.deepEqual(config.roles.agent, { model: "provider/fast", thinkingLevel: "high", fallbackModel: "provider/slow" });
-    assert.deepEqual(config.roles.reviewer, { model: "provider/careful", thinkingLevel: undefined, fallbackModel: undefined });
-    assert.deepEqual(config.roles.learner, { model: "auto", thinkingLevel: "low", fallbackModel: undefined });
-    assert.deepEqual(config.roles.cleaner, { model: "auto", thinkingLevel: undefined, fallbackModel: undefined });
+    assert.deepEqual(config.roles.agent, {
+      model: "provider/fast",
+      thinkingLevel: "high",
+      fallbackModel: "provider/slow",
+      retryModel: "provider/strong",
+      retryThinkingLevel: "max",
+      retryFromAttempt: 3,
+    });
+    assert.deepEqual(config.roles.reviewer, {
+      model: "provider/careful",
+      thinkingLevel: undefined,
+      fallbackModel: undefined,
+      retryModel: undefined,
+      retryThinkingLevel: undefined,
+      retryFromAttempt: undefined,
+    });
+    assert.deepEqual(config.roles.learner, {
+      model: "auto",
+      thinkingLevel: "low",
+      fallbackModel: undefined,
+      retryModel: undefined,
+      retryThinkingLevel: undefined,
+      retryFromAttempt: undefined,
+    });
+    assert.deepEqual(config.roles.cleaner, {
+      model: "auto",
+      thinkingLevel: undefined,
+      fallbackModel: undefined,
+      retryModel: undefined,
+      retryThinkingLevel: undefined,
+      retryFromAttempt: undefined,
+    });
 
     assert.equal(config.run.maxAttempts, 7);
     assert.equal(config.run.timeoutMs, 3_600_000);
@@ -132,6 +183,7 @@ test("full yaml maps every field", async () => {
     assert.equal(config.hooks.timeoutMs, 240_000);
     assert.deepEqual(config.hooks.implementation, { pre: ["npm run lint"], post: ["npm test", "npm run build"] });
     assert.deepEqual(config.hooks.sync, { pre: [], post: [] });
+    assert.deepEqual(config.hooks.checkpoint, { pre: [], post: ["mvnw verify"] });
 
     assert.deepEqual(config.knowledgeBase.files, ["./docs/a.md", "./docs/b.md"]);
 
@@ -153,6 +205,22 @@ test("unknown fields are tolerated", async () => {
     const config = await loadSpecsKitConfig(dir);
     assert.deepEqual(config.run, DEFAULT_RUN_CONFIG);
     for (const role of ROLE_NAMES) assert.equal(config.roles[role].model, "auto");
+  });
+});
+
+test("the checkpoint hooks also accept a bare command list, and never a pre stage", async () => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, CONFIG_FILE_NAME);
+    await writeFile(file, 'hooks:\n  checkpoint: ["mvnw verify", "./scripts/smoke.sh"]\n');
+    assert.deepEqual((await loadSpecsKitConfig(dir)).hooks.checkpoint, {
+      pre: [],
+      post: ["mvnw verify", "./scripts/smoke.sh"],
+    });
+
+    // There is nothing before a checkpoint for a hook to precede: a pre stage
+    // written anyway is read as absent rather than silently never running.
+    await writeFile(file, "hooks:\n  checkpoint:\n    pre: [./scripts/before.sh]\n    post: [mvnw verify]\n");
+    assert.deepEqual((await loadSpecsKitConfig(dir)).hooks.checkpoint, { pre: [], post: ["mvnw verify"] });
   });
 });
 
@@ -226,7 +294,14 @@ test("writer creates a missing file with a minimal structure", async () => {
     assert.deepEqual(doc, { agents: { learner_model: "provider/x", learner_thinking_level: "low" } });
     // Reloading the written file works and maps the role.
     const config = await loadSpecsKitConfig(dir);
-    assert.deepEqual(config.roles.learner, { model: "provider/x", thinkingLevel: "low", fallbackModel: undefined });
+    assert.deepEqual(config.roles.learner, {
+      model: "provider/x",
+      thinkingLevel: "low",
+      fallbackModel: undefined,
+      retryModel: undefined,
+      retryThinkingLevel: undefined,
+      retryFromAttempt: undefined,
+    });
     await updateRoleConfig(file, "learner", { fallbackModel: "provider/y" });
     const escalated = await loadSpecsKitConfig(dir);
     assert.equal(escalated.roles.learner.fallbackModel, "provider/y");
@@ -452,6 +527,20 @@ test("the run ceilings are read from the config and default when out of range", 
     assert.equal(config.run.maxSpawnsPerTask, 4);
     assert.equal(config.run.maxSpawnsPerRun, 20);
     assert.equal(config.run.maxRunDurationMs, 90 * 60_000);
+    assert.equal(
+      config.run.maxRunDurationHardMs,
+      null,
+      "a file that names only the expected duration leaves the halting ceiling to be derived",
+    );
+
+    await writeFile(
+      path.join(dir, CONFIG_FILE_NAME),
+      "run:\n  max_run_duration: 90m\n  max_run_duration_hard: 10h\n",
+      "utf8",
+    );
+    const twoLevels = await loadSpecsKitConfig(dir);
+    assert.equal(twoLevels.run.maxRunDurationMs, 90 * 60_000);
+    assert.equal(twoLevels.run.maxRunDurationHardMs, 10 * 60 * 60_000);
 
     // Zero would disable the ceiling, which is the state the ceilings exist to
     // prevent: it falls back to the default rather than switching them off.
@@ -474,10 +563,22 @@ test("ensureConfigFile creates a default file that loads back as the defaults", 
     // milliseconds and cut every phase short.
     assert.equal((doc.run as Record<string, unknown>).timeout, "1h");
     assert.equal((doc.run as Record<string, unknown>).max_run_duration, "6h");
+    // The halting ceiling is derived when the file omits it, and the generated
+    // file exists to show the operator every knob: it is written out at the
+    // value the derivation would have produced.
+    assert.equal((doc.run as Record<string, unknown>).max_run_duration_hard, "18h");
 
     const config = await loadSpecsKitConfig(dir);
     const bare = await loadSpecsKitConfig(path.join(dir, "empty"));
-    assert.deepEqual(config.run, bare.run);
+    assert.equal(
+      config.run.maxRunDurationHardMs,
+      hardRunDurationMs(bare.run.maxRunDurationMs, bare.run.maxRunDurationHardMs),
+      "spelling the derived ceiling out changes nothing about how long the run may take",
+    );
+    assert.deepEqual(
+      { ...config.run, maxRunDurationHardMs: null },
+      { ...bare.run, maxRunDurationHardMs: null },
+    );
     assert.deepEqual(config.hooks, bare.hooks);
     assert.equal(config.specsDir, bare.specsDir);
     assert.equal(config.mode, bare.mode);

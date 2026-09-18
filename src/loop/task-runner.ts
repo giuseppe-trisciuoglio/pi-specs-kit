@@ -12,6 +12,7 @@ import type { FixPlan, LoopStep } from "../fixplan/fix-plan.ts";
 import type { TaskFile } from "../tasks/task-parser.ts";
 import { BudgetExceededError } from "./budget.ts";
 import { makeCycleNodeActions } from "./graph/task-nodes-cycle.ts";
+import { makeBriefNodeActions } from "./graph/task-nodes-brief.ts";
 import { makeFailureNodeActions } from "./graph/task-nodes-failure.ts";
 import { makeTailNodeActions } from "./graph/task-nodes-tail.ts";
 import { buildTaskGraph } from "./graph/task-graph.ts";
@@ -57,6 +58,7 @@ export class TaskRunner {
       implStatus: "ok",
       postHookFailures: null,
       routedSuggestions: [],
+      briefPath: null,
       failureDetail: null,
       blockerWall: null,
       operatorWall: null,
@@ -64,6 +66,7 @@ export class TaskRunner {
     };
     const env: TaskNodeEnv = { deps: this.#deps, plan, taskFile, selected };
     const cycle = makeCycleNodeActions(env);
+    const brief = makeBriefNodeActions(env);
     const failure = makeFailureNodeActions(env);
     const tail = makeTailNodeActions(env);
     // Sinks and the start marker never execute an action: the start marker
@@ -72,6 +75,7 @@ export class TaskRunner {
     const actions: Record<TaskNodeId, NodeAction> = {
       task_start: noop,
       ...cycle,
+      ...brief,
       ...failure,
       ...tail,
       task_done: noop,
@@ -86,6 +90,7 @@ export class TaskRunner {
       // returns before its own sync — leaving the run with no sync at all.
       isLastTask: !selected.some((t) => t.num > taskFile.num),
       continueOnFailure: config.run.continueOnFailure,
+      briefWanted: config.brief.enabled,
       attemptsLeft: () => state.retry_count < config.run.maxAttempts,
       stopping: () => this.#deps.stopping() !== null,
     };

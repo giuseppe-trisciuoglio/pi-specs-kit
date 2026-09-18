@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   addBlockers,
+  attemptCostCandidate,
   blockersForTask,
   buildFailureLearnerPrompt,
   injectableBlockers,
@@ -148,6 +149,22 @@ test("only verified facts are offered to the learner, deduplicated", () => {
   ];
 
   assert.deepEqual(promotableFacts(stored, "TASK-005"), ["getPhase() returns MAX_VALUE - 1024"]);
+});
+
+test("a multi-attempt task summarizes its cost for the learner", () => {
+  const stored = [
+    blocker({ attempt: 1, kind: "spec_contradiction", text: "the manifest contradicts itself" }),
+    blocker({ attempt: 2, kind: "spec_contradiction", text: "The manifest contradicts itself" }),
+    blocker({ attempt: 2, text: "getPhase() returns MAX_VALUE - 1024" }),
+    blocker({ task: "TASK-006", kind: "env", text: "someone else's" }),
+  ];
+
+  assert.equal(
+    attemptCostCandidate(stored, "TASK-005", 3),
+    "This task passed review after 3 attempts; the failed attempts were stopped by: "
+      + "SPEC_CONTRADICTION: the manifest contradicts itself.",
+  );
+  assert.equal(attemptCostCandidate([], "TASK-005", 2), "This task passed review after 2 attempts.");
 });
 
 test("a persisted state of any shape loads without breaking the plan", () => {

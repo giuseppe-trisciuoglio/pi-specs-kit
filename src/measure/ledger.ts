@@ -25,6 +25,22 @@ export function zeroUsage(): UsageSummary {
   return { input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 };
 }
 
+/**
+ * Why a phase row ended. Extend as the state machine needs one more way for a
+ * phase to end; each value is read by the stats computation, never inferred
+ * from other fields.
+ */
+export type PhaseOutcome =
+  | "passed"
+  | "review_failed"
+  | "gate_failed"
+  | "spawn_failed"
+  | "pre_hook_failed"
+  | "protected_paths"
+  | "unchanged_tree"
+  | "halted"
+  | "skipped";
+
 /** One executed phase of the loop, hooks included in the duration. */
 export interface PhaseLedgerRow {
   v: 1;
@@ -40,6 +56,12 @@ export interface PhaseLedgerRow {
   duration_ms: number;
   usage: UsageSummary;
   cost_total: number;
+  /** Why the phase ended; absent on rows written before this field existed. */
+  outcome?: PhaseOutcome;
+  /** Why the phase was skipped; present only with `outcome: "skipped"`. */
+  skip_reason?: string;
+  /** Time spent in pre/post hooks, a subset of duration_ms; absent on rows written before this field existed. */
+  hooks_ms?: number;
 }
 
 /** One authoring window of the interactive session, attributed to a spec. */

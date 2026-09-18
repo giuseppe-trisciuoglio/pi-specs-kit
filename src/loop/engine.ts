@@ -15,15 +15,17 @@ import type { PiStreamEvent } from "../agent/json-stream.ts";
 import type { PhaseMeter } from "../measure/phase-meter.ts";
 import { runPhaseHooks } from "./hooks.ts";
 import { BudgetExceededError } from "./budget.ts";
+import { pushNotify } from "../util/push-notify.ts";
 import { DEFAULT_ENVIRONMENT_STREAK, EnvironmentStreakError } from "./phase-failure.ts";
 import { commitCheckpoint } from "./checkpoint.ts";
 import { refreshCodebaseGraph } from "./codebase-graph.ts";
-import { workspaceFingerprint } from "./workspace.ts";
+import { workspaceDiff, workspaceFingerprint } from "./workspace.ts";
 import { LoopStatusTracker, type LoopStatus } from "./loop-status.ts";
 import { listModels, type ListedModel } from "./model-check.ts";
 import { TaskValidationError, taskValidationLines, taskValidationSummary } from "../tasks/task-validation.ts";
 import { prepareRun } from "./run-setup.ts";
 import { assembleRun } from "./run-assembly.ts";
+import { rangeStatsSummary } from "./range-stats.ts";
 import { walkSelection } from "./run-walk.ts";
 
 export interface LoopStartOptions {
@@ -51,6 +53,7 @@ export interface EngineDeps {
   runHooks?: typeof runPhaseHooks;
   commitCheckpoint?: typeof commitCheckpoint;
   workspaceFingerprint?: typeof workspaceFingerprint;
+  workspaceDiff?: typeof workspaceDiff;
   refreshCodebaseGraph?: typeof refreshCodebaseGraph;
   /** Config loader for the per-phase reload; defaults to the real loader. */
   reloadConfig?: (projectRoot: string, configPath?: string) => Promise<SpecsKitConfig | null>;
@@ -64,6 +67,11 @@ export interface EngineDeps {
   /** Phase measurement; defaults to the real ledger/write-ahead writer. */
   meter?: PhaseMeter;
   now?: () => Date;
+  /**
+   * Desktop notification for a halt the operator may be away from. Injectable
+   * so tests observe it instead of writing escape sequences to the terminal.
+   */
+  pushNotify?: (title: string, body: string) => void;
 }
 
 export type LoopEndReason = "completed" | "halted" | "stopped";
@@ -76,6 +84,7 @@ interface ResolvedDeps {
   runHooks: typeof runPhaseHooks;
   commitCheckpoint: typeof commitCheckpoint;
   workspaceFingerprint: typeof workspaceFingerprint;
+  workspaceDiff: typeof workspaceDiff;
   refreshCodebaseGraph: typeof refreshCodebaseGraph;
   reloadConfig: (projectRoot: string, configPath?: string) => Promise<SpecsKitConfig | null>;
   /** Null means "build the real one at run start", keeping the constructor inert. */
@@ -84,6 +93,7 @@ interface ResolvedDeps {
   environmentStreakLimit: number;
   /** Catalogue lookup used by the escalation diagnosis. */
   listModels: () => Promise<ListedModel[]>;
+  pushNotify: (title: string, body: string) => void;
 }
 
 export class LoopEngine {
@@ -102,12 +112,14 @@ export class LoopEngine {
       runHooks: deps.runHooks ?? runPhaseHooks,
       commitCheckpoint: deps.commitCheckpoint ?? commitCheckpoint,
       workspaceFingerprint: deps.workspaceFingerprint ?? workspaceFingerprint,
+      workspaceDiff: deps.workspaceDiff ?? workspaceDiff,
       refreshCodebaseGraph: deps.refreshCodebaseGraph ?? refreshCodebaseGraph,
       reloadConfig: deps.reloadConfig ?? loadConfigIfPresent,
       meter: deps.meter ?? null,
       now: deps.now ?? (() => new Date()),
       environmentStreakLimit: deps.environmentStreakLimit ?? DEFAULT_ENVIRONMENT_STREAK,
       listModels: deps.listModels ?? listModels,
+      pushNotify: deps.pushNotify ?? pushNotify,
     };
   }
 
@@ -226,6 +238,7 @@ export class LoopEngine {
       runHooks: this.#deps.runHooks,
       commitCheckpoint: this.#deps.commitCheckpoint,
       workspaceFingerprint: this.#deps.workspaceFingerprint,
+      workspaceDiff: this.#deps.workspaceDiff,
       refreshCodebaseGraph: this.#deps.refreshCodebaseGraph,
       reloadConfig: this.#deps.reloadConfig,
       meter: this.#deps.meter,
@@ -259,6 +272,7 @@ export class LoopEngine {
           notify: (m, t) => this.#notify(m, t),
           persist: (p) => this.#persist(specDir, p),
           rangeClose: { projectRoot: config.projectRoot, specDir },
+          statsSummary: () => rangeStatsSummary(config, plan.spec_id),
         },
       );
     } catch (err) {
@@ -274,6 +288,10 @@ export class LoopEngine {
         plan.state.step = "failed";
         await this.#persist(specDir, plan);
         this.#notify(`loop stopped: ${detail}`, "error");
+        // A ceiling halts a run that has been going for hours, which is
+        // precisely when nobody is watching the session: the in-session
+        // message alone would be found the next morning.
+        this.#deps.pushNotify("specs-kit", `Loop halted: ${detail}`);
         return { reason: "halted", error: detail };
       }
       throw err;

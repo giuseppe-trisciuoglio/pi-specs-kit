@@ -10,6 +10,7 @@ import { LoopEngine, type LoopEndReason, type LoopStartOptions } from "../src/lo
 import type { PhaseRunOutcome, PhaseSpawnOptions } from "../src/agent/spawner.ts";
 import { runPhaseHooks, type HookResult } from "../src/loop/hooks.ts";
 import { reviewFilePath } from "../src/loop/review-report.ts";
+import { ledgerPath, type LedgerRow, type PhaseLedgerRow } from "../src/measure/ledger.ts";
 
 const tmpDirs: string[] = [];
 after(async () => {
@@ -118,6 +119,8 @@ interface RunResult {
   calls: SpawnCall[];
   checkpoints: string[];
   notifications: { message: string; type: string }[];
+  /** Desktop notifications the run fired, captured instead of written out. */
+  pushes: { title: string; body: string }[];
   states: LoopState[];
   engine: LoopEngine;
 }
@@ -150,6 +153,7 @@ async function runLoop(
   const counts = new Map<string, number>();
   const checkpoints: string[] = [];
   const notifications: { message: string; type: string }[] = [];
+  const pushes: { title: string; body: string }[] = [];
   const states: LoopState[] = [];
 
   let engine: LoopEngine;
@@ -205,6 +209,7 @@ async function runLoop(
       workspaceFingerprint,
       refreshCodebaseGraph,
       now: () => FIXED_NOW,
+      pushNotify: (title, body) => pushes.push({ title, body }),
     },
     {
       onStateChange: (plan) => states.push({ ...plan.state }),
@@ -215,8 +220,74 @@ async function runLoop(
   const result = await engine.start({ specDir, ...startOpts });
   const plan = await loadFixPlan(specDir);
   assert.ok(plan, "fix plan persisted");
-  return { result, plan, calls, checkpoints, notifications, states, engine };
+  return { result, plan, calls, checkpoints, notifications, pushes, states, engine };
 }
+
+test("a readable FAILED review records its findings without a learner spawn", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(
+    root,
+    specDir,
+    (call) => (call.task === "TASK-001" && call.phase === "review" && call.n === 1 ? { review: "FAILED" } : {}),
+    (config) => {
+      config.mode = "fast";
+    },
+  );
+
+  assert.equal(run.result.reason, "completed");
+  // The rejection costs no learner session: the report on disk is the memory
+  // of the attempt, and its findings reach the retry as feedback anyway.
+  assert.equal(countCalls(run.calls, "TASK-001", "failure_learner"), 0);
+  assert.equal(countCalls(run.calls, "TASK-001", "implementation"), 2);
+  assert.equal(countCalls(run.calls, "TASK-001", "review"), 2);
+  const retry = run.calls.find((c) => c.task === "TASK-001" && c.phase === "implementation" && c.n === 2);
+  assert.ok(retry, "the rejected attempt was retried");
+  assert.match(retry.prompt, /Missing input validation/);
+  // The report's findings were recorded as the attempt's blockers.
+  const recorded = run.states.some(
+    (s) =>
+      s.current_task === "TASK-001" &&
+      s.retry_count === 1 &&
+      s.blockers?.some((b) => b.kind === "env" && b.text === "Missing input validation"),
+  );
+  assert.ok(recorded, "the derived findings are the attempt's blockers");
+  // The task passed, so the run memory died with it.
+  assert.deepEqual(run.plan.state.blockers, []);
+});
+
+test("a red gate after a FAILED review still buys the learner spawn", async () => {
+  const { root, specDir } = await createSpec();
+  const FAILING_POST: HookResult = {
+    command: "npm run build",
+    ok: false,
+    exitCode: 1,
+    timedOut: false,
+    output: "build failed",
+  };
+  let postRuns = 0;
+  const run = await runLoop(
+    root,
+    specDir,
+    (call) => (call.task === "TASK-001" && call.phase === "review" && call.n === 1 ? { review: "FAILED" } : {}),
+    (config) => {
+      config.mode = "fast";
+    },
+    {},
+    async (_hooks, phase, stage) => {
+      if (phase !== "implementation" || stage !== "post") return [];
+      postRuns++;
+      // The gate is red only on the second implementation attempt: the first
+      // rejection walks through the learner without a spawn, then the retry
+      // dies on the gate, which the report never judged.
+      return postRuns === 2 ? [FAILING_POST] : [];
+    },
+  );
+
+  assert.equal(run.result.reason, "completed");
+  assert.equal(countCalls(run.calls, "TASK-001", "failure_learner"), 1, "only the red gate bought a spawn");
+  const learner = run.calls.find((c) => c.task === "TASK-001" && c.phase === "failure_learner");
+  assert.ok(learner, "the learner ran for the gate failure");
+});
 
 const sequence = (calls: SpawnCall[]): string[] => calls.map((c) => `${c.task}:${c.phase}`);
 const countCalls = (calls: SpawnCall[], task: string, phase: string): number =>
@@ -367,6 +438,63 @@ test("happy path full mode: three tasks, all phases, frontmatter and checkpoints
     assert.equal(task.frontmatter.reviewedDate, FIXED_DATE);
   }
   assert.ok(run.states.length > 0, "state changes emitted");
+});
+
+test("the checkpoint of a passed task runs its own gate, once per task", async () => {
+  const { root, specDir } = await createSpec();
+  const stages: string[] = [];
+  const run = await runLoop(
+    root,
+    specDir,
+    () => {},
+    (config) => {
+      config.hooks.checkpoint = { pre: [], post: ["the whole suite"] };
+    },
+    {},
+    async (_hooks, target, stage) => {
+      stages.push(`${target}:${stage}`);
+      return [];
+    },
+  );
+
+  assert.equal(run.result.reason, "completed");
+  assert.deepEqual(
+    stages.filter((s) => s.startsWith("checkpoint")),
+    ["checkpoint:post", "checkpoint:post", "checkpoint:post"],
+    "one full-suite run per task that passed, not one per attempt",
+  );
+});
+
+test("a red checkpoint gate is recorded and named at the range close, the run walks on", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(
+    root,
+    specDir,
+    () => {},
+    (config) => {
+      config.hooks.checkpoint = { pre: [], post: ["the whole suite"] };
+    },
+    {},
+    async (_hooks, target) =>
+      target === "checkpoint"
+        ? [{ command: "the whole suite", ok: false, exitCode: 1, timedOut: false, output: "2 tests failed" }]
+        : [],
+  );
+
+  // The task passed its review and is committed: there is no attempt left to
+  // spend on the red suite, so it is recorded exactly like the gate of any
+  // other phase without a retry path.
+  assert.equal(run.result.reason, "completed");
+  assert.deepEqual(run.plan.done, ["TASK-001", "TASK-002", "TASK-003"]);
+  assert.ok(
+    run.notifications.some((n) => n.type === "warning" && n.message.includes("checkpoint hook failed after TASK-001")),
+    JSON.stringify(run.notifications),
+  );
+  assert.ok(
+    run.notifications.some((n) => n.message.includes("failed post-hook gate: the checkpoint")),
+    "the range close names the gate",
+  );
+  assert.equal(run.plan.state.postHookGateFailed, null, "the notice is cleared once it has been given");
 });
 
 test("fast mode: cleanup and frontmatter rewrite skipped, sync only on the last task", async () => {
@@ -826,6 +954,21 @@ test("the per-run spawn ceiling stops the range partway through", async () => {
   assert.match(run.result.error ?? "", /run budget exhausted/);
   assert.deepEqual(run.plan.done, ["TASK-001"], "the work already finished stays done");
   assert.equal(run.calls.length, 3);
+  // A ceiling fires after hours of unattended work: the in-session message
+  // alone would be read the next morning.
+  assert.equal(run.pushes.length, 1);
+  assert.equal(run.pushes[0].title, "specs-kit");
+  assert.match(run.pushes[0].body, /Loop halted: run budget exhausted/);
+});
+
+test("a run that ends on its own terms pushes nothing", async () => {
+  const { root, specDir } = await createSpec();
+  const run = await runLoop(root, specDir, () => {}, (config) => {
+    config.mode = "fast";
+  });
+
+  assert.equal(run.result.reason, "completed");
+  assert.deepEqual(run.pushes, [], "only a halt is worth interrupting the operator for");
 });
 
 test("continue on failure skips to the next task", async () => {
@@ -916,6 +1059,18 @@ test("rejected review feeds back into the next implementation prompt", async () 
   assert.ok(retries[1].prompt.includes("<review_feedback>"));
   assert.ok(retries[1].prompt.includes("Found problems"));
   assert.ok(retries[1].prompt.includes("Missing input validation"));
+
+  // The ledger keeps one row per review spawn, and the outcome names why
+  // each one ended: the rejected first attempt, the accepted second.
+  const config = await loadSpecsKitConfig(root);
+  const rows = (await readFile(ledgerPath(config.projectRoot, config.specsDir), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as LedgerRow);
+  const reviewRows = rows.filter(
+    (r): r is PhaseLedgerRow => r.kind === "phase" && r.task === "TASK-001" && r.phase === "review",
+  );
+  assert.deepEqual(reviewRows.map((r) => r.outcome), ["review_failed", "passed"]);
 });
 
 test("missing review file triggers review file retries and re-spawns", async () => {
@@ -1296,6 +1451,16 @@ test("a red implementation post hook fails the attempt and does not reach review
   const review = run.calls.find((c) => c.task === "TASK-001" && c.phase === "review");
   assert.ok(review, "the reviewer is only spawned after a green gate");
   assert.ok(run.plan.done.includes("TASK-001"), "the task completes once the gate is green");
+
+  const config = await loadSpecsKitConfig(root);
+  const rows = (await readFile(ledgerPath(config.projectRoot, config.specsDir), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as LedgerRow);
+  const implRows = rows.filter(
+    (r): r is PhaseLedgerRow => r.kind === "phase" && r.task === "TASK-001" && r.phase === "implementation",
+  );
+  assert.deepEqual(implRows.map((r) => r.outcome), ["gate_failed", "passed"]);
 });
 
 test("with attempts exhausted a red implementation post hook closes the task through the funnel", async () => {

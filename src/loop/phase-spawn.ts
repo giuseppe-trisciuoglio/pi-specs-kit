@@ -7,10 +7,16 @@
 import path from "node:path";
 import type { PiStreamEvent } from "../agent/json-stream.ts";
 import { assistantText, formatStreamEvent } from "../agent/stream-format.ts";
-import { classifyPhaseFailure, composeFailureOutcome } from "./phase-failure.ts";
-import { combineEscalationFailures, fallbackDeservesRetry } from "./phase-escalation.ts";
+import {
+  attemptModel,
+  combineEscalationFailures,
+  fallbackDeservesRetry,
+  type AttemptModel,
+} from "./phase-escalation.ts";
+import { classifyPhaseFailure, composeFailureOutcome, spawnFailed } from "./phase-failure.ts";
 import type { PhaseRunOutcome, PhaseSpawnOptions } from "../agent/spawner.ts";
 import type { RoleName, SpecsKitConfig } from "../config/specs-kit-config.ts";
+import type { RoutedSuggestion } from "./review-report.ts";
 import type { TaskFile } from "../tasks/task-parser.ts";
 import type { PhaseHandle, PhaseMeter } from "../measure/phase-meter.ts";
 import type { ListedModel } from "./model-check.ts";
@@ -18,6 +24,7 @@ import { PhaseLogWriter } from "../util/log-writer.ts";
 import type { LoopBudget } from "./budget.ts";
 import type { HookResult } from "./hooks.ts";
 import { buildFailureLearnerPrompt } from "./blockers.ts";
+import { buildBriefPrompt } from "./brief.ts";
 import { CONFIRMED_PREFIX, parseLearnings } from "./learner.ts";
 import type { SystemPromptOverrideText } from "./phase-context.ts";
 
@@ -122,6 +129,13 @@ export interface PhaseSpawnRequest {
   label: string;
   role: RoleName;
   prompt: string;
+  /**
+   * 1-based attempt this spawn belongs to; it decides whether the role runs
+   * on its primary or on its retry model. Absent counts as the first attempt,
+   * which is what the subroutines that have no attempt of their own (the
+   * learner, the compaction pass) are.
+   */
+  attempt?: number;
   /** Charge the run ceilings but not the per-task one; only the failure
    * learner asks for it, because it runs when that allowance is gone. */
   offTaskBudget?: boolean;
@@ -155,13 +169,15 @@ export interface PhaseSpawnerDeps {
 export class PhaseSpawner {
   readonly #deps: PhaseSpawnerDeps;
   /**
-   * Roles whose primary model already died of an environment failure in this
-   * run, mapped to the model that died. Run-scoped memory: it is never
-   * written to the fix plan, so a fresh run re-probes the primary in case the
-   * access it lost has come back. Keyed by the model string too, so a
-   * configuration reload that names a different primary is probed again.
+   * Models that already died of an environment failure in this run.
+   * Run-scoped memory: it is never written to the fix plan, so a fresh run
+   * re-probes them in case the access they lost has come back. Keyed by the
+   * model string rather than by role, because one role now has two models
+   * that can be the primary of a spawn — the first attempt's and the retry's
+   * — and each answers for its own outage; a configuration reload that names
+   * a different model is probed again for the same reason.
    */
-  readonly #deadPrimary = new Map<RoleName, string>();
+  readonly #deadModels = new Set<string>();
 
   constructor(deps: PhaseSpawnerDeps) {
     this.#deps = deps;
@@ -176,20 +192,33 @@ export class PhaseSpawner {
   ): Promise<LearnerResult> {
     const { taskId, label, role } = request;
     const roleConfig = this.#deps.config.roles[role];
-    if (!roleConfig.model || roleConfig.model === "auto") this.#deps.warnAutoModel(role);
-    const escalation = this.#escalationModel(role, roleConfig.model);
-    // The run already paid for this diagnosis: a primary that answered with an
+    // Which of the role's models this attempt is worth is decided before
+    // anything else: everything below — the auto warning, the escalation, the
+    // sticky memory — is about the model actually being spawned, whichever it
+    // turned out to be.
+    const primary = attemptModel(roleConfig, request.attempt ?? 1);
+    if (!primary.model || primary.model === "auto") this.#deps.warnAutoModel(role);
+    const escalation = this.#escalationModel(role, primary.model);
+    const fallback: AttemptModel | null =
+      escalation === null ? null : { model: escalation, thinkingLevel: roleConfig.thinkingLevel, retry: false };
+    // The run already paid for this diagnosis: a model that answered with an
     // environment failure will answer the next phase the same way, so the
     // attempt against it is skipped for the rest of the run and only the
     // fallback is spawned.
-    if (escalation !== null && this.#deadPrimary.get(role) === roleConfig.model) {
+    if (fallback !== null && primary.model !== undefined && this.#deadModels.has(primary.model)) {
       const only = await this.#spawnOnce(
-        request, escalation, systemPromptOverride, signal, captureText, meterHandle,
+        request, fallback, systemPromptOverride, signal, captureText, meterHandle,
       );
-      return this.#named(only, escalation);
+      return this.#named(only, fallback!.model);
+    }
+    if (primary.retry) {
+      this.#deps.onNotify(
+        `${label} attempt ${request.attempt} for ${taskId} runs on the ${role} retry model ${primary.model}`,
+        "info",
+      );
     }
     const first = await this.#spawnOnce(
-      request, roleConfig.model, systemPromptOverride, signal, captureText, meterHandle,
+      request, primary, systemPromptOverride, signal, captureText, meterHandle,
     );
     const failure = classifyPhaseFailure(first.outcome);
     if (!failure) return first;
@@ -197,10 +226,10 @@ export class PhaseSpawner {
     // about the prompt. When the role declares a second model, exactly one
     // spawn goes to it before the usual routing takes over — a ladder of
     // fallbacks would spend the run budget proving the same outage per task.
-    if (escalation === null) return this.#named(first, roleConfig.model);
-    this.#deps.onNotify(await this.#escalationNotice(taskId, label, failure, roleConfig.model, escalation), "warning");
+    if (fallback === null || escalation === null) return this.#named(first, primary.model);
+    this.#deps.onNotify(await this.#escalationNotice(taskId, label, failure, primary.model, escalation), "warning");
     let second = await this.#spawnOnce(
-      request, escalation, systemPromptOverride, signal, captureText, meterHandle,
+      request, fallback, systemPromptOverride, signal, captureText, meterHandle,
     );
     let secondFailure = classifyPhaseFailure(second.outcome);
     if (secondFailure && fallbackDeservesRetry(secondFailure)) {
@@ -209,17 +238,18 @@ export class PhaseSpawner {
         "warning",
       );
       const retried = await this.#retryFallback(
-        request, escalation, systemPromptOverride, signal, captureText, meterHandle,
+        request, fallback, systemPromptOverride, signal, captureText, meterHandle,
       );
       if (retried) {
         second = retried;
         secondFailure = classifyPhaseFailure(second.outcome);
       }
     }
-    // The primary's verdict is complete on its own: whether the fallback then
-    // delivered or not, an environment failure means later phases of this run
-    // have nothing to gain from probing the primary again.
-    if (failure.environment && roleConfig.model) this.#rememberDeadPrimary(role, roleConfig.model, escalation, failure);
+    // Only an environment failure earns the memory: a prompt the model could
+    // not answer says nothing about the next phase's prompt. The primary's
+    // verdict is complete on its own — whether the fallback then delivered or
+    // not, later phases of this run have nothing to gain from probing it again.
+    if (failure.environment && primary.model) this.#rememberDeadModel(primary.model, escalation, failure);
     if (!secondFailure) return second;
     // Both models are spent. The outcome returned is the fallback's, because
     // that is where the path ended, carrying a diagnosis that names them both:
@@ -229,7 +259,7 @@ export class PhaseSpawner {
       outcome: composeFailureOutcome(
         second.outcome,
         combineEscalationFailures(
-          { failure, model: roleConfig.model },
+          { failure, model: primary.model },
           { failure: secondFailure, model: escalation },
         ),
       ),
@@ -252,7 +282,7 @@ export class PhaseSpawner {
    */
   async #retryFallback(
     request: PhaseSpawnRequest,
-    model: string,
+    model: AttemptModel,
     systemPromptOverride: SystemPromptOverrideText | undefined,
     signal: AbortSignal | undefined,
     captureText: boolean,
@@ -262,19 +292,19 @@ export class PhaseSpawner {
       return await this.#spawnOnce(request, model, systemPromptOverride, signal, captureText, meterHandle);
     } catch (error) {
       this.#deps.onNotify(
-        `the retry on the fallback model ${model} could not start: ${error instanceof Error ? error.message : String(error)}`,
+        `the retry on the fallback model ${model.model} could not start: ${error instanceof Error ? error.message : String(error)}`,
         "warning",
       );
       return null;
     }
   }
 
-  /** Record a primary that answered with an environment failure, once. */
-  #rememberDeadPrimary(role: RoleName, model: string, escalation: string, failure: NonNullable<ReturnType<typeof classifyPhaseFailure>>): void {
-    if (this.#deadPrimary.get(role) === model) return;
-    this.#deadPrimary.set(role, model);
+  /** Record a model that answered with an environment failure, once. */
+  #rememberDeadModel(model: string, escalation: string, failure: NonNullable<ReturnType<typeof classifyPhaseFailure>>): void {
+    if (this.#deadModels.has(model)) return;
+    this.#deadModels.add(model);
     this.#deps.onNotify(
-      `the ${role} role stays on the fallback model ${escalation} for the rest of this run: ${model} failed with ${failure.kind}`,
+      `spawns stay on the fallback model ${escalation} for the rest of this run: ${model} failed with ${failure.kind}`,
       "warning",
     );
   }
@@ -311,13 +341,13 @@ export class PhaseSpawner {
 
   async #spawnOnce(
     request: PhaseSpawnRequest,
-    model: string | undefined,
+    spawnModel: AttemptModel,
     systemPromptOverride: SystemPromptOverrideText | undefined,
     signal: AbortSignal | undefined,
     captureText: boolean,
     meterHandle: PhaseHandle | null,
   ): Promise<LearnerResult> {
-    const { taskId, label, role, prompt } = request;
+    const { taskId, label, prompt } = request;
     const { config } = this.#deps;
     // Every phase reaches the agent through here, so charging the budget at
     // this single point is what makes the ceilings inescapable. It throws
@@ -334,8 +364,8 @@ export class PhaseSpawner {
     try {
       const outcome = await this.#deps.spawnPhase({
         prompt,
-        model,
-        thinkingLevel: config.roles[role].thinkingLevel,
+        model: spawnModel.model,
+        thinkingLevel: spawnModel.thinkingLevel,
         appendSystemPrompt: systemPromptOverride?.mode === "append" ? systemPromptOverride.content : undefined,
         systemPrompt: systemPromptOverride?.mode === "replace" ? systemPromptOverride.content : undefined,
         cwd: config.projectRoot,
@@ -365,6 +395,53 @@ export class PhaseSpawner {
     }
   }
 
+  /**
+   * Run the reading brief: one cheap, read-only spawn before the first
+   * implementation attempt, writing the brief file every attempt of the task
+   * then receives. It runs on the brief role when the operator pinned one;
+   * the default — the same model the learner uses — is spelled by spawning
+   * on the learner role itself, so it inherits that role's escalation and
+   * sticky-memory routing instead of growing a parallel path.
+   */
+  async runBrief(
+    task: TaskFile,
+    opts?: {
+      signal?: AbortSignal;
+      briefPath?: string;
+      routedSuggestions?: readonly RoutedSuggestion[];
+      learnings?: readonly string[];
+      projectLearnings?: readonly string[];
+    },
+  ): Promise<LearnerResult> {
+    const { config } = this.#deps;
+    const pinned = config.roles.brief;
+    const role: RoleName = pinned.model && pinned.model !== "auto" ? "brief" : "learner";
+    const spec = path.basename(this.#deps.specDir);
+    const meterHandle = this.#deps.beginMeter(spec, task.frontmatter.id, "brief", 1, role);
+    try {
+      return await this.spawn(
+        {
+          taskId: task.frontmatter.id,
+          label: "brief",
+          role,
+          prompt: buildBriefPrompt({
+            task,
+            briefPath: opts?.briefPath ?? "",
+            routedSuggestions: opts?.routedSuggestions,
+            learnings: opts?.learnings,
+            projectLearnings: opts?.projectLearnings,
+          }),
+        },
+        undefined,
+        opts?.signal,
+        true,
+        meterHandle,
+      );
+    } finally {
+      if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
+    }
+  }
+
   /** Run the learner role and capture its textual output. */
   async runLearner(
     task: TaskFile,
@@ -373,8 +450,9 @@ export class PhaseSpawner {
   ): Promise<LearnerResult> {
     const spec = path.basename(this.#deps.specDir);
     const meterHandle = this.#deps.beginMeter(spec, task.frontmatter.id, "learner", 1, "learner");
+    let result: LearnerResult | undefined;
     try {
-      return await this.spawn(
+      result = await this.spawn(
         {
           taskId: task.frontmatter.id,
           label: "learner",
@@ -386,8 +464,11 @@ export class PhaseSpawner {
         true,
         meterHandle,
       );
+      return result;
     } finally {
-      if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
+      if (meterHandle) {
+        this.#deps.meter?.finishPhase(meterHandle, { outcome: spawnFailed(result?.outcome ?? null) ? "spawn_failed" : "passed" });
+      }
     }
   }
 
@@ -400,8 +481,9 @@ export class PhaseSpawner {
   async runFailureLearner(task: TaskFile, input: FailureLearnerInput): Promise<LearnerResult> {
     const spec = path.basename(this.#deps.specDir);
     const meterHandle = this.#deps.beginMeter(spec, task.frontmatter.id, "failure_learner", input.attempt, "learner");
+    let result: LearnerResult | undefined;
     try {
-      return await this.spawn(
+      result = await this.spawn(
         {
           taskId: task.frontmatter.id,
           label: "failure_learner",
@@ -420,8 +502,11 @@ export class PhaseSpawner {
         true,
         meterHandle,
       );
+      return result;
     } finally {
-      if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
+      if (meterHandle) {
+        this.#deps.meter?.finishPhase(meterHandle, { outcome: spawnFailed(result?.outcome ?? null) ? "spawn_failed" : "passed" });
+      }
     }
   }
 
@@ -440,17 +525,20 @@ export class PhaseSpawner {
       learnings.map((l) => `- ${l}`).join("\n"),
     ].join("\n");
     const meterHandle = this.#deps.beginMeter(path.basename(this.#deps.specDir), "learnings", "compact", 1, "learner");
+    let result: LearnerResult | undefined;
     try {
-      const { text } = await this.spawn(
+      result = await this.spawn(
         { taskId: "learnings", label: "compact", role: "learner", prompt },
         undefined,
         opts?.signal,
         true,
         meterHandle,
       );
-      return parseLearnings(text);
+      return parseLearnings(result.text);
     } finally {
-      if (meterHandle) this.#deps.meter?.finishPhase(meterHandle);
+      if (meterHandle) {
+        this.#deps.meter?.finishPhase(meterHandle, { outcome: spawnFailed(result?.outcome ?? null) ? "spawn_failed" : "passed" });
+      }
     }
   }
 

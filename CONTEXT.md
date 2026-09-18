@@ -36,6 +36,10 @@ _Avoid_: LLM, provider, tool, codex
 Function an agent plays in the loop: agent (implementation), reviewer (review), cleaner (cleanup), synchronizer (sync), learner (learnings extraction, and on failed attempts the failure learner). Each role has its own model and thinking level, configurable from `specs-kit.yaml` or from pi's TUI.
 _Avoid_: persona, worker
 
+**Retry model**:
+The model a role is spawned on from its `<role>_retry_from_attempt` (2 by default) onwards, with an optional thinking level of its own. It answers a wrong result, not a refusing provider: the first attempt of a task is speculative and cheap, while every later one exists because an earlier one was wrong and drags another review and another gate behind it. It is not the fallback model, which answers an environment failure and which the retry model itself escalates to.
+_Avoid_: fallback model, escalation model, strong model
+
 **Phase skill**:
 Instructions document injected into a phase's prompt (specs-kit-task-implementation, specs-kit-task-review, specs-kit-code-cleanup, specs-kit-sync), resolved by the fork bundled in the extension.
 _Avoid_: prompt template
@@ -93,12 +97,20 @@ A fix a reviewer defers to a later task instead of the one just reviewed: it liv
 _Avoid_: deferred suggestion, textual handoff
 
 **Review verdict**:
-The structured outcome the review phase projects back to the loop at the end of its sub-cycle: passed, failed (with feedback), attemptFailed, reportUnusable or stopped. It lives in the report's frontmatter; the loop routes the task's transitions on it.
-_Avoid_: review outcome, report (it is the file, not the outcome)
+The structured outcome the review phase projects back to the loop at the end of its sub-cycle: passed, failed (with feedback), attemptFailed, reportUnusable or stopped. It lives in the report's frontmatter; the loop routes the task's transitions on it. One rule makes it negative, and the review skill states it once: a `blocking` finding, an acceptance criterion or DoD item not met, a non-empty `spec_conflicts`, a non-empty `escalation`. A `warning` or a `suggestion` never flips it, whatever their number; they leave the review as routed suggestions. A criterion called "partially met" is not a reason on its own — either what is missing is worth a blocking finding, or the criterion is met.
+_Avoid_: review outcome, report (it is the file, not the outcome), partially met (as a verdict)
 
 **Per-attempt review archive**:
 A copy of a previous review report, saved as `tasks/<TASK>--review.attempt-N.md` before a retry overwrites the canonical report `<TASK>--review.md`. Preserves the verdict history (including FAILED) for audit and debug; the canonical file is always the latest verdict.
 _Avoid_: review backup, review snapshot
+
+**Re-review**:
+The review of a retried task: the second (or later) review of the same task, spawned after a rejected verdict. It receives, on top of the archive map, the blocking findings of the verdict it replaces as a checklist to close and the patch of what the retry changed, so it verifies a bounded list instead of reading the task again. It never receives the previous verdict itself.
+_Avoid_: second review, review retry (that is the review file re-spawn, a different budget)
+
+**Attempt diff**:
+The patch from the worktree as the previous review judged it to the worktree as the retry left it, handed to the re-review and bounded by `run.review_diff_max_kb`. Built against the tree object the no-op guard already writes before a retried implementation, and absent outside a git repository.
+_Avoid_: task diff, checkpoint diff (no commit is involved)
 
 **Measurement documents**:
 The documents the implementation is judged against: the functional specification of the spec and the files under `contracts/`. The loop compares their fingerprint before and after each implementation phase (`run.protect_spec_artifacts`, on by default) and rejects the attempt that rewrote one, naming the files. Working documents (decision log, task file, technical plan) stay writable.

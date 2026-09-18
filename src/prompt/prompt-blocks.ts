@@ -9,6 +9,7 @@ import path from "node:path";
 import type { PhaseName, SpecsKitConfig } from "../config/specs-kit-config.ts";
 import { blockerLabel, type Blocker } from "../loop/blockers.ts";
 import type { HookResult } from "../loop/hooks.ts";
+import type { AttemptDiff } from "../loop/phase-inputs.ts";
 import type { RoutedSuggestion } from "../loop/review-report.ts";
 import type { TaskFile } from "../tasks/task-parser.ts";
 import type { ContextFileSet } from "./context-files.ts";
@@ -43,10 +44,17 @@ export interface PromptContext {
   /** Archived reports of this task's earlier attempts, set when a retry
    * exists: where earlier verdicts live, not what they concluded. */
   priorAttemptArchives?: string[];
+  /** Findings the rejected verdict of the previous attempt asked to close. */
+  priorBlockingFindings?: string[];
+  /** Patch from the tree the previous review judged to the tree now. */
+  attemptDiff?: AttemptDiff | null;
   /** Public API contracts from upstream tasks that are already done. */
   upstreamProvides?: string[];
   /** Fixes reviewers routed to this task from earlier completed tasks. */
   routedSuggestions?: RoutedSuggestion[];
+  /** The reading brief produced for this task, verbatim; every attempt of
+   * the task receives it instead of re-deriving the reconnaissance. */
+  brief?: string | null;
   /** Project-level learnings accumulated across specs. */
   projectLearnings?: string[];
   /** Spec documents inlined for the phases that read the spec folder. */
@@ -226,6 +234,78 @@ export function priorAttemptsBlock(archives: string[] | undefined): string | nul
     "particular verify what the retry was asked to fix.",
     "</prior_review_attempts>",
   ].join("\n");
+}
+
+/**
+ * The mandate of a re-review: what the previous verdict asked to close and
+ * what the retry actually changed.
+ *
+ * The one thing a retried review has that a first one does not is a bounded
+ * question — these findings, this patch — and without it the reviewer reads
+ * the whole task again to rediscover a change that touched three files. The
+ * checklist is a verdict, so it is delivered as a list of things to verify and
+ * never as a conclusion: no status, no summary, nothing about whether the
+ * previous reviewer was right. The patch is not a verdict at all, it is what
+ * changed, which is why it can be handed over whole.
+ *
+ * The diff narrows the reading, it does not narrow the verdict: a retry can
+ * break something the patch does not touch, and the block says so rather than
+ * letting an unchanged file read as an approved one.
+ */
+export function retryReviewBlock(findings: string[] | undefined, diff: AttemptDiff | null | undefined): string | null {
+  const list = (findings ?? []).filter((f) => f.trim() !== "");
+  if (list.length === 0 && !diff) return null;
+  const lines = [
+    "This task was already implemented, reviewed and rejected: what follows is the retry.",
+    "Do not review it from scratch.",
+  ];
+  if (list.length > 0) {
+    lines.push(
+      "",
+      "Verify that each of the following, which the previous review blocked on, is closed;",
+      "state the outcome of every one of them in your report:",
+      ...list.map((f) => `- ${f}`),
+    );
+  }
+  if (diff) {
+    lines.push(
+      "",
+      "What the retry changed since the tree the previous review judged:",
+      diff.stat,
+      "",
+      `<diff${diff.truncated ? ' truncated="true"' : ""}>`,
+      diff.patch,
+      "</diff>",
+    );
+    if (diff.truncated) {
+      lines.push("The patch above was cut: the summary names every file, read the rest from the workspace.");
+    }
+    lines.push(
+      "",
+      "Read the patch first and the workspace only for what it does not answer. The patch",
+      "bounds your reading, not your verdict: a change can break code it does not touch.",
+    );
+  }
+  return `<retry_review>\n${lines.join("\n")}\n</retry_review>`;
+}
+
+/**
+ * The reading brief of the task, present on every implementation attempt
+ * once the brief node has produced it. Its own block, not folded into the
+ * memory: the brief is a per-task reading list with a lifespan of one task,
+ * while the memory channels outlive it — and an agent that reads the brief
+ * as a project rule would generalize a local file list.
+ */
+export function briefBlock(brief: string | null | undefined): string | null {
+  if (!brief?.trim()) return null;
+  const lines = [
+    "The reading brief below was prepared for this task before your first attempt:",
+    "files to touch, patterns the area follows, tests to run. Start from it instead of",
+    "re-deriving the reconnaissance; verify a claim only when you are about to rely on it.",
+    "",
+    brief.trim(),
+  ];
+  return `<task_brief>\n${lines.join("\n")}\n</task_brief>`;
 }
 
 /** Contracts from upstream tasks the current task depends on. */

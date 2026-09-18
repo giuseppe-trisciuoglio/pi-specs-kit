@@ -1,17 +1,50 @@
 /**
- * What the loop concludes when a role's escalation is spent. The spawner owns
- * the subprocesses; the two decisions that follow a failed fallback are pure
- * and live here, so they can be read and tested without an agent.
+ * Pure escalation rules: which model an attempt runs on, what the loop
+ * concludes when a role's escalation is spent. The spawner owns the
+ * subprocesses; the decisions that route and diagnose them live here, so they
+ * can be read and tested without an agent.
  *
- * Both answer the same mistake: the escalation path used to report the
- * primary's failure and throw the fallback's away. The operator read a rate
- * limit against a model that was abandoned minutes earlier, with nothing in
- * the sentence to say the fallback had been tried at all — and the primary's
- * verdict, environmental by nature, ended the run even when the fallback had
- * died of something a second attempt would have survived.
+ * The model rule exists because the attempts of one task are not worth the
+ * same. The first one is speculative and cheap; every later one drags another
+ * review and another gate behind it, so the error it would make costs more
+ * than the model that avoids it.
+ *
+ * The failure rule answers the mistake of reporting the primary's failure and
+ * throwing the fallback's away. The operator read a rate limit against a model
+ * that was abandoned minutes earlier, with nothing in the sentence to say the
+ * fallback had been tried at all — and the primary's verdict, environmental by
+ * nature, ended the run even when the fallback had died of something a second
+ * attempt would have survived.
  */
 
+import { DEFAULT_RETRY_FROM_ATTEMPT, type RoleConfig } from "../config/specs-kit-config.ts";
 import type { PhaseFailure } from "./phase-failure.ts";
+
+/** The model and thinking level one spawn runs with. */
+export interface AttemptModel {
+  /** Model id for the agent CLI; "auto" or empty leaves the choice to it. */
+  model: string | undefined;
+  /** Thinking level flag value; undefined means "agent CLI default". */
+  thinkingLevel: string | undefined;
+  /** True when the retry model took over from the role's primary. */
+  retry: boolean;
+}
+
+/**
+ * The model a given attempt of a role runs on. Attempts are 1-based, and a
+ * role that declares no retry model always answers with its primary — which
+ * is what every configuration written before this rule existed does.
+ */
+export function attemptModel(role: RoleConfig, attempt: number): AttemptModel {
+  const from = role.retryFromAttempt ?? DEFAULT_RETRY_FROM_ATTEMPT;
+  if (role.retryModel && attempt >= from) {
+    // The retry model may be spawned at a different thinking level than the
+    // primary; when it names none it inherits the role's, because the level
+    // describes how the role works, not which model does the work.
+    return { model: role.retryModel, thinkingLevel: role.retryThinkingLevel ?? role.thinkingLevel, retry: true };
+  }
+  return { model: role.model, thinkingLevel: role.thinkingLevel, retry: false };
+}
 
 /** One side of the escalation: what failed, and on which model. */
 export interface EscalationSide {

@@ -9,6 +9,7 @@
 
 import { writeFile } from "node:fs/promises";
 import YAML from "yaml";
+import { hardRunDurationMs } from "../loop/budget.ts";
 import { formatDurationMs } from "../util/duration.ts";
 import {
   CONFIG_VERSION,
@@ -51,7 +52,13 @@ export function defaultConfigYaml(): string {
       review_file_retry: run.reviewFileRetry,
       max_spawns_per_task: run.maxSpawnsPerTask,
       max_spawns_per_run: run.maxSpawnsPerRun,
+      // Two levels: the first is what the run is expected to take and only
+      // warns when crossed, the second is the ceiling against a runaway and
+      // halts. Left out, the halting one is a multiple of the expected one.
       max_run_duration: formatDurationMs(run.maxRunDurationMs),
+      max_run_duration_hard: formatDurationMs(
+        hardRunDurationMs(run.maxRunDurationMs, run.maxRunDurationHardMs),
+      ),
       // Lets sync correct a source-of-truth context document that a
       // consolidated learning contradicts. Editing the project's own
       // instructions is a trust-boundary change, so it stays opt-in.
@@ -65,6 +72,14 @@ export function defaultConfigYaml(): string {
       // of its contracts: what the work is measured against is not the work's
       // to edit.
       protect_spec_artifacts: run.protectSpecArtifacts,
+      // Ceiling of the patch a re-review is handed: what the retry changed
+      // since the tree the previous review judged. Zero turns the channel off.
+      review_diff_max_kb: run.reviewDiffMaxKb,
+      // "when_needed" derives a failed attempt's memory from a readable
+      // FAILED review report instead of spending a spawn to restate it; the
+      // learner still runs for a red gate, a silent spawn or an unreadable
+      // report.
+      failure_learner: run.failureLearner,
     },
     // Empty on purpose: the review panel is declared model by model, because
     // reviewing spends on every model listed here.
@@ -73,6 +88,12 @@ export function defaultConfigYaml(): string {
     hooks: {
       timeout: formatDurationMs(hooks.timeoutMs),
       ...Object.fromEntries(PHASE_NAMES.map((phase) => [phase, { pre: [], post: [] }])),
+      // The gate of a phase is told which files the attempt stands on
+      // (SPECS_KIT_CHANGED_FILES, and the same list in the file named by
+      // SPECS_KIT_CHANGED_FILES_PATH), so it can compile and test that scope.
+      // What the project cannot afford once per attempt goes here instead: the
+      // checkpoint runs after each task that passed its review.
+      checkpoint: { post: [] },
     },
     knowledge_base: { files: [] },
   });

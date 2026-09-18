@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { copyFile, readFile, rename, writeFile } from "node:fs/promises";
 import YAML from "yaml";
-import type { HookStage, PanelReviewer, PhaseName, RoleName } from "./specs-kit-config.ts";
+import type { HookStage, HookTarget, PanelReviewer, RoleName } from "./specs-kit-config.ts";
 
 /**
  * Paths already backed up in this process: the original file is snapshotted
@@ -44,10 +44,13 @@ export type RunField =
   | "max_spawns_per_task"
   | "max_spawns_per_run"
   | "max_run_duration"
+  | "max_run_duration_hard"
   | "reconcile_context"
   | "auto_compact"
   | "auto_compact_threshold"
-  | "protect_spec_artifacts";
+  | "protect_spec_artifacts"
+  | "review_diff_max_kb"
+  | "failure_learner";
 
 export interface RunFieldUpdate {
   field: RunField;
@@ -177,20 +180,20 @@ export async function updateReviewPanel(configPath: string, reviewers: PanelRevi
 }
 
 /**
- * Replace the command list of one hook stage (`hooks.<phase>.<stage>`),
- * creating the hooks section when absent and leaving sibling stages, phases
+ * Replace the command list of one hook stage (`hooks.<target>.<stage>`),
+ * creating the hooks section when absent and leaving sibling stages, targets
  * and the timeout untouched. An empty list clears the stage.
  */
 export async function updatePhaseHooks(
   configPath: string,
-  phase: PhaseName,
+  target: HookTarget,
   stage: HookStage,
   commands: string[],
 ): Promise<void> {
   await rewriteConfig(configPath, (doc) => {
     const hooks = ensureMap(doc, "hooks");
-    const phaseMap = ensureChildMap(doc, hooks, phase);
-    phaseMap.set(stage, doc.createNode(commands));
+    const targetMap = ensureChildMap(doc, hooks, target);
+    targetMap.set(stage, doc.createNode(commands));
   });
 }
 

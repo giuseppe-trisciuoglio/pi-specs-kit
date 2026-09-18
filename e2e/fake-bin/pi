@@ -17,6 +17,8 @@ PHASE="unknown"
 TASK_ID=$(printf '%s' "$PROMPT" | grep -oE 'tasks/TASK-[0-9]+--review\.md' | head -n 1 | sed -e 's|tasks/||' -e 's|--review\.md||')
 if [[ -n "$TASK_ID" ]]; then
   PHASE="review"
+elif [[ "$PROMPT" == *"Your only output is the file"* ]]; then
+  PHASE="brief"
 elif [[ "$PROMPT" == *"What the loop observed:"* ]]; then
   PHASE="failure_learner"
 elif [[ "$PROMPT" == *"bullet list"* ]]; then
@@ -27,6 +29,19 @@ elif [[ "$PROMPT" == *"Clean up the code touched"* ]]; then
   PHASE="cleanup"
 elif [[ "$PROMPT" == *"Update the specification documentation"* ]]; then
   PHASE="sync"
+fi
+
+# Record what each phase prompt carried, for the tests that assert on the
+# prompt channels rather than on the loop outcome.
+if [[ -n "${FAKE_PI_PROMPT_LOG:-}" ]]; then
+  RETRY_BLOCK=0
+  DIFF_BLOCK=0
+  BRIEF_BLOCK=0
+  [[ "$PROMPT" == *"<retry_review>"* ]] && RETRY_BLOCK=1
+  [[ "$PROMPT" == *"<diff"* ]] && DIFF_BLOCK=1
+  [[ "$PROMPT" == *"<task_brief>"* ]] && BRIEF_BLOCK=1
+  mkdir -p "$(dirname "$FAKE_PI_PROMPT_LOG")"
+  printf '%s retry_review=%s diff=%s brief=%s\n' "$PHASE" "$RETRY_BLOCK" "$DIFF_BLOCK" "$BRIEF_BLOCK" >> "$FAKE_PI_PROMPT_LOG"
 fi
 
 # Emit the JSONL event stream: session, agent/turn lifecycle, a tool call with
@@ -83,6 +98,14 @@ if [[ -n "${FAKE_PI_FAIL_PHASE:-}" && "$PHASE" == "$FAKE_PI_FAIL_PHASE" ]]; then
   fi
 fi
 
+# Stand-in for the work an implementation does: without a write there is
+# nothing for the gate to be told about, and the changed-file list every hook
+# receives would be empty for reasons that have nothing to do with the loop.
+if [[ "$PHASE" == "implementation" && -n "${FAKE_PI_TOUCH_FILE:-}" ]]; then
+  mkdir -p "$(dirname "$FAKE_PI_TOUCH_FILE")"
+  printf 'touched by the fake implementation\n' >> "$FAKE_PI_TOUCH_FILE"
+fi
+
 # Assistant text depends on the phase; the learner must produce a bullet list.
 case "$PHASE" in
   learner)
@@ -96,14 +119,51 @@ case "$PHASE" in
     ;;
 esac
 
+# The brief phase writes the reading brief of the task it was invoked for.
+if [[ "$PHASE" == "brief" && -n "${FAKE_PI_SPEC_DIR:-}" ]]; then
+  BRIEF_TASK=$(printf '%s' "$PROMPT" | grep -oE 'id="TASK-[0-9]+"' | head -n 1 | sed -e 's/id="//' -e 's/"//')
+  if [[ -n "$BRIEF_TASK" ]]; then
+    mkdir -p "$FAKE_PI_SPEC_DIR/tasks"
+    printf 'Files to touch: src/retry.ts\n' > "$FAKE_PI_SPEC_DIR/tasks/$BRIEF_TASK--brief.md"
+  fi
+fi
+
+# An implementation that writes nothing looks like a no-op retry to the loop.
+# Tests that need a retry to reach a second review ask for a real edit here.
+if [[ "$PHASE" == "implementation" && -n "${FAKE_PI_IMPL_WRITE:-}" ]]; then
+  mkdir -p "$(dirname "$FAKE_PI_IMPL_WRITE")"
+  printf 'the retry wrote line %s\n' "$(date +%s)-$RANDOM" >> "$FAKE_PI_IMPL_WRITE"
+fi
+
 # The review phase must leave a verdict report on disk, unless the test asked
 # us to skip it (to exercise the review file retry path).
 if [[ "$PHASE" == "review" && "${FAKE_PI_SKIP_REVIEW_FILE:-0}" != "1" && -n "${FAKE_PI_SPEC_DIR:-}" ]]; then
+  VERDICT="${FAKE_PI_REVIEW_VERDICT:-PASSED}"
+  ISSUES="issues: []"
+  # Reject the first N reviews of the run, so the loop reaches a retried
+  # review with a finding to close. Its own counter file: the failure
+  # injection above owns the other one.
+  if (( ${FAKE_PI_REVIEW_FAIL_TIMES:-0} > 0 )); then
+    REVIEW_STATE="${FAKE_PI_REVIEW_STATE_FILE:?FAKE_PI_REVIEW_STATE_FILE is required to reject reviews}"
+    mkdir -p "$(dirname "$REVIEW_STATE")"
+    RCOUNT=0
+    if [[ -f "$REVIEW_STATE" ]]; then
+      RCOUNT=$(cat "$REVIEW_STATE")
+      [[ "$RCOUNT" =~ ^[0-9]+$ ]] || RCOUNT=0
+    fi
+    RCOUNT=$((RCOUNT + 1))
+    printf '%s' "$RCOUNT" > "$REVIEW_STATE"
+    if (( RCOUNT <= FAKE_PI_REVIEW_FAIL_TIMES )); then
+      VERDICT="FAILED"
+      ISSUES=$'issues:\n  - the guard is never called'
+    fi
+  fi
   mkdir -p "$FAKE_PI_SPEC_DIR/tasks"
   cat > "$FAKE_PI_SPEC_DIR/tasks/${TASK_ID}--review.md" <<EOF
 ---
-review_status: ${FAKE_PI_REVIEW_VERDICT:-PASSED}
+review_status: ${VERDICT}
 summary: fake review for $TASK_ID
+${ISSUES}
 ---
 
 ## Review

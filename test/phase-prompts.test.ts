@@ -24,13 +24,11 @@ import { PhaseExecutor, type PhaseStepResult } from "../src/loop/phases.ts";
 import { LoopBudget } from "../src/loop/budget.ts";
 import type { HookResult } from "../src/loop/hooks.ts";
 import type {
-  CleanupPhaseInput,
-  FinalSyncPhaseInput,
+  CleanupPhaseInput,  FinalSyncPhaseInput,
   ImplementationPhaseInput,
   PhaseSpawnInput,
   ReviewPhaseInput,
   SyncPhaseInput,
-  TaskSyncPhaseInput,
 } from "../src/loop/phase-inputs.ts";
 import { loadProjectLearnings } from "../src/loop/learner.ts";
 import type { PhaseRunOutcome, PhaseSpawnOptions } from "../src/agent/spawner.ts";
@@ -113,7 +111,7 @@ async function harness(opts: { preHooks?: HookResult[]; postHooks?: HookResult[]
   const executor = new PhaseExecutor({
     config,
     specDir,
-    budget: new LoopBudget({ maxSpawnsPerTask: 50, maxSpawnsPerRun: 50, maxRunDurationMs: 3_600_000 }),
+    budget: new LoopBudget({ maxSpawnsPerTask: 50, maxSpawnsPerRun: 50, maxRunDurationMs: 3_600_000, maxRunDurationHardMs: null }),
     spawnPhase: async (opts: PhaseSpawnOptions) => {
       prompts.push(opts.prompt);
       return okOutcome;
@@ -156,6 +154,8 @@ async function expectedPrompt(h: Harness, phase: PhaseName, input: PhaseInput): 
     reviewFeedback: "reviewFeedback" in input ? input.reviewFeedback : null,
     reviewFormatError: "reviewFormatError" in input ? input.reviewFormatError : null,
     priorAttemptArchives: "priorAttemptArchives" in input ? input.priorAttemptArchives : undefined,
+    priorBlockingFindings: "priorBlockingFindings" in input ? input.priorBlockingFindings : undefined,
+    attemptDiff: "attemptDiff" in input ? input.attemptDiff : null,
     upstreamProvides: "upstreamProvides" in input ? input.upstreamProvides : undefined,
     routedSuggestions: "routedSuggestions" in input ? input.routedSuggestions : undefined,
     projectLearnings: projectLearnings.length > 0 ? projectLearnings : undefined,
@@ -182,7 +182,8 @@ test("implementation on retry carries review feedback, upstream contracts and ro
     upstreamProvides: ["parseSpec(text: string): Spec"],
     routedSuggestions: [{ to: "TASK-001", text: "extract the retry helper", from: "TASK-000" }],
     // What the node declares on a retry: the pre-hook output becomes context.
-    firstAttempt: false,
+    brief: null,
+        firstAttempt: false,
   };
 
   const prompt = await capturePrompt(h, () => h.executor.run("implementation", input));
@@ -205,7 +206,8 @@ test("only the phases that read the spec folder receive its documents", async ()
     postHookFailures: null,
     upstreamProvides: [],
     routedSuggestions: [],
-    firstAttempt: true,
+    brief: null,
+        firstAttempt: true,
   };
   const implPrompt = await capturePrompt(h, () => h.executor.run("implementation", impl));
   assert.ok(!implPrompt.includes("<context_files>"), "implementation reads code the task picks, not a fixed set");
@@ -225,7 +227,8 @@ test("implementation on the first attempt has no feedback block at all", async (
     postHookFailures: null,
     upstreamProvides: [],
     routedSuggestions: [],
-    firstAttempt: true,
+    brief: null,
+        firstAttempt: true,
   };
 
   const prompt = await capturePrompt(h, () => h.executor.run("implementation", input));
@@ -245,7 +248,8 @@ test("a failing pre-hook blocks the phase on the first attempt: no spawn at all"
     postHookFailures: null,
     upstreamProvides: [],
     routedSuggestions: [],
-    firstAttempt: true,
+    brief: null,
+        firstAttempt: true,
   };
 
   const result = await h.executor.run("implementation", input);
@@ -263,7 +267,8 @@ test("a failing pre-hook on a retry feeds its output into the prompt as context"
     postHookFailures: null,
     upstreamProvides: [],
     routedSuggestions: [],
-    firstAttempt: false,
+    brief: null,
+        firstAttempt: false,
   };
 
   const prompt = await capturePrompt(h, () => h.executor.run("implementation", input));
@@ -288,7 +293,8 @@ test("a failing post hook is exposed and feeds the retry prompt, labeled against
     postHookFailures: null,
     upstreamProvides: [],
     routedSuggestions: [],
-    firstAttempt: true,
+    brief: null,
+        firstAttempt: true,
   };
 
   // The executor exposes the red gate explicitly instead of burying it in the
@@ -304,7 +310,8 @@ test("a failing post hook is exposed and feeds the retry prompt, labeled against
   const retryInput: ImplementationPhaseInput = {
     ...input,
     attempt: 2,
-    firstAttempt: false,
+    brief: null,
+        firstAttempt: false,
     postHookFailures: first.failedPostHooks,
   };
   const retry = await h.executor.run("implementation", retryInput);
@@ -317,7 +324,7 @@ test("a failing post hook is exposed and feeds the retry prompt, labeled against
 
 test("review on first spawn has no format error and no routed suggestions", async () => {
   const h = await harness();
-  const input: ReviewPhaseInput = { ...baseInput(h), reviewFormatError: null, priorAttemptArchives: [] };
+  const input: ReviewPhaseInput = { ...baseInput(h), reviewFormatError: null, priorAttemptArchives: [], priorBlockingFindings: [], attemptDiff: null };
 
   const prompt = await capturePrompt(h, () => h.executor.run("review", input));
   assert.equal(prompt, await expectedPrompt(h, "review", input));
@@ -333,7 +340,7 @@ test("review on first spawn has no format error and no routed suggestions", asyn
 test("review re-spawn is told what was wrong with the previous report", async () => {
   const h = await harness();
   const formatError = "The review report for TASK-001 is missing or invalid: frontmatter with review_status required.";
-  const input: ReviewPhaseInput = { ...baseInput(h), reviewFormatError: formatError, priorAttemptArchives: [] };
+  const input: ReviewPhaseInput = { ...baseInput(h), reviewFormatError: formatError, priorAttemptArchives: [], priorBlockingFindings: [], attemptDiff: null };
 
   const prompt = await capturePrompt(h, () => h.executor.run("review", input));
   assert.equal(prompt, await expectedPrompt(h, "review", input));
@@ -345,7 +352,7 @@ test("review re-spawn is told what was wrong with the previous report", async ()
 test("a retried review is handed where the earlier verdicts are archived, not what they say", async () => {
   const h = await harness();
   const archives = ["tasks/TASK-001--review.attempt-1.md", "tasks/TASK-001--review.attempt-2.md"];
-  const input: ReviewPhaseInput = { ...baseInput(h, 3), reviewFormatError: null, priorAttemptArchives: archives };
+  const input: ReviewPhaseInput = { ...baseInput(h, 3), reviewFormatError: null, priorAttemptArchives: archives, priorBlockingFindings: [], attemptDiff: null };
 
   const prompt = await capturePrompt(h, () => h.executor.run("review", input));
   assert.equal(prompt, await expectedPrompt(h, "review", input));
@@ -362,42 +369,95 @@ test("a retried review is handed where the earlier verdicts are archived, not wh
   assert.ok(!prompt.includes("<review_feedback>"), "the reviewer still never receives its own feedback");
 });
 
-test("cleanup prompt carries contracts and routed fixes but never review feedback", async () => {
+test("a re-review is handed the list to close and the patch of the retry", async () => {
+  // The two channels a retried review adds: what the rejected verdict asked to
+  // close, and what the retry changed since the tree that verdict judged. The
+  // verdict itself — the status, the summary — still never travels.
   const h = await harness();
-  const input: CleanupPhaseInput = {
-    ...baseInput(h),
-    upstreamProvides: ["parseSpec(text: string): Spec"],
-    routedSuggestions: [{ to: "TASK-001", text: "extract the retry helper", from: "TASK-000" }],
-    firstAttempt: true,
+  const input: ReviewPhaseInput = {
+    ...baseInput(h, 2),
+    reviewFormatError: null,
+    priorAttemptArchives: ["tasks/TASK-001--review.attempt-1.md"],
+    priorBlockingFindings: ["the guard is never called", "requirement conflict: the tip is reused"],
+    attemptDiff: {
+      stat: " src/guard.ts | 4 ++--",
+      patch: "--- a/src/guard.ts\n+++ b/src/guard.ts\n+  assertGuard(value);\n",
+      truncated: false,
+    },
   };
 
-  const prompt = await capturePrompt(h, () => h.executor.run("cleanup", input));
-  assert.equal(prompt, await expectedPrompt(h, "cleanup", input));
+  const prompt = await capturePrompt(h, () => h.executor.run("review", input));
+  assert.equal(prompt, await expectedPrompt(h, "review", input));
 
-  assert.ok(prompt.includes("Clean up the code touched by the task above"));
-  assert.ok(prompt.includes("<upstream_contracts>"));
-  assert.ok(prompt.includes("<routed_suggestions>"));
-  assert.ok(!prompt.includes("<review_feedback>"), "cleanup has no review feedback channel");
-  assert.ok(!prompt.includes("<review_format_error>"));
+  assert.ok(prompt.includes("<retry_review>"));
+  assert.ok(prompt.includes("Do not review it from scratch."));
+  assert.ok(prompt.includes("- the guard is never called"));
+  assert.ok(prompt.includes("- requirement conflict: the tip is reused"));
+  assert.ok(prompt.includes("<diff>\n--- a/src/guard.ts"));
+  assert.ok(prompt.includes(" src/guard.ts | 4 ++--"));
+  assert.ok(!prompt.includes("truncated=\"true\""), "a whole patch is not announced as cut");
+  assert.ok(
+    prompt.includes("The patch\nbounds your reading, not your verdict"),
+    "the narrowed reading is not a narrowed verdict",
+  );
 });
 
-test("sync prompt carries contracts and routed fixes but never review feedback", async () => {
+test("a cut patch says so and points back at the workspace", async () => {
   const h = await harness();
-  const input: TaskSyncPhaseInput = {
-    ...baseInput(h),
-    upstreamProvides: ["parseSpec(text: string): Spec"],
-    routedSuggestions: [{ to: "TASK-001", text: "extract the retry helper", from: "TASK-000" }],
-    firstAttempt: true,
+  const input: ReviewPhaseInput = {
+    ...baseInput(h, 2),
+    reviewFormatError: null,
+    priorAttemptArchives: [],
+    priorBlockingFindings: [],
+    attemptDiff: { stat: " src/big.ts | 900 +++++", patch: "--- a/src/big.ts\n…[4000 characters omitted]…", truncated: true },
   };
 
-  const prompt = await capturePrompt(h, () => h.executor.run("sync", input));
-  assert.equal(prompt, await expectedPrompt(h, "sync", input));
+  const prompt = await capturePrompt(h, () => h.executor.run("review", input));
+  assert.equal(prompt, await expectedPrompt(h, "review", input));
 
-  assert.ok(prompt.includes("Update the specification documentation to reflect the implemented task"));
-  assert.ok(prompt.includes("<upstream_contracts>"));
-  assert.ok(prompt.includes("<routed_suggestions>"));
-  assert.ok(!prompt.includes("<review_feedback>"), "sync has no review feedback channel");
-  assert.ok(!prompt.includes("<review_format_error>"));
+  assert.ok(prompt.includes('<diff truncated="true">'));
+  assert.ok(prompt.includes("the summary names every file, read the rest from the workspace"));
+});
+
+test("a first review is handed neither a checklist nor a patch", async () => {
+  const h = await harness();
+  const input: ReviewPhaseInput = {
+    ...baseInput(h),
+    reviewFormatError: null,
+    priorAttemptArchives: [],
+    priorBlockingFindings: [],
+    attemptDiff: null,
+  };
+
+  const prompt = await capturePrompt(h, () => h.executor.run("review", input));
+  assert.ok(!prompt.includes("<retry_review>"), "nothing was rejected yet, so there is nothing to close");
+});
+
+test("cleanup and sync prompts carry contracts and routed fixes but never review feedback", async () => {
+  const h = await harness();
+  const cases: [phase: "cleanup" | "sync", fragment: string][] = [
+    ["cleanup", "Clean up the code touched by the task above"],
+    ["sync", "Update the specification documentation to reflect the implemented task"],
+  ];
+  for (const [phase, fragment] of cases) {
+    const input = {
+      ...baseInput(h),
+      upstreamProvides: ["parseSpec(text: string): Spec"],
+      routedSuggestions: [{ to: "TASK-001", text: "extract the retry helper", from: "TASK-000" }],
+      firstAttempt: true,
+    } as PhaseInput;
+
+    // The executor's run is overloaded per phase; the table drives it generically.
+    const runPhase = h.executor.run.bind(h.executor) as (p: PhaseName, i: PhaseInput) => Promise<PhaseStepResult>;
+    const prompt = await capturePrompt(h, () => runPhase(phase, input));
+    assert.equal(prompt, await expectedPrompt(h, phase, input), `${phase} prompt matches`);
+
+    assert.ok(prompt.includes(fragment));
+    assert.ok(prompt.includes("<upstream_contracts>"));
+    assert.ok(prompt.includes("<routed_suggestions>"));
+    assert.ok(!prompt.includes("<review_feedback>"), `${phase} has no review feedback channel`);
+    assert.ok(!prompt.includes("<review_format_error>"));
+  }
 });
 
 test("the end-of-range sync spawns alone: no upstream contracts, no routed fixes", async () => {

@@ -19,7 +19,11 @@ delivery pipeline you can watch and steer in plain English.
 - **Kill-safe by design.** State lives in an atomically rewritten `fix_plan.json`;
   `--resume` restarts exactly where it stopped, `--force` resets it.
 - **Bounded spend.** `max_attempts`, `max_spawns_per_task`, `max_spawns_per_run` and
-  `max_run_duration` keep an agent that won't converge from burning tokens forever.
+  `max_run_duration_hard` keep an agent that won't converge from burning tokens
+  forever. The wall clock has two levels: `max_run_duration` is how long the run is
+  expected to take and only warns when crossed, `max_run_duration_hard` is the one
+  that halts. Every ceiling follows the yaml file while the run is live — raise one
+  mid-run and the next phase reads the new value, no stop and no `--resume`.
 - **Observable.** A live widget shows spec / task / phase / attempt / progress and
   the last line of the agent stream; the attach view renders the running phase like
   an interactive session (markdown, thinking blocks, tool rows, diffs).
@@ -52,14 +56,15 @@ For each task in the active range, the loop runs a fixed pipeline:
 | Phase | What happens |
 |-------|--------------|
 | **implementation** | pre hooks → phase prompt → `pi` subprocess → post hooks. A failure consumes one attempt (`max_attempts`). |
-| **failure learner** | runs on a failed attempt, before the next one: records what stopped it as *blockers* in the fix plan, so the retry is handed the wall instead of re-deriving it. A blocker that no retry can clear — a contradiction in the task, a decision nobody made — ends the task on its second appearance and names it to the operator. |
-| **review** | must produce `tasks/<TASK>--review.md` with `review_status: PASSED\|FAILED`. The verdict is the only part the loop reads. A negative verdict sends the task back to implementation with the feedback, unless it repeats the previous one verbatim. |
+| **failure learner** | runs on a failed attempt, before the next one: records what stopped it as *blockers* in the fix plan, so the retry is handed the wall instead of re-deriving it. A blocker that no retry can clear — a contradiction in the task, a decision nobody made — ends the task on its second appearance and names it to the operator. With `run.failure_learner: when_needed` (the default) a readable FAILED review records its findings directly, with no spawn; the learner session runs only for a red gate, a silent spawn, an unusable report or a wall-kind finding. Skips are marked `outcome: "skipped"` in the measurement ledger. |
+| **review** | must produce `tasks/<TASK>--review.md` with `review_status: PASSED\|FAILED`. The verdict is the only part the loop reads, and only four things make it negative: a blocking finding, an unmet acceptance criterion or DoD item, a spec conflict, an operator escalation — warnings and suggestions leave as routed suggestions instead. A negative verdict sends the task back to implementation with the feedback, unless it repeats the previous one verbatim. |
 | **cleanup** | skipped in `mode: fast`. |
 | **learner** | extracts the task's learnings and accumulates them in the fix plan; later tasks receive them as memory. Facts the failed attempts of the task had to establish are offered to it as candidates. |
 | **sync** | in fast mode, only after the last task of the range. |
 
-When the loop finishes a task it updates its frontmatter to `reviewed` and
-recomputes progress. State transitions are persisted atomically, so a crash at
+When the loop finishes a task it updates its frontmatter to `reviewed`,
+checkpoints the work and runs the `checkpoint` hooks — the second level of the
+gate, where the full suite belongs — then recomputes progress. State transitions are persisted atomically, so a crash at
 any point leaves a snapshot you can resume from.
 
 ## Commands
@@ -113,7 +118,11 @@ mode: fast
 agents:
   agent_model: "provider/id"
   agent_thinking_level: medium
+  agent_retry_model: "provider/stronger" # from the second attempt on
+  agent_retry_from_attempt: 2
   reviewer_model: "provider/id"
+brief:                      # reading brief: one cheap read-only spawn per task,
+  enabled: false            # writing tasks/<TASK>--brief.md for every attempt
 run:
   max_attempts: 5
   timeout: 60m
@@ -122,7 +131,8 @@ run:
   continue_on_failure: false
   max_spawns_per_task: 8
   max_spawns_per_run: 60
-  max_run_duration: 6h
+  max_run_duration: 6h       # expected: crossing it warns once, the run continues
+  max_run_duration_hard: 18h # the ceiling that halts; omitted, it is 3x the above
   auto_compact: false
   auto_compact_threshold: 50
   protect_spec_artifacts: true
@@ -131,6 +141,8 @@ hooks:
   implementation:
     pre: ["npm run lint"]
     post: ["npm test"]
+  checkpoint:
+    post: ["npm run test:all"]
 knowledge_base:
   files: ["./docs/architecture.md"]
 ```
@@ -149,6 +161,20 @@ which leaves the choice to the agent CLI: in ephemeral mode that means the last
 model used interactively, so pin `<role>_model` for reproducible runs (the loop
 warns once per role). `/specs-kit-config` rewrites these fields surgically (with
 a `.bak` backup on the first write of each session).
+
+**A stronger model once an attempt has failed.** `<role>_retry_model` (with an
+optional `<role>_retry_thinking_level`) is the model the role is spawned on from
+`<role>_retry_from_attempt` onwards, `2` by default; leave it out and the role
+uses its primary model for every attempt, as before. It exists because the
+attempts of a task are not worth the same: the first one is speculative and
+cheap, while every later one is spawned *because* the first was wrong and drags
+another review and another gate behind it. A value below `2` is ignored — the
+first attempt is not a retry. The retry model is checked against the model
+catalogue like a primary (an unknown one refuses the start, naming the field),
+it escalates to `<role>_fallback_model` on an environment failure exactly like a
+primary, and the switch is notified once per spawn with the attempt that earned
+it. It is distinct from the fallback on purpose: the fallback answers a refusing
+or silent provider, the retry model answers a wrong diff.
 
 **Editing the configuration while a loop runs** takes effect at the next phase:
 the loop re-reads the file before every phase, so a model fix, a repaired hook
@@ -193,6 +219,55 @@ what it costs. The same applies to a fix routed to a task that is not still
 pending inside the range — the deferral is refused and the fix comes back to the
 task at hand.
 
+**Hooks, and what they are told.** Every phase has a `pre` and a `post` stage;
+the post stage of the implementation is the gate — red means the attempt is
+spent and the next one is shown the output. Each hook command runs through
+`/bin/sh` in the project root, with the loop's own environment plus two
+variables naming what the work stands on:
+
+| Variable | Value |
+|----------|-------|
+| `SPECS_KIT_CHANGED_FILES` | the paths that differ from the last commit, newline-separated, relative to the project root |
+| `SPECS_KIT_CHANGED_FILES_PATH` | a file holding the same list, one path per line, for a list too long for an environment block |
+
+Both are empty when the list cannot be read — outside a git repository, on a
+git failure, or on a clean tree — so a command that finds them empty has been
+told nothing and should run its full scope. The list is the work of the current
+task, across all its attempts, and never includes what the loop itself writes
+(the fix plan, the phase logs, the generated graph).
+
+A gate that uses them runs the scope of the attempt instead of the whole suite.
+For a Maven project:
+
+```yaml
+hooks:
+  timeout: 20m
+  implementation:
+    post:
+      - |
+        set -eu
+        [ -n "$SPECS_KIT_CHANGED_FILES" ] || exec ./mvnw -q verify
+        MODULES=$(printf '%s\n' "$SPECS_KIT_CHANGED_FILES" | cut -d/ -f1 | sort -u | paste -sd, -)
+        ./mvnw -q -pl "$MODULES" -am verify
+  checkpoint:
+    post: ["./mvnw -q verify"]
+```
+
+**The second level of the gate** is `hooks.checkpoint.post`: the commands that
+run after the checkpoint of a task that passed its review — where the suite the
+phases cannot afford once per attempt belongs. It is not a phase: it has no
+`pre` stage (nothing precedes a checkpoint), and a bare list
+(`checkpoint: ["./mvnw verify"]`) is read as its post stage. The changed files
+are taken before the checkpoint commit, so the hooks still see what the task
+touched. A red one is recorded rather than retried — the task passed and is
+committed, so there is no attempt left to spend — and the range close names it,
+like the gate of any other phase without a retry path.
+
+On the project side, a suite that starts containers is worth making reusable
+(for Testcontainers, `testcontainers.reuse.enable=true` in `~/.testcontainers.properties`):
+the scoped gate runs more often than the full one, and paying for a fresh
+Postgres on each run gives back what the narrower scope saved.
+
 **When the range closes**, the loop re-derives two claims it can check without a
 model: every coverage-matrix row marked implemented or verified must cite a test
 file that exists (and, when the citation names a test, a name that is in it), and
@@ -210,7 +285,8 @@ subprocess whatever phase asks for it:
 |-----|---------|--------|
 | `run.max_spawns_per_task` | 8 | Agent sessions one task may spend across all its phases. |
 | `run.max_spawns_per_run` | 60 | Agent sessions the whole run may spend. |
-| `run.max_run_duration` | 6h | Wall-clock time of the whole run. |
+| `run.max_run_duration` | 6h | How long the run is expected to take. Crossing it warns once; the run continues. |
+| `run.max_run_duration_hard` | 3 x `max_run_duration` | Wall-clock time the run may never cross: it halts there and pushes a desktop notification. |
 
 Crossing one ends the run with `state.step: failed` and the reason in
 `state.error`, whatever `continue_on_failure` says: a budget already exhausted

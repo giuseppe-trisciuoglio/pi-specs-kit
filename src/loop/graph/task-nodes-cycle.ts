@@ -21,6 +21,7 @@ import {
   snapshotProtectedPaths,
 } from "../protected-paths.ts";
 import { blockersForTask, injectableBlockers } from "../blockers.ts";
+import { readBrief } from "./task-nodes-brief.ts";
 import { operatorWallMessage } from "./task-nodes-failure.ts";
 import { runReviewStep } from "../review-runner.ts";
 import { collectRoutedSuggestions } from "../routed-suggestions.ts";
@@ -64,6 +65,7 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         state.retry_count = 0;
         state.review_file_retry = 0;
         state.review_file_error = null;
+        state.review_base_tree = null;
         state.error = null;
         state.iteration++;
         await persist();
@@ -103,6 +105,12 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
       // a stall; and skipping the measurement keeps the happy path free of it.
       const isRetry = state.retry_count > 0;
       const before = isRetry ? await deps.workspaceFingerprint(config.projectRoot, fingerprintExclusions) : null;
+      // The same tree serves a second reader. Taken before a retried
+      // implementation runs, it is exactly what the review that rejected this
+      // task was looking at, so the re-review can be handed the patch from
+      // there to here instead of the whole workspace. Null outside a git
+      // repository, which simply leaves the re-review without the channel.
+      state.review_base_tree = before;
       // Read on every attempt, not only on retries: the first one is exactly
       // where a mismatch between code and requirement is most tempting to
       // resolve by editing the requirement.
@@ -124,6 +132,10 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         postHookFailures: io.runtime.postHookFailures,
         upstreamProvides: upstreamProvides(taskFile, selected, plan.done),
         routedSuggestions: io.runtime.routedSuggestions,
+        // Written once by the brief node, read back on every attempt: a retry
+        // gets it without regenerating it, next to the blockers in their own
+        // block.
+        brief: await readBrief(specDir, id),
         // The node declares how the world is, not what to do; the executor
         // owns the blocking policy. On the first attempt the workspace is
         // expected to be in a clean state, so a failing pre-hook blocks the
@@ -135,12 +147,16 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
       });
       // An abort without a stop request (phase interrupt) falls through
       // to the failure path and costs one attempt.
-      if (deps.stopping() === "now") return { kind: "stopped" };
+      if (deps.stopping() === "now") {
+        executor.finishPhase(impl.meterHandle, "halted", impl.hooksMs);
+        return { kind: "stopped" };
+      }
       if (!impl.preHooksOk) {
         notify(`pre-implementation hook failed (${id})`, "warning");
         state.retry_count++;
         await persist();
         io.runtime.implStatus = "pre-hook-failed";
+        executor.finishPhase(impl.meterHandle, "pre_hook_failed", impl.hooksMs);
         return { kind: "ok" };
       }
       // Checked before every other outcome: whichever way this attempt ends,
@@ -161,6 +177,7 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         await persist();
         notify(environmentFailureMessage("implementation", id, failure), "error");
         io.runtime.implStatus = "environment-failed";
+        executor.finishPhase(impl.meterHandle, "spawn_failed", impl.hooksMs);
         return { kind: "ok" };
       }
       if (failure) {
@@ -169,6 +186,7 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         await persist();
         io.runtime.failureDetail = `implementation ${failure.kind}: ${failure.detail}`;
         io.runtime.implStatus = "spawn-failed";
+        executor.finishPhase(impl.meterHandle, "spawn_failed", impl.hooksMs);
         return { kind: "ok" };
       }
       // The post hooks are the phase's own gate: the build does not compile
@@ -182,6 +200,7 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
         io.runtime.failureDetail =
           "the post-implementation gate failed: " + impl.failedPostHooks.map((h) => h.command).join(", ");
         io.runtime.implStatus = "post-hook-failed";
+        executor.finishPhase(impl.meterHandle, "gate_failed", impl.hooksMs);
         return { kind: "ok" };
       }
       io.runtime.postHookFailures = null;
@@ -196,6 +215,7 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
           await persist();
           notify(protectedPathsWarning(id, changed), "warning");
           io.runtime.implStatus = "protected-paths-touched";
+          executor.finishPhase(impl.meterHandle, "protected_paths", impl.hooksMs);
           return { kind: "ok" };
         }
       }
@@ -212,10 +232,12 @@ export function makeCycleNodeActions(env: TaskNodeEnv): CycleNodeActions {
           await persist();
           notify(`implementation retry for ${id} changed nothing, task abandoned`, "warning");
           io.runtime.implStatus = "no-op-retry";
+          executor.finishPhase(impl.meterHandle, "unchanged_tree", impl.hooksMs);
           return { kind: "ok" };
         }
       }
       io.runtime.implStatus = "ok";
+      executor.finishPhase(impl.meterHandle, "passed", impl.hooksMs);
       return { kind: "ok" };
     },
 
